@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference
+      Include="..\..\external\LiveSplit\src\LiveSplit.Core\LiveSplit.Core.csproj"
+      Private="false" />
+
+    <ProjectReference
+      Include="..\..\external\LiveSplit\src\UpdateManager\UpdateManager.csproj"
+      Private="false" />
+
+    <ProjectReference
+      Include="..\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net4.8.1</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+
+    <AssemblyName>LiveSplit.Bridge</AssemblyName>
+    <RootNamespace>LiveSplit.Bridge</RootNamespace>
+  </PropertyGroup>
+
+</Project>

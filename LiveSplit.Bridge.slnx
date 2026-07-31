@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LiveSplit.Bridge.Protocol/LiveSplit.Bridge.Protocol.csproj" />
+    <Project Path="src/LiveSplit.Bridge/LiveSplit.Bridge.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LiveSplit.Bridge.Tests/LiveSplit.Bridge.Tests.csproj" />
+  </Folder>
+</Solution>
