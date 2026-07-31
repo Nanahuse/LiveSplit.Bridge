@@ -21,4 +21,28 @@
     <RootNamespace>LiveSplit.Bridge</RootNamespace>
   </PropertyGroup>
 
+  <Target Name="DeployToLiveSplit" AfterTargets="Build">
+    <MakeDir Directories="$(LiveSplitComponentsPath)" />
+
+    <ItemGroup>
+      <BridgeDeployFiles Include="$(TargetPath)" />
+
+      <BridgeDeployFiles
+        Include="$(TargetDir)LiveSplit.Bridge.pdb"
+        Condition="Exists('$(TargetDir)LiveSplit.Bridge.pdb')" />
+
+      <BridgeDeployFiles
+        Include="$(TargetDir)LiveSplit.Bridge.Protocol.dll"
+        Condition="Exists('$(TargetDir)LiveSplit.Bridge.Protocol.dll')" />
+
+      <BridgeDeployFiles
+        Include="$(TargetDir)LiveSplit.Bridge.Protocol.pdb"
+        Condition="Exists('$(TargetDir)LiveSplit.Bridge.Protocol.pdb')" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(BridgeDeployFiles)"
+      DestinationFolder="$(LiveSplitComponentsPath)"
+      SkipUnchangedFiles="true" />
+  </Target>
 </Project>

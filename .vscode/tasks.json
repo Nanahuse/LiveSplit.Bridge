@@ -1,0 +1,23 @@
+{
+    "label": "watch: Bridge log",
+    "type": "shell",
+    "command": "Get-Content",
+    "args": [
+        "${workspaceFolder}\\external\\LiveSplit\\bin\\debug\\LiveSplit.Bridge.log",
+        "-Wait",
+        "-Tail",
+        "50"
+    ],
+    "options": {
+        "shell": {
+            "executable": "pwsh.exe",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-Command"
+            ]
+        }
+    },
+    "isBackground": true,
+    "problemMatcher": []
+}

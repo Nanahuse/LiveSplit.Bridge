@@ -1,5 +1,10 @@
 <Project>
     <PropertyGroup>
         <LangVersion>14</LangVersion>
+
+        <LiveSplitRoot>
+            $([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)external\LiveSplit'))</LiveSplitRoot>
+        <LiveSplitBuildPath>$(LiveSplitRoot)\bin\$(Configuration.ToLowerInvariant())</LiveSplitBuildPath>
+        <LiveSplitComponentsPath>$(LiveSplitBuildPath)\Components</LiveSplitComponentsPath>
     </PropertyGroup>
 </Project>
