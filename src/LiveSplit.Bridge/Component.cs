@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
 using System.Xml;
@@ -16,6 +17,14 @@ public sealed class Component : IComponent
     public Component(LiveSplitState state)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
+
+        state.OnStart += OnStart;
+        state.OnSplit += OnSplit;
+        state.OnSkipSplit += OnSkipSplit;
+        state.OnUndoSplit += OnUndoSplit;
+        state.OnReset += OnReset;
+        state.OnPause += OnPause;
+        state.OnResume += OnResume;
     }
 
     public string ComponentName => "LiveSplit Bridge";
@@ -77,5 +86,53 @@ public sealed class Component : IComponent
 
     public void Dispose()
     {
+        state.OnStart -= OnStart;
+        state.OnSplit -= OnSplit;
+        state.OnSkipSplit -= OnSkipSplit;
+        state.OnUndoSplit -= OnUndoSplit;
+        state.OnReset -= OnReset;
+        state.OnPause -= OnPause;
+        state.OnResume -= OnResume;
+    }
+
+
+    private void OnStart(object? sender, EventArgs e)
+    {
+        Debug.WriteLine(
+            $"[LiveSplit.Bridge] Start: index={state.CurrentSplitIndex}");
+    }
+
+    private void OnSplit(object? sender, EventArgs e)
+    {
+        Debug.WriteLine(
+            $"[LiveSplit.Bridge] Split: index={state.CurrentSplitIndex}");
+    }
+
+    private void OnSkipSplit(object? sender, EventArgs e)
+    {
+        Debug.WriteLine(
+            $"[LiveSplit.Bridge] Skip: index={state.CurrentSplitIndex}");
+    }
+
+    private void OnUndoSplit(object? sender, EventArgs e)
+    {
+        Debug.WriteLine(
+            $"[LiveSplit.Bridge] Undo: index={state.CurrentSplitIndex}");
+    }
+
+    private void OnReset(object? sender, TimerPhase value)
+    {
+        Debug.WriteLine(
+            $"[LiveSplit.Bridge] Reset: index={state.CurrentSplitIndex}");
+    }
+
+    private void OnPause(object? sender, EventArgs e)
+    {
+        Debug.WriteLine("[LiveSplit.Bridge] Pause");
+    }
+
+    private void OnResume(object? sender, EventArgs e)
+    {
+        Debug.WriteLine("[LiveSplit.Bridge] Resume");
     }
 }
