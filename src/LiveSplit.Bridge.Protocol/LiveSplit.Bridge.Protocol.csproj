@@ -4,4 +4,16 @@
     <TargetFramework>netstandard2.0</TargetFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.24.1" />
+    <PackageReference Include="Grpc.Tools" Version="2.57.0">
+      <PrivateAssets>All</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="proto/livesplit/bridge/v1/common.proto" ProtoRoot="proto" />
+    <Protobuf Include="proto/livesplit/bridge/v1/bridge.proto" ProtoRoot="proto" />
+  </ItemGroup>
+
 </Project>

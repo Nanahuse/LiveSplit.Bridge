@@ -21,28 +21,41 @@
     <RootNamespace>LiveSplit.Bridge</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NetMQ" Version="4.0.4.3" />
+  </ItemGroup>
+
   <Target Name="DeployToLiveSplit" AfterTargets="Build">
     <MakeDir Directories="$(LiveSplitComponentsPath)" />
 
     <ItemGroup>
-      <BridgeDeployFiles Include="$(TargetPath)" />
-
-      <BridgeDeployFiles
-        Include="$(TargetDir)LiveSplit.Bridge.pdb"
-        Condition="Exists('$(TargetDir)LiveSplit.Bridge.pdb')" />
-
-      <BridgeDeployFiles
-        Include="$(TargetDir)LiveSplit.Bridge.Protocol.dll"
-        Condition="Exists('$(TargetDir)LiveSplit.Bridge.Protocol.dll')" />
-
-      <BridgeDeployFiles
-        Include="$(TargetDir)LiveSplit.Bridge.Protocol.pdb"
-        Condition="Exists('$(TargetDir)LiveSplit.Bridge.Protocol.pdb')" />
+      <BridgeDeployFiles Include="$(TargetDir)*.dll;$(TargetDir)*.pdb" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\System.*.dll" />
+      <LiveSplitRootDependencyFiles
+        Include="$(LiveSplitComponentsPath)\Microsoft.Bcl.AsyncInterfaces.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\Microsoft.Web.WebView2*.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\WinFormsColor.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\Ookii.Dialogs.WinForms.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\NetMQ.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\Google.Protobuf.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\SpeedrunComSharp.dll" />
+      <LiveSplitRootDependencyFiles Include="$(LiveSplitComponentsPath)\websocket-sharp.dll" />
+      <LiveSplitConfigFiles Include="LiveSplit.exe.config" />
     </ItemGroup>
 
     <Copy
       SourceFiles="@(BridgeDeployFiles)"
       DestinationFolder="$(LiveSplitComponentsPath)"
+      SkipUnchangedFiles="true" />
+
+    <Copy
+      SourceFiles="@(LiveSplitRootDependencyFiles)"
+      DestinationFolder="$(LiveSplitBuildPath)"
+      SkipUnchangedFiles="true" />
+
+    <Copy
+      SourceFiles="@(LiveSplitConfigFiles)"
+      DestinationFolder="$(LiveSplitBuildPath)"
       SkipUnchangedFiles="true" />
   </Target>
 </Project>

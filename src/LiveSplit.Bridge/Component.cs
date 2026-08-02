@@ -13,18 +13,28 @@ namespace LiveSplit.Bridge;
 public sealed class Component : IComponent
 {
     private readonly LiveSplitState state;
+    private readonly BridgeRuntime? runtime;
+    private static readonly object RuntimeLock = new();
+    private static BridgeRuntime? ActiveRuntime;
+    private static int ActiveComponentCount;
 
     public Component(LiveSplitState state)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
 
-        state.OnStart += OnStart;
-        state.OnSplit += OnSplit;
-        state.OnSkipSplit += OnSkipSplit;
-        state.OnUndoSplit += OnUndoSplit;
-        state.OnReset += OnReset;
-        state.OnPause += OnPause;
-        state.OnResume += OnResume;
+        lock (RuntimeLock)
+        {
+            ActiveComponentCount++;
+            if (ActiveRuntime == null)
+            {
+                ActiveRuntime = new BridgeRuntime(state);
+                runtime = ActiveRuntime;
+            }
+            else
+            {
+                Debug.WriteLine("[LiveSplit.Bridge] A Bridge runtime is already active. This component will not start a second runtime.");
+            }
+        }
     }
 
     public string ComponentName => "LiveSplit Bridge";
@@ -86,53 +96,14 @@ public sealed class Component : IComponent
 
     public void Dispose()
     {
-        state.OnStart -= OnStart;
-        state.OnSplit -= OnSplit;
-        state.OnSkipSplit -= OnSkipSplit;
-        state.OnUndoSplit -= OnUndoSplit;
-        state.OnReset -= OnReset;
-        state.OnPause -= OnPause;
-        state.OnResume -= OnResume;
-    }
-
-
-    private void OnStart(object? sender, EventArgs e)
-    {
-        Debug.WriteLine(
-            $"[LiveSplit.Bridge] Start: index={state.CurrentSplitIndex}");
-    }
-
-    private void OnSplit(object? sender, EventArgs e)
-    {
-        Debug.WriteLine(
-            $"[LiveSplit.Bridge] Split: index={state.CurrentSplitIndex}");
-    }
-
-    private void OnSkipSplit(object? sender, EventArgs e)
-    {
-        Debug.WriteLine(
-            $"[LiveSplit.Bridge] Skip: index={state.CurrentSplitIndex}");
-    }
-
-    private void OnUndoSplit(object? sender, EventArgs e)
-    {
-        Debug.WriteLine(
-            $"[LiveSplit.Bridge] Undo: index={state.CurrentSplitIndex}");
-    }
-
-    private void OnReset(object? sender, TimerPhase value)
-    {
-        Debug.WriteLine(
-            $"[LiveSplit.Bridge] Reset: index={state.CurrentSplitIndex}");
-    }
-
-    private void OnPause(object? sender, EventArgs e)
-    {
-        Debug.WriteLine("[LiveSplit.Bridge] Pause");
-    }
-
-    private void OnResume(object? sender, EventArgs e)
-    {
-        Debug.WriteLine("[LiveSplit.Bridge] Resume");
+        lock (RuntimeLock)
+        {
+            ActiveComponentCount = Math.Max(0, ActiveComponentCount - 1);
+            if (ActiveComponentCount == 0)
+            {
+                ActiveRuntime?.Dispose();
+                ActiveRuntime = null;
+            }
+        }
     }
 }

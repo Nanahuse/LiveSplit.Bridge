@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package livesplit.bridge.v1;
+
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
+
+import "livesplit/bridge/v1/common.proto";
+
+message Request {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;
+
+  oneof body {
+    AttachRequest attach = 10;
+    GetSnapshotRequest get_snapshot = 11;
+    TimerOperationRequest timer_operation = 12;
+    GameTimeOperationRequest game_time_operation = 13;
+  }
+}
+
+message Response {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;
+
+  oneof body {
+    BridgeError error = 10;
+    AttachResponse attach = 20;
+    GetSnapshotResponse get_snapshot = 21;
+    OperationResponse operation = 22;
+  }
+}
+
+message AttachRequest {}
+
+message AttachResponse {
+  uint64 session_id = 1;
+  TimerSnapshot snapshot = 2;
+}
+
+message GetSnapshotRequest {}
+
+message GetSnapshotResponse {
+  TimerSnapshot snapshot = 1;
+}
+
+message TimerOperationRequest {
+  TimerOperationType operation = 1;
+}
+
+message GameTimeOperationRequest {
+  GameTimeOperationType operation = 1;
+  optional sint64 ticks = 2;
+}

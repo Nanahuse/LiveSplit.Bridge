@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package livesplit.bridge.v1;
+
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
+
+enum TimerPhase {
+  TIMER_PHASE_UNSPECIFIED = 0;
+  NOT_RUNNING = 1;
+  STARTING = 2;
+  RUNNING = 3;
+  PAUSED = 4;
+  ENDED = 5;
+}
+
+enum TimerOperationType {
+  TIMER_OPERATION_UNSPECIFIED = 0;
+  TIMER_START = 1;
+  TIMER_SPLIT = 2;
+  TIMER_SKIP = 3;
+  TIMER_UNDO = 4;
+  TIMER_RESET = 5;
+  TIMER_PAUSE = 6;
+  TIMER_RESUME = 7;
+}
+
+enum GameTimeOperationType {
+  GAME_TIME_OPERATION_UNSPECIFIED = 0;
+  INITIALIZE = 1;
+  SET = 2;
+  GAME_TIME_PAUSE = 3;
+  GAME_TIME_RESUME = 4;
+}
+
+enum BridgeEventType {
+  BRIDGE_EVENT_UNSPECIFIED = 0;
+  EVENT_TIMER_STARTED = 1;
+  EVENT_TIMER_SPLIT = 2;
+  EVENT_TIMER_SKIPPED = 3;
+  EVENT_TIMER_UNDO = 4;
+  EVENT_TIMER_RESET = 5;
+  EVENT_TIMER_PAUSED = 6;
+  EVENT_TIMER_RESUMED = 7;
+  EVENT_GAME_TIME_INITIALIZED = 10;
+  EVENT_GAME_TIME_SET = 11;
+  EVENT_GAME_TIME_PAUSED = 12;
+  EVENT_GAME_TIME_RESUMED = 13;
+  EVENT_RUN_CHANGED = 20;
+  EVENT_STATE_SNAPSHOT = 21;
+}
+
+message TimerSnapshot {
+  uint64 state_revision = 1;
+  uint64 session_id = 2;
+  uint64 event_sequence = 3;
+  TimerPhase phase = 4;
+  int32 split_index = 5;
+  int32 split_count = 6;
+  optional sint64 real_time_ticks = 7;
+  optional sint64 game_time_ticks = 8;
+  bool is_paused = 9;
+  bool is_game_time_initialized = 10;
+}
+
+message OperationResponse {
+  bool success = 1;
+  string message = 2;
+  TimerSnapshot snapshot = 3;
+}
+
+message BridgeError {
+  int32 code = 1;
+  string message = 2;
+}
+
+message BridgeEvent {
+  uint64 session_id = 1;
+  uint64 event_sequence = 2;
+  BridgeEventType type = 3;
+  TimerSnapshot snapshot = 4;
+  string description = 5;
+}
