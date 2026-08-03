@@ -60,3 +60,4 @@ nunit-*.xml
 __pycache__/
 *.py[cod]
 .pytest_cache/
+tools/livesplit-bridge-cli/src/livesplit/
