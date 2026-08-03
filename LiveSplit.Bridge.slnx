@@ -4,6 +4,7 @@
     <Project Path="src/LiveSplit.Bridge/LiveSplit.Bridge.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/LiveSplit.Bridge.TestHost/LiveSplit.Bridge.TestHost.csproj" />
     <Project Path="tests/LiveSplit.Bridge.Tests/LiveSplit.Bridge.Tests.csproj" />
   </Folder>
 </Solution>
