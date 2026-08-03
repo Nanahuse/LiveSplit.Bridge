@@ -29,7 +29,8 @@
     <MakeDir Directories="$(LiveSplitComponentsPath)" />
 
     <ItemGroup>
-      <BridgeDeployFiles Include="$(TargetDir)*.dll;$(TargetDir)*.pdb" />
+      <BridgeDeployFiles Include="$(TargetPath);$(TargetDir)$(TargetName).pdb" />
+      <BridgeDeployFiles Include="@(ReferenceCopyLocalPaths)" />
     </ItemGroup>
 
     <Copy
