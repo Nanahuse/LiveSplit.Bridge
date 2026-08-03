@@ -12,6 +12,14 @@ uv sync
 uv run python scripts/generate_proto.py
 ```
 
+品質チェックは次のコマンドで実行できます。
+
+```powershell
+uv run ruff check src tests scripts
+uv run ty check src tests scripts
+uv run pytest
+```
+
 通常の接続先は RPC が `tcp://127.0.0.1:54000`、イベントが
 `tcp://127.0.0.1:54001` です。LiveSplit を起動し、レイアウトへ
 `LiveSplit Bridge` コンポーネントを追加してから使ってください。

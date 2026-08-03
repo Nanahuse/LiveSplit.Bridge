@@ -1,9 +1,8 @@
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 from grpc_tools import protoc
-
 
 ROOT = Path(__file__).resolve().parents[3]
 PROTO_ROOT = ROOT / "src" / "LiveSplit.Bridge.Protocol" / "proto"
@@ -25,13 +24,18 @@ def main() -> int:
             "grpc_tools.protoc",
             f"-I{PROTO_ROOT}",
             f"--python_out={OUTPUT}",
+            f"--pyi_out={OUTPUT}",
             *[str(path) for path in proto_files],
         ]
     )
     if result:
         return result
 
-    for directory in [OUTPUT / "livesplit", OUTPUT / "livesplit/bridge", OUTPUT / "livesplit/bridge/v1"]:
+    for directory in [
+        OUTPUT / "livesplit",
+        OUTPUT / "livesplit/bridge",
+        OUTPUT / "livesplit/bridge/v1",
+    ]:
         (directory / "__init__.py").touch()
     print(f"Generated {len(proto_files)} protobuf modules in {OUTPUT}")
     return 0
