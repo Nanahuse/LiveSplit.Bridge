@@ -55,3 +55,9 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tools/livesplit-bridge-cli/src/livesplit/

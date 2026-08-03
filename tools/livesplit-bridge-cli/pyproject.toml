@@ -1,0 +1,39 @@
+[project]
+name = "livesplit-bridge-cli"
+version = "0.1.0"
+description = "Debug CLI for LiveSplit.Bridge"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "protobuf>=6.31,<7",
+    "pyzmq>=26,<28",
+]
+
+[project.scripts]
+livesplit-bridge = "livesplit_bridge_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.68,<2",
+    "pytest>=8,<10",
+    "ruff>=0.16.1",
+    "ty>=0.0.65",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["src/livesplit/bridge/v1/*_pb2.*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "PYI"]
+
+[tool.ty.rules]
+# grpc_tools generates enum stubs whose protobuf metaclass is opaque to ty.
+conflicting-metaclass = "ignore"
