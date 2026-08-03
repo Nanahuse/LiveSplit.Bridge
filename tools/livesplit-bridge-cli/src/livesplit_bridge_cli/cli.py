@@ -137,41 +137,49 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.timeout <= 0:
         parser().error("--timeout must be greater than zero")
-    if args.command == "events":
-        return run_events(args.event_endpoint, args.json, args.count)
+    match args.command:
+        case "events":
+            return run_events(args.event_endpoint, args.json, args.count)
 
     try:
         with BridgeClient(args.rpc_endpoint, round(args.timeout * 1000)) as client:
-            if args.command == "attach":
-                response = client.attach()
-                print_message(
-                    response if args.json else response.attach.snapshot, args.json
-                )
-            elif args.command == "snapshot":
-                response = client.snapshot()
-                print_message(
-                    response if args.json else response.get_snapshot.snapshot, args.json
-                )
-            elif args.command == "timer":
-                response = client.timer(TIMER_OPERATIONS[args.operation])
-                print_message(response if args.json else response.operation, args.json)
-                if not response.operation.success:
-                    return 2
-            elif args.command == "game-time":
-                if args.operation == "set":
-                    if args.seconds is None:
-                        parser().error("game-time set requires seconds")
-                    ticks = round(args.seconds * TICKS_PER_SECOND)
-                    response = client.game_time("SET", ticks)
-                else:
-                    if args.seconds is not None:
-                        parser().error(
-                            f"game-time {args.operation} does not accept seconds"
-                        )
-                    response = client.game_time(GAME_TIME_OPERATIONS[args.operation])
-                print_message(response if args.json else response.operation, args.json)
-                if not response.operation.success:
-                    return 2
+            match args.command:
+                case "attach":
+                    response = client.attach()
+                    print_message(
+                        response if args.json else response.attach.snapshot, args.json
+                    )
+                case "snapshot":
+                    response = client.snapshot()
+                    print_message(
+                        response if args.json else response.get_snapshot.snapshot,
+                        args.json,
+                    )
+                case "timer":
+                    response = client.timer(TIMER_OPERATIONS[args.operation])
+                    print_message(
+                        response if args.json else response.operation, args.json
+                    )
+                    if not response.operation.success:
+                        return 2
+                case "game-time":
+                    match args.operation:
+                        case "set":
+                            if args.seconds is None:
+                                parser().error("game-time set requires seconds")
+                            ticks = round(args.seconds * TICKS_PER_SECOND)
+                            response = client.game_time("SET", ticks)
+                        case operation:
+                            if args.seconds is not None:
+                                parser().error(
+                                    f"game-time {operation} does not accept seconds"
+                                )
+                            response = client.game_time(GAME_TIME_OPERATIONS[operation])
+                    print_message(
+                        response if args.json else response.operation, args.json
+                    )
+                    if not response.operation.success:
+                        return 2
     except (BridgeClientError, zmq.ZMQError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

@@ -3,7 +3,7 @@ name = "livesplit-bridge-cli"
 version = "0.1.0"
 description = "Debug CLI for LiveSplit.Bridge"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "protobuf>=6.31,<7",
     "pyzmq>=26,<28",

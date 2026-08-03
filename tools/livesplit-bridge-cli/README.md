@@ -1,6 +1,7 @@
 # LiveSplit.Bridge Debug CLI
 
 LiveSplit.Bridge の RPC とイベントストリームを確認するための Python CLI です。
+Python 3.14以降を使用します。
 
 ## セットアップ
 
