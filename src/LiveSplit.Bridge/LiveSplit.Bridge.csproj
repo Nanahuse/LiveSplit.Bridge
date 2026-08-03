@@ -22,7 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NetMQ" Version="4.0.4.3" />
+    <PackageReference Include="NetMQ" Version="4.0.1.13" />
   </ItemGroup>
 
   <Target Name="DeployToLiveSplit" AfterTargets="Build">
