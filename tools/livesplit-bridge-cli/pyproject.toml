@@ -1,0 +1,27 @@
+[project]
+name = "livesplit-bridge-cli"
+version = "0.1.0"
+description = "Debug CLI for LiveSplit.Bridge"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "protobuf>=6.31,<7",
+    "pyzmq>=26,<28",
+]
+
+[project.scripts]
+livesplit-bridge = "livesplit_bridge_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.68,<2",
+    "pytest>=8,<10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
