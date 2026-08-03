@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.12"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: tools/livesplit-bridge-cli/uv.lock
+
+      - name: Restore CLI environment
+        working-directory: tools/livesplit-bridge-cli
+        run: |
+          uv sync --locked
+          uv run python scripts/generate_proto.py
+
+      - name: Lint CLI
+        working-directory: tools/livesplit-bridge-cli
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+
+      - name: Test .NET projects
+        run: dotnet test LiveSplit.Bridge.slnx --nologo
+
+      - name: Test CLI and Bridge integration
+        working-directory: tools/livesplit-bridge-cli
+        run: uv run pytest
