@@ -21,7 +21,10 @@ internal static class Program
         var layoutSettings = new BridgeLayoutSettings();
         var layout = new Layout { Settings = layoutSettings };
         var state = new LiveSplitState(run, form, layout, layoutSettings, new Settings());
-        using var runtime = new BridgeRuntime(state);
+        using var runtime = new BridgeRuntime(
+            state,
+            BridgeSettings.DefaultRpcPort,
+            BridgeSettings.DefaultEventPort);
 
         Console.WriteLine("READY");
         Console.Out.Flush();

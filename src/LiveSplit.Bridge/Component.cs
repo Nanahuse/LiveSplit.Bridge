@@ -13,7 +13,8 @@ namespace LiveSplit.Bridge;
 public sealed class Component : IComponent
 {
     private readonly LiveSplitState state;
-    private readonly BridgeRuntime? runtime;
+    private readonly BridgeSettings settings = new();
+    private BridgeSettingsControl? settingsControl;
     private static readonly object RuntimeLock = new();
     private static BridgeRuntime? ActiveRuntime;
     private static int ActiveComponentCount;
@@ -27,8 +28,7 @@ public sealed class Component : IComponent
             ActiveComponentCount++;
             if (ActiveRuntime == null)
             {
-                ActiveRuntime = new BridgeRuntime(state);
-                runtime = ActiveRuntime;
+                ActiveRuntime = CreateRuntime();
             }
             else
             {
@@ -73,16 +73,31 @@ public sealed class Component : IComponent
 
     public Control GetSettingsControl(LayoutMode mode)
     {
-        return new Panel();
+        settingsControl ??= new BridgeSettingsControl(settings);
+        settingsControl.PortsChanged -= SettingsControlOnPortsChanged;
+        settingsControl.PortsChanged += SettingsControlOnPortsChanged;
+        settingsControl.SetValues(settings);
+        return settingsControl;
     }
 
     public XmlNode GetSettings(XmlDocument document)
     {
-        return document.CreateElement("Settings");
+        var element = document.CreateElement("Settings");
+        settings.WriteTo(element);
+        return element;
     }
 
     public void SetSettings(XmlNode settings)
     {
+        var previousRpcPort = this.settings.RpcPort;
+        var previousEventPort = this.settings.EventPort;
+        this.settings.ReadFrom(settings);
+        settingsControl?.SetValues(this.settings);
+
+        if (previousRpcPort != this.settings.RpcPort || previousEventPort != this.settings.EventPort)
+        {
+            RestartRuntime();
+        }
     }
 
     public void Update(
@@ -104,6 +119,42 @@ public sealed class Component : IComponent
                 ActiveRuntime?.Dispose();
                 ActiveRuntime = null;
             }
+        }
+    }
+
+    private BridgeRuntime CreateRuntime()
+    {
+        return new BridgeRuntime(state, settings.RpcPort, settings.EventPort);
+    }
+
+    private void SettingsControlOnPortsChanged(object sender, EventArgs e)
+    {
+        if (settingsControl == null)
+        {
+            return;
+        }
+
+        if (settingsControl.RpcPort == settingsControl.EventPort)
+        {
+            MessageBox.Show(
+                "RPC port and event port must be different.",
+                ComponentName,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        settings.RpcPort = settingsControl.RpcPort;
+        settings.EventPort = settingsControl.EventPort;
+        RestartRuntime();
+    }
+
+    private void RestartRuntime()
+    {
+        lock (RuntimeLock)
+        {
+            ActiveRuntime?.Dispose();
+            ActiveRuntime = CreateRuntime();
         }
     }
 }

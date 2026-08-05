@@ -27,13 +27,13 @@ internal sealed class BridgeRuntime : IDisposable
     private long eventSequence;
     private long stateRevision;
 
-    public BridgeRuntime(LiveSplitState state)
+    public BridgeRuntime(LiveSplitState state, int rpcPort, int eventPort)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
         adapter = new LiveSplitAdapter(state);
 
-        rpcEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_RPC_ENDPOINT", "tcp://127.0.0.1:54000");
-        eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", "tcp://127.0.0.1:54001");
+        rpcEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_RPC_ENDPOINT", $"tcp://127.0.0.1:{rpcPort}");
+        eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", $"tcp://127.0.0.1:{eventPort}");
         sessionId = GenerateSessionId();
         eventSequence = 0;
         stateRevision = 1;

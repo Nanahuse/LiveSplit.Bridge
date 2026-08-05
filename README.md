@@ -1,5 +1,4 @@
 # LiveSplit.Bridge
-
 LiveSplit.Bridge は、外部アプリケーションから LiveSplit の状態を取得・監視し、
 タイマーやゲーム内時間を操作するための LiveSplit コンポーネントです。
 
@@ -32,6 +31,9 @@ LiveSplit.Bridge は、外部アプリケーションから LiveSplit の状態�
 | 状態取得・操作 | `tcp://127.0.0.1:54000` | ZeroMQ REQ/REP |
 | イベント監視 | `tcp://127.0.0.1:54001` | ZeroMQ PUB/SUB |
 
+RPCポートとイベントポートは、レイアウト編集画面のコンポーネント設定から変更できます。
+変更内容はLiveSplitのレイアウトに保存されます。
+
 外部クライアントは、同梱の Protobuf スキーマに従って通信します。スキーマは
 [`src/LiveSplit.Bridge.Protocol/proto`](src/LiveSplit.Bridge.Protocol/proto) にあります。
 
@@ -52,9 +54,8 @@ LiveSplit.Bridge は、外部アプリケーションから LiveSplit の状態�
 
 - クライアントが接続できない場合は、レイアウトに `LiveSplit Bridge` が追加されているか
   確認してください。
-- 同じPCで LiveSplit を複数起動すると、既定のポートが競合します。各プロセスの起動前に
-  `LIVESPLIT_BRIDGE_RPC_ENDPOINT` と `LIVESPLIT_BRIDGE_EVENT_ENDPOINT` 環境変数を別々の
-  エンドポイントへ設定してください。
+- 同じPCで LiveSplit を複数起動する場合は、ポートが競合しないよう各レイアウトの
+  コンポーネント設定で異なるRPCポートとイベントポートを指定してください。
 - Bridge は既定でループバックアドレスだけを使用し、別のPCからは接続できません。
 
 開発環境の準備、ビルド、テスト、リリース方法は [`DEVELOPMENT.md`](DEVELOPMENT.md) を
