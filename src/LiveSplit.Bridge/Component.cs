@@ -39,8 +39,8 @@ public sealed class Component : IComponent
 
     public string ComponentName => "LiveSplit Bridge";
 
-    public float HorizontalWidth => 20;
-    public float VerticalHeight => 20;
+    public float HorizontalWidth => 0;
+    public float VerticalHeight => 0;
 
     public float MinimumWidth => 0;
     public float MinimumHeight => 0;
