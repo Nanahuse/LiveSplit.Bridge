@@ -30,7 +30,9 @@ public class DeploymentProjectTests
 
         Assert.DoesNotContain(
             project.DescendantNodes().OfType<XText>(),
-            text => text.Value.Contains("LiveSplit.exe.config", StringComparison.OrdinalIgnoreCase));
+            text => text.Value.IndexOf(
+                "LiveSplit.exe.config",
+                StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private static XDocument LoadBridgeProject()

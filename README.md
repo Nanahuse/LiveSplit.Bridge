@@ -35,7 +35,7 @@ RPCポートとイベントポートは、レイアウト編集画面のコン�
 変更内容はLiveSplitのレイアウトに保存されます。
 
 外部クライアントは、同梱の Protobuf スキーマに従って通信します。スキーマは
-[`src/LiveSplit.Bridge.Protocol/proto`](src/LiveSplit.Bridge.Protocol/proto) にあります。
+[`proto`](proto) にあります。
 
 現在、次の操作に対応しています。
 
