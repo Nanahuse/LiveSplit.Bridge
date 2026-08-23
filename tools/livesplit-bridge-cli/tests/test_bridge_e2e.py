@@ -66,10 +66,11 @@ def bridge_endpoints(build_test_host: None) -> Iterator[tuple[str, str]]:
         stderr=subprocess.PIPE,
         text=True,
     )
-    assert process.stdout is not None
+    stdout = process.stdout
+    assert stdout is not None
     ready: queue.Queue[str] = queue.Queue()
     threading.Thread(
-        target=lambda: ready.put(process.stdout.readline()), daemon=True
+        target=lambda: ready.put(stdout.readline()), daemon=True
     ).start()
     assert ready.get(timeout=10).strip() == "READY"
     try:
