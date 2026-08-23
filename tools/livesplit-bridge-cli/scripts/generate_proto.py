@@ -5,7 +5,7 @@ from pathlib import Path
 from grpc_tools import protoc
 
 ROOT = Path(__file__).resolve().parents[3]
-PROTO_ROOT = ROOT / "src" / "LiveSplit.Bridge.Protocol" / "proto"
+PROTO_ROOT = ROOT / "proto"
 OUTPUT = Path(__file__).resolve().parents[1] / "src"
 
 

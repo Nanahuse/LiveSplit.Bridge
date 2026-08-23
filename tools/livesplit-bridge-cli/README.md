@@ -14,7 +14,7 @@ uv run python scripts/generate_proto.py
 ```
 
 `generate_proto.py` は本体の
-`src/LiveSplit.Bridge.Protocol/proto` を入力として、実行時に必要な
+`proto` を入力として、実行時に必要な
 `*_pb2.py` と型チェック用の `*_pb2.pyi` を同時に生成します。これらは生成物のため
 Gitには含めません。`.proto` を変更した場合や、クリーンチェックアウト後には再生成して
 ください。
