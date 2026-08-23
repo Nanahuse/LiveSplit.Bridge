@@ -69,9 +69,7 @@ def bridge_endpoints(build_test_host: None) -> Iterator[tuple[str, str]]:
     stdout = process.stdout
     assert stdout is not None
     ready: queue.Queue[str] = queue.Queue()
-    threading.Thread(
-        target=lambda: ready.put(stdout.readline()), daemon=True
-    ).start()
+    threading.Thread(target=lambda: ready.put(stdout.readline()), daemon=True).start()
     assert ready.get(timeout=10).strip() == "READY"
     try:
         yield rpc_endpoint, event_endpoint
