@@ -36,18 +36,17 @@ LiveSplit.BridgeはWindows上のLiveSplit 1.8.37を対象とし、.NET Framework
 
 ## セットアップ
 
-新しくcloneする場合はsubmoduleも取得します。
+新しくcloneした後、Bridgeのビルドに必要なsubmoduleだけを取得します。
 
 ```powershell
-git clone --recurse-submodules https://github.com/Nanahuse/LiveSplit.Bridge.git
+git clone https://github.com/Nanahuse/LiveSplit.Bridge.git
 cd LiveSplit.Bridge
+git submodule update --init --depth 1 external/LiveSplit
+git -C external/LiveSplit submodule update --init --depth 1 lib/SpeedrunComSharp
 ```
 
-既存のcloneでは次のコマンドでsubmoduleを同期できます。
-
-```powershell
-git submodule update --init --recursive
-```
+既存のcloneでも同じ2つの`git submodule update`を実行してください。LiveSplit配下のその他の
+コンポーネントと`lib/livesplit-core`は、Bridgeのビルドには使用しません。
 
 テストで使用するPython CLIの環境を準備します。
 
