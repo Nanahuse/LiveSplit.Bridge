@@ -146,8 +146,13 @@ uv run livesplit-bridge events
 
 ## 互換性
 
+- Bridgeの製品バージョンと`protocol_version`は別の値です。接続可否はrelease tagではなく、
+  RPCの`protocol_version`と利用するProtobuf packageで判定してください。
 - 未知のenum値や将来追加されるfieldを安全に扱えるProtobuf実装を使用してください。
 - `BridgeEvent`は`type`を確認してから、イベント種別に応じたfieldを参照してください。
 - `protocol_version`が未対応の場合は接続を継続せず、利用者へ明確なエラーを表示してください。
 - クライアントが依存する仕様変更では、対応する`.proto`とクライアント実装を同時に更新して
   ください。
+
+Bridge側の採番基準と非互換protocolの追加方針は
+[`DEVELOPMENT.md`のバージョン管理方針](DEVELOPMENT.md#バージョン管理方針)を参照してください。

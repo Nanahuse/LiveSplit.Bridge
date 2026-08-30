@@ -125,6 +125,62 @@ GitHub ActionsのCIは、pull request、`main`へのpush、手動実行で次を
 通信方式やスレッドモデルを含む内部設計は
 [`docs/implementation-plan.md`](docs/implementation-plan.md)を参照してください。
 
+## バージョン管理方針
+
+### 製品バージョン
+
+LiveSplit.Bridgeのリリースバージョンは、`vMAJOR.MINOR.PATCH`形式のGit tagを正とし、
+Semantic Versioningに従います。tagと配布ZIPのバージョンは必ず一致させます。
+
+安定版となる`v1.0.0`以降の増分基準は次のとおりです。
+
+| 変更 | 増分 | 例 |
+|---|---|---|
+| 後方互換性を壊す変更 | MAJOR | 既存設定の非互換変更、既存クライアントが動作しなくなる変更 |
+| 後方互換性を保つ機能追加 | MINOR | 新しい操作、イベント、設定の追加 |
+| 後方互換性を保つ修正 | PATCH | 不具合修正、内部改善、文書やビルドの修正 |
+
+`v0.x`は安定版前として扱います。この期間も互換性への影響を明示し、次の基準で更新します。
+
+- 既存利用者やクライアントの変更を必要とする非互換変更: MINOR
+- 後方互換性のある機能追加: MINOR
+- 後方互換性のある修正、文書、CI、パッケージ変更: PATCH
+
+複数種類の変更を含む場合は、最も大きい増分を採用します。すべてのmergeでreleaseを作る必要は
+ありませんが、releaseを作る際は前回release以降の全変更から次のversionを決定します。
+
+### プロトコルバージョン
+
+製品バージョンと`protocol_version`は別に管理します。製品のPATCHやMINORを更新しても、
+wire protocolに互換性があれば`protocol_version`は変更しません。
+
+次のような追加は、既存クライアントが未知のfieldやenum値を安全に扱える限り、原則として
+後方互換変更です。
+
+- 新しいoptional fieldの追加
+- 新しいRequest、Response、イベント種別の追加
+- 既存fieldの意味を変えない新機能の追加
+
+次のような変更はprotocolの非互換変更です。
+
+- 既存field番号やenum値の削除、再利用、型変更
+- 既存fieldやイベントの意味・必須条件の変更
+- 既存のRPC順序や状態同期の前提を壊す変更
+
+非互換変更では既存の`v1`スキーマを変更せず、新しいpackageとディレクトリ
+（例: `livesplit.bridge.v2`、`proto/livesplit/bridge/v2`）を追加し、`protocol_version`も
+更新します。対応するクライアントガイド、テスト、移行方法を同じpull requestで更新して
+ください。
+
+### tagとリリース履歴
+
+- 公開releaseのtagは`vX.Y.Z`形式とし、先頭ゼロを付けません。
+- push済みのtagと公開済みの成果物は上書きしません。
+- release失敗や公開後の修正では、新しいversionを採番します。
+- 互換性への影響と必要な移行作業をrelease notesへ記載します。
+- 対応LiveSplitバージョンを変更した場合は、README、submodule固定先、release notesを同時に
+  更新します。
+
 ## リリース
 
 リリースは[`.github/workflows/release.yml`](.github/workflows/release.yml)で自動化されています。
