@@ -47,6 +47,7 @@ enum BridgeEventType {
   EVENT_GAME_TIME_RESUMED = 13;
   EVENT_RUN_CHANGED = 20;
   EVENT_STATE_SNAPSHOT = 21;
+  EVENT_HEARTBEAT = 22;
 }
 
 message TimerSnapshot {
