@@ -71,7 +71,8 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 - 更新後に問題が起きた場合は、LiveSplitを終了してからファイルを上書きしたか確認して
   ください。
 
-## 開発者の方へ
+## 関連ドキュメント
 
-クライアント実装、通信プロトコル、開発環境、ビルド、テスト、リリースについては
-[`DEVELOPMENT.md`](DEVELOPMENT.md)を参照してください。
+- Bridgeへ接続するアプリケーションを作る方:
+  [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
+- LiveSplit.Bridge本体を開発する方: [`DEVELOPMENT.md`](DEVELOPMENT.md)
