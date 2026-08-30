@@ -107,6 +107,10 @@ public sealed class Component : IComponent
         float height,
         LayoutMode mode)
     {
+        lock (RuntimeLock)
+        {
+            ActiveRuntime?.ObserveExternalState();
+        }
     }
 
     public void Dispose()

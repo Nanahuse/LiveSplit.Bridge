@@ -13,11 +13,12 @@ namespace LiveSplit.Bridge
         private readonly LiveSplitState state;
         private readonly TimerModel timerModel;
 
+        public event Action<GameTimeOperationType> GameTimeChanged;
+
         public LiveSplitAdapter(LiveSplitState state)
         {
             this.state = state ?? throw new ArgumentNullException(nameof(state));
             this.timerModel = new TimerModel { CurrentState = state };
-            this.state.RegisterTimerModel(timerModel);
         }
 
         public TimerSnapshot BuildSnapshot(ulong stateRevision, ulong sessionId, ulong eventSequence)
@@ -49,6 +50,15 @@ namespace LiveSplit.Bridge
 
                 return snapshot;
             });
+        }
+
+        public GameTimeRevisionState CaptureGameTimeRevisionState()
+        {
+            return InvokeOnUiThread(() => new GameTimeRevisionState(
+                state.IsGameTimeInitialized,
+                state.IsGameTimePaused,
+                state.LoadingTimes.Ticks,
+                state.GameTimePauseTime?.Ticks));
         }
 
         public OperationResponse ExecuteTimerOperation(TimerOperationType operation)
@@ -107,52 +117,68 @@ namespace LiveSplit.Bridge
             });
         }
 
-        public OperationResponse ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks)
+        public GameTimeOperationExecution ExecuteGameTimeOperation(
+            GameTimeOperationType operation,
+            long? ticks)
         {
             return InvokeOnUiThread(() =>
             {
                 try
                 {
+                    var changed = false;
+
                     switch (operation)
                     {
                         case GameTimeOperationType.Initialize:
-                            timerModel.InitializeGameTime();
+                            changed = !state.IsGameTimeInitialized;
+                            if (changed)
+                            {
+                                timerModel.InitializeGameTime();
+                            }
                             break;
                         case GameTimeOperationType.Set:
                             if (!ticks.HasValue)
                             {
-                                return new OperationResponse
-                                {
-                                    Success = false,
-                                    Message = "Game time set operation requires ticks."
-                                };
+                                return GameTimeOperationExecution.Failure(
+                                    "Game time set operation requires ticks.");
                             }
 
-                            state.SetGameTime(TimeSpan.FromTicks(ticks.Value));
+                            var gameTime = TimeSpan.FromTicks(ticks.Value);
+                            changed = state.CurrentTime.GameTime != gameTime;
+                            if (changed)
+                            {
+                                state.SetGameTime(gameTime);
+                            }
                             break;
                         case GameTimeOperationType.GameTimePause:
-                            state.IsGameTimePaused = true;
+                            changed = !state.IsGameTimePaused;
+                            if (changed)
+                            {
+                                state.IsGameTimePaused = true;
+                            }
                             break;
                         case GameTimeOperationType.GameTimeResume:
-                            state.IsGameTimePaused = false;
+                            changed = state.IsGameTimePaused;
+                            if (changed)
+                            {
+                                state.IsGameTimePaused = false;
+                            }
                             break;
                         default:
-                            return new OperationResponse { Success = false, Message = $"Unsupported game time operation: {operation}" };
+                            return GameTimeOperationExecution.Failure(
+                                $"Unsupported game time operation: {operation}");
                     }
 
-                    return new OperationResponse
+                    if (changed)
                     {
-                        Success = true,
-                        Message = "OK"
-                    };
+                        GameTimeChanged?.Invoke(operation);
+                    }
+
+                    return GameTimeOperationExecution.Success(changed);
                 }
                 catch (Exception exception)
                 {
-                    return new OperationResponse
-                    {
-                        Success = false,
-                        Message = exception.Message
-                    };
+                    return GameTimeOperationExecution.Failure(exception.Message);
                 }
             });
         }
@@ -177,6 +203,77 @@ namespace LiveSplit.Bridge
                 LiveSplit.Model.TimerPhase.Ended => ProtocolTimerPhase.Ended,
                 _ => ProtocolTimerPhase.Unspecified,
             };
+        }
+    }
+
+    internal sealed class GameTimeOperationExecution
+    {
+        private GameTimeOperationExecution(OperationResponse response, bool changed)
+        {
+            Response = response;
+            Changed = changed;
+        }
+
+        public OperationResponse Response { get; }
+        public bool Changed { get; }
+
+        public static GameTimeOperationExecution Success(bool changed)
+        {
+            return new GameTimeOperationExecution(
+                new OperationResponse { Success = true, Message = "OK" },
+                changed);
+        }
+
+        public static GameTimeOperationExecution Failure(string message)
+        {
+            return new GameTimeOperationExecution(
+                new OperationResponse { Success = false, Message = message },
+                false);
+        }
+    }
+
+    internal readonly struct GameTimeRevisionState : IEquatable<GameTimeRevisionState>
+    {
+        public GameTimeRevisionState(
+            bool isInitialized,
+            bool isPaused,
+            long loadingTimeTicks,
+            long? pauseTimeTicks)
+        {
+            IsInitialized = isInitialized;
+            IsPaused = isPaused;
+            LoadingTimeTicks = loadingTimeTicks;
+            PauseTimeTicks = pauseTimeTicks;
+        }
+
+        public bool IsInitialized { get; }
+        public bool IsPaused { get; }
+        public long LoadingTimeTicks { get; }
+        public long? PauseTimeTicks { get; }
+
+        public bool Equals(GameTimeRevisionState other)
+        {
+            return IsInitialized == other.IsInitialized
+                && IsPaused == other.IsPaused
+                && LoadingTimeTicks == other.LoadingTimeTicks
+                && PauseTimeTicks == other.PauseTimeTicks;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is GameTimeRevisionState other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                var hashCode = IsInitialized.GetHashCode();
+                hashCode = (hashCode * 397) ^ IsPaused.GetHashCode();
+                hashCode = (hashCode * 397) ^ LoadingTimeTicks.GetHashCode();
+                hashCode = (hashCode * 397) ^ PauseTimeTicks.GetHashCode();
+                return hashCode;
+            }
         }
     }
 }

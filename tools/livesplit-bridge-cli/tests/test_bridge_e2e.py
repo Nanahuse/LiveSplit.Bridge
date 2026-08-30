@@ -11,6 +11,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import zmq
+
+from livesplit.bridge.v1 import common_pb2
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 TEST_HOST_PROJECT = (
@@ -87,21 +90,34 @@ def run_cli(rpc_endpoint: str, *arguments: str) -> subprocess.CompletedProcess[s
     )
 
 
+def receive_heartbeat(subscriber: zmq.Socket[bytes]) -> common_pb2.BridgeEvent:
+    while True:
+        event = common_pb2.BridgeEvent.FromString(subscriber.recv())
+        if event.type == common_pb2.EVENT_HEARTBEAT:
+            return event
+
+
 def test_cli_controls_bridge_timer(
     bridge_endpoints: tuple[str, str],
 ) -> None:
     rpc_endpoint, _ = bridge_endpoints
 
     initial = run_cli(rpc_endpoint, "--json", "snapshot")
-    started = run_cli(rpc_endpoint, "timer", "start")
+    no_op = run_cli(rpc_endpoint, "--json", "timer", "pause")
+    started = run_cli(rpc_endpoint, "--json", "timer", "start")
     snapshot = run_cli(rpc_endpoint, "--json", "snapshot")
 
     assert initial.returncode == 0, initial.stderr
-    assert json.loads(initial.stdout)["get_snapshot"]["snapshot"]["phase"] == (
-        "NOT_RUNNING"
-    )
+    initial_snapshot = json.loads(initial.stdout)["get_snapshot"]["snapshot"]
+    assert initial_snapshot["phase"] == "NOT_RUNNING"
+    assert no_op.returncode == 0, no_op.stderr
+    no_op_snapshot = json.loads(no_op.stdout)["operation"]["snapshot"]
+    assert no_op_snapshot["state_revision"] == initial_snapshot["state_revision"]
     assert started.returncode == 0, started.stderr
-    assert "success: true" in started.stdout
+    started_snapshot = json.loads(started.stdout)["operation"]["snapshot"]
+    assert int(started_snapshot["state_revision"]) == (
+        int(initial_snapshot["state_revision"]) + 1
+    )
     assert snapshot.returncode == 0, snapshot.stderr
     running = json.loads(snapshot.stdout)["get_snapshot"]["snapshot"]
     assert running["phase"] == "RUNNING"
@@ -115,9 +131,56 @@ def test_cli_sets_bridge_game_time(
     rpc_endpoint, _ = bridge_endpoints
 
     result = run_cli(rpc_endpoint, "--json", "game-time", "set", "12.345")
+    no_op = run_cli(rpc_endpoint, "--json", "game-time", "set", "12.345")
 
     assert result.returncode == 0, result.stderr
     operation = json.loads(result.stdout)["operation"]
+    assert no_op.returncode == 0, no_op.stderr
+    no_op_operation = json.loads(no_op.stdout)["operation"]
     assert operation["success"] is True
     assert operation["snapshot"]["game_time_ticks"] == "123450000"
     assert operation["snapshot"]["is_game_time_initialized"] is True
+    assert (
+        no_op_operation["snapshot"]["state_revision"]
+        == operation["snapshot"]["state_revision"]
+    )
+
+
+def test_bridge_publishes_heartbeat_without_advancing_sequence(
+    bridge_endpoints: tuple[str, str],
+) -> None:
+    rpc_endpoint, event_endpoint = bridge_endpoints
+    context = zmq.Context()
+    subscriber = context.socket(zmq.SUB)
+    subscriber.setsockopt(zmq.LINGER, 0)
+    subscriber.setsockopt(zmq.RCVTIMEO, 4_000)
+    subscriber.setsockopt(zmq.SUBSCRIBE, b"")
+    subscriber.connect(event_endpoint)
+
+    try:
+        initial_heartbeat = receive_heartbeat(subscriber)
+        repeated_heartbeat = receive_heartbeat(subscriber)
+        started = run_cli(rpc_endpoint, "timer", "start")
+        assert started.returncode == 0, started.stderr
+
+        while True:
+            timer_event = common_pb2.BridgeEvent.FromString(subscriber.recv())
+            if timer_event.type == common_pb2.EVENT_TIMER_STARTED:
+                break
+
+        next_heartbeat = receive_heartbeat(subscriber)
+
+        assert initial_heartbeat.session_id != 0
+        assert initial_heartbeat.event_sequence == 0
+        assert not initial_heartbeat.HasField("snapshot")
+        assert repeated_heartbeat.session_id == initial_heartbeat.session_id
+        assert repeated_heartbeat.event_sequence == initial_heartbeat.event_sequence
+        assert not repeated_heartbeat.HasField("snapshot")
+        assert timer_event.event_sequence == 1
+        assert timer_event.HasField("snapshot")
+        assert next_heartbeat.session_id == initial_heartbeat.session_id
+        assert next_heartbeat.event_sequence == timer_event.event_sequence
+        assert not next_heartbeat.HasField("snapshot")
+    finally:
+        subscriber.close()
+        context.term()
