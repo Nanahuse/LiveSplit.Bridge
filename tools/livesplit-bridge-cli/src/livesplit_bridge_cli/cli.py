@@ -8,7 +8,7 @@ import sys
 import zmq
 from google.protobuf.json_format import MessageToDict
 
-from livesplit.bridge.v1 import common_pb2
+from livesplit.bridge.v1 import common_pb2, run_pb2
 
 from .client import (
     GAME_TIME_OPERATIONS,
@@ -41,6 +41,7 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("attach", help="Attach and show session plus initial snapshot")
     commands.add_parser("snapshot", help="Get the current timer snapshot")
+    commands.add_parser("run", help="Get the currently loaded run snapshot")
 
     timer = commands.add_parser("timer", help="Execute a timer operation")
     timer.add_argument("operation", choices=TIMER_OPERATIONS)
@@ -96,12 +97,25 @@ def snapshot_lines(snapshot: common_pb2.TimerSnapshot) -> list[str]:
     ]
 
 
+def run_lines(run: run_pb2.RunSnapshot) -> list[str]:
+    lines = [
+        f"session={run.session_id} run_revision={run.run_revision} "
+        f"state_revision={run.captured_state_revision}",
+        f"game={run.game_name or '-'} category={run.category_name or '-'} "
+        f"attempts={run.attempt_count} comparisons={list(run.comparisons)}",
+    ]
+    lines.extend(f"  [{segment.index}] {segment.name}" for segment in run.segments)
+    return lines
+
+
 def print_message(message: object, as_json: bool) -> None:
     if as_json:
         print(json.dumps(message_dict(message), ensure_ascii=False, indent=2))
         return
     if isinstance(message, common_pb2.TimerSnapshot):
         print("\n".join(snapshot_lines(message)))
+    elif isinstance(message, run_pb2.RunSnapshot):
+        print("\n".join(run_lines(message)))
     else:
         print(message)
 
@@ -153,6 +167,12 @@ def main(argv: list[str] | None = None) -> int:
                     response = client.snapshot()
                     print_message(
                         response if args.json else response.get_snapshot.snapshot,
+                        args.json,
+                    )
+                case "run":
+                    response = client.run()
+                    print_message(
+                        response if args.json else response.get_run.run,
                         args.json,
                     )
                 case "timer":

@@ -245,28 +245,30 @@ option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
 
 スナップショットは、その時点での LiveSplit の同期に必要な状態を表す。
 
-初期版の例:
+実装済みの構成:
 
 ```proto
 message TimerSnapshot {
   uint64 state_revision = 1;
+  uint64 session_id = 2;
+  uint64 event_sequence = 3;
 
-  TimerPhase phase = 2;
-  int32 split_index = 3;
-  int32 split_count = 4;
+  TimerPhase phase = 4;
+  int32 split_index = 5;
+  int32 split_count = 6;
 
-  optional sint64 real_time_ticks = 5;
-  optional sint64 game_time_ticks = 6;
+  optional sint64 real_time_ticks = 7;
+  optional sint64 game_time_ticks = 8;
 
-  bool game_time_initialized = 7;
-  bool game_time_paused = 8;
+  bool is_paused = 9;
+  bool is_game_time_initialized = 10;
 
-  TimingMethod timing_method = 9;
-
-  uint64 attempt_revision = 10;
   uint64 run_revision = 11;
 }
 ```
+
+`run_revision` は Attach、GetSnapshot、操作応答、配信イベント、定期 snapshot のすべての
+`TimerSnapshot` に設定する。
 
 ### 8.1 `state_revision`
 
@@ -285,17 +287,38 @@ message TimerSnapshot {
 
 定期スナップショットを送信するだけでは増加させない。
 
-### 8.2 `attempt_revision`
+### 8.2 Attempt の識別（未実装）
 
-新しい Attempt へ移行したことを識別する。
+Attempt を revision で識別する構想があるが、現在の `TimerSnapshot` には含まれていない。
 
-Reset直後に再Startされ、外部側が途中の `NotRunning` を受信できなかった場合でも、新しい Attempt であることを検出できるようにする。
+将来、Reset直後に再Startされ、外部側が途中の `NotRunning` を受信できなかった場合でも
+新しい Attempt であることを検出できるようにする必要が生じた場合に、additive な field として
+追加する。
 
 ### 8.3 `run_revision`
 
 Segment構成、ゲーム名、カテゴリなど、Runに関係するデータが変化した場合に増加する。
 
-外部側は `run_revision` が変化した場合だけ、RunやSegmentの詳細を再取得する。
+`run_revision` は Bridge 起動時に `1` から開始し、`RunManuallyModified` を契機に増加する。
+`.lss` ファイルの切り替えや New Splits も `RunManuallyModified` として通知されるため、
+別イベントを追加せず同じ経路で扱う。
+
+Run 変更時は次の順で処理する。
+
+```text
+RunManuallyModified
+    ↓
+run_revision++
+    ↓
+state_revision++
+    ↓
+EVENT_RUN_CHANGED（更新後の TimerSnapshot を添付）
+```
+
+外部側は `TimerSnapshot.run_revision` が変化した場合だけ、`GetRun` で Run や Segment の
+詳細を再取得する。`run_revision` は Bridge session 内でのみ有効であり、Bridge 再起動後は
+新しい `session_id` と `run_revision = 1` になる。クライアントは
+`(session_id, run_revision)` を RunSnapshot の identity として扱う。
 
 ---
 
@@ -553,14 +576,56 @@ game_time.pause
 game_time.resume
 ```
 
-### Run / Segmentの最小読み取り
+### Run / Segmentの読み取り
 
-Auto Splitterで必要になった段階で追加する。
+`GetRun` で現在 LiveSplit にロードされている Run の `RunSnapshot` を取得する。取得オプションは
+設けない。Bridge は Run の独自コピーを保持せず、`GetRun` のたびに現在の `LiveSplitState.Run`
+から `LiveSplitAdapter.BuildRunSnapshot()` が生成する。LiveSplit UI thread 上で一貫した
+`RunSnapshot` を一度に構築する。
 
-```text
-run.get_summary
-segments.list
+```proto
+message GetRunRequest {}
+
+message GetRunResponse {
+  RunSnapshot run = 1;
+}
+
+message RunSnapshot {
+  uint64 session_id = 1;
+  uint64 run_revision = 2;
+  uint64 captured_state_revision = 3;
+
+  string game_name = 10;
+  string category_name = 11;
+  sint64 offset_ticks = 12;
+
+  optional string file_path = 13;
+  optional string layout_path = 14;
+
+  RunMetadata metadata = 20;
+
+  repeated string comparisons = 30;
+  repeated SegmentInfo segments = 31;
+
+  uint32 attempt_count = 40;
+}
 ```
+
+Segment は `SegmentInfo`、時間値は `TimeValue`（`real_time_ticks` / `game_time_ticks`、
+100ナノ秒単位）で表す。Run 全体の Comparison 一覧を正とし、各 Segment には同じ名前の
+`ComparisonTime` を格納する。値が無い Comparison も一覧には残し、時間値が無い場合は
+`TimeValue` の対応フィールドを unset にする。Personal Best は専用 field にはせず、
+Comparison 名をそのまま使用する。
+
+### Run API の対象外
+
+以下は今回の Run API に含めない。将来必要になった場合に別 API として追加できる構造にする。
+
+- Game icon / Segment icon
+- Attempt History / Segment History
+- Auto Splitter Settings
+- 現在進行中 Attempt の `SplitTime`
+- 過去 revision の `RunSnapshot` の保持・取得
 
 ---
 
@@ -966,5 +1031,9 @@ LiveSplit内部APIから分離できる処理を重点的にテストする。
 - Bridge DLLのComponentsへの自動配置
 - LiveSplit上でのコンポーネント追加
 - Start / Split / Skip / Undo / Reset等のイベント確認
+- TimerSnapshot / 操作 / Game Time / イベント配信
+- `GetRun` による `RunSnapshot`（game / category / metadata / comparison / segment）取得
+- `run_revision` の管理と `EVENT_RUN_CHANGED` の配信
 
-次に着手する項目は、**Protobuf定義とSnapshotBuilderの実装**とする。
+今後の拡張候補は、Attempt History / Segment History、icons、Auto Splitter Settings、
+過去 revision の保持など。いずれも既存 field を変更しない additive な追加として行う。
