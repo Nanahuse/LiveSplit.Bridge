@@ -11,6 +11,14 @@ using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge;
 
+internal enum BridgeEndpointKind { Rpc, Event, Other }
+internal sealed class BridgeTransportStartException : Exception
+{
+    public BridgeTransportStartException(BridgeEndpointKind kind, string endpoint, Exception inner) : base($"Failed to bind {kind} endpoint {endpoint}.", inner) { EndpointKind = kind; Endpoint = endpoint; }
+    public BridgeEndpointKind EndpointKind { get; }
+    public string Endpoint { get; }
+}
+
 internal sealed class BridgeRuntime : IDisposable
 {
     private const uint ProtocolVersion = 1;
@@ -126,15 +134,13 @@ internal sealed class BridgeRuntime : IDisposable
         if (!publisherReady.Wait(TimeSpan.FromSeconds(5)))
         {
             StopPublisherAfterStartFailure();
-            throw new TimeoutException("Timed out while binding the event endpoint.");
+            throw new BridgeTransportStartException(BridgeEndpointKind.Event, eventEndpoint, new TimeoutException("Timed out while binding the event endpoint."));
         }
 
         if (publisherStartException != null)
         {
             StopPublisherAfterStartFailure();
-            throw new InvalidOperationException(
-                $"Failed to bind the event endpoint {eventEndpoint}.",
-                publisherStartException);
+            throw new BridgeTransportStartException(BridgeEndpointKind.Event, eventEndpoint, publisherStartException);
         }
 
         try
@@ -143,13 +149,13 @@ internal sealed class BridgeRuntime : IDisposable
             responder.Bind(rpcEndpoint);
             Debug.WriteLine($"[LiveSplit.Bridge] RPC endpoint bound to {rpcEndpoint}");
         }
-        catch
+        catch (Exception exception)
         {
             responder?.Close();
             responder?.Dispose();
             responder = null;
             StopPublisherAfterStartFailure();
-            throw;
+            throw new BridgeTransportStartException(BridgeEndpointKind.Rpc, rpcEndpoint, exception);
         }
     }
 
