@@ -32,7 +32,6 @@ LiveSplit.BridgeはWindows上のLiveSplit 1.8.37を対象とし、.NET Framework
 | `tests/LiveSplit.Bridge.TestHost` | E2Eテスト用のBridgeホスト |
 | `tools/livesplit-bridge-cli` | Python製デバッグCLIとE2Eテスト |
 | `external/LiveSplit` | 対象LiveSplitのsubmodule |
-| `docs/implementation-plan.md` | 内部設計と実装方針 |
 
 ## セットアップ
 
@@ -120,9 +119,6 @@ GitHub ActionsのCIは、pull request、`main`へのpush、手動実行で次を
   ハートビート、状態が変わらない定期snapshotでは増加させないでください。
 - LiveSplitの対象バージョンを変更する場合は、submoduleの固定コミットとREADMEの対応環境を
   同時に更新してください。
-
-通信方式やスレッドモデルを含む内部設計は
-[`docs/implementation-plan.md`](docs/implementation-plan.md)を参照してください。
 
 ## バージョン管理方針
 
