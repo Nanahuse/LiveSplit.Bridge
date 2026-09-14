@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package livesplit.bridge.v1;
+
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
+
+message RunSnapshot {
+  uint64 session_id = 1;
+  uint64 run_revision = 2;
+  uint64 captured_state_revision = 3;
+
+  string game_name = 10;
+  string category_name = 11;
+  sint64 offset_ticks = 12;
+
+  optional string file_path = 13;
+  optional string layout_path = 14;
+
+  RunMetadata metadata = 20;
+
+  repeated string comparisons = 30;
+  repeated SegmentInfo segments = 31;
+
+  uint32 attempt_count = 40;
+}
+
+message SegmentInfo {
+  uint32 index = 1;
+  string name = 2;
+
+  repeated ComparisonTime comparisons = 10;
+  TimeValue best_segment_time = 11;
+
+  map<string, string> custom_variables = 20;
+}
+
+message TimeValue {
+  optional sint64 real_time_ticks = 1;
+  optional sint64 game_time_ticks = 2;
+}
+
+message ComparisonTime {
+  string name = 1;
+  TimeValue time = 2;
+}
+
+message RunMetadata {
+  optional string run_id = 1;
+
+  optional string platform_name = 2;
+  optional string region_name = 3;
+  bool uses_emulator = 4;
+
+  map<string, string> variables = 10;
+  repeated CustomVariable custom_variables = 11;
+}
+
+message CustomVariable {
+  string name = 1;
+  string value = 2;
+  bool is_permanent = 3;
+}

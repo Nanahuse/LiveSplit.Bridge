@@ -65,6 +65,9 @@ class BridgeClient:
             bridge_pb2.Request(get_snapshot=bridge_pb2.GetSnapshotRequest())
         )
 
+    def run(self) -> bridge_pb2.Response:
+        return self.request(bridge_pb2.Request(get_run=bridge_pb2.GetRunRequest()))
+
     def timer(self, operation: str) -> bridge_pb2.Response:
         return self.request(
             bridge_pb2.Request(

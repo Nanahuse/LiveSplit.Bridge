@@ -61,6 +61,7 @@ message TimerSnapshot {
   optional sint64 game_time_ticks = 8;
   bool is_paused = 9;
   bool is_game_time_initialized = 10;
+  uint64 run_revision = 11;
 }
 
 message OperationResponse {

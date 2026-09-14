@@ -75,4 +75,3 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 
 - Bridgeへ接続するアプリケーションを作る方:
   [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
-- LiveSplit.Bridge本体を開発する方: [`DEVELOPMENT.md`](DEVELOPMENT.md)

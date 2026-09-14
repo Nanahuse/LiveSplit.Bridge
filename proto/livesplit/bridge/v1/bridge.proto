@@ -5,6 +5,7 @@ package livesplit.bridge.v1;
 option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
 
 import "livesplit/bridge/v1/common.proto";
+import "livesplit/bridge/v1/run.proto";
 
 message Request {
   uint32 protocol_version = 1;
@@ -15,6 +16,7 @@ message Request {
     GetSnapshotRequest get_snapshot = 11;
     TimerOperationRequest timer_operation = 12;
     GameTimeOperationRequest game_time_operation = 13;
+    GetRunRequest get_run = 14;
   }
 }
 
@@ -27,6 +29,7 @@ message Response {
     AttachResponse attach = 20;
     GetSnapshotResponse get_snapshot = 21;
     OperationResponse operation = 22;
+    GetRunResponse get_run = 23;
   }
 }
 
@@ -41,6 +44,12 @@ message GetSnapshotRequest {}
 
 message GetSnapshotResponse {
   TimerSnapshot snapshot = 1;
+}
+
+message GetRunRequest {}
+
+message GetRunResponse {
+  RunSnapshot run = 1;
 }
 
 message TimerOperationRequest {

@@ -1,7 +1,6 @@
 # LiveSplit.Bridge クライアント開発ガイド
 
 この文書は、LiveSplit.Bridgeへ接続する外部アプリケーションを開発する方向けです。
-Bridge本体のビルドや変更については[`DEVELOPMENT.md`](DEVELOPMENT.md)を参照してください。
 
 ## プロトコル
 
@@ -46,6 +45,7 @@ Bridgeは既定でローカルPC上の次のエンドポイントを使用しま
 |---|---|
 | `attach` | セッションIDと現在のフルsnapshotを取得 |
 | `get_snapshot` | 現在のフルsnapshotを取得 |
+| `get_run` | 現在LiveSplitにロードされているRunの情報を取得 |
 | `timer_operation` | TimerのStart、Split、Skip、Undo、Reset、Pause、Resume |
 | `game_time_operation` | Game Timeの初期化、設定、Pause、Resume |
 
@@ -54,6 +54,70 @@ Bridge状態として扱ってください。Game Timeの`ticks`は100ナノ秒�
 
 ハートビートは、Timer操作を送信する直前の状態確認を代替しません。操作の前提状態が重要な
 場合は、必要に応じてRPCで最新snapshotを取得して確認してください。
+
+## Run API
+
+`get_run`は、呼び出した時点でLiveSplitにロードされているRunの情報を`RunSnapshot`として
+返します。LiveSplitの内部型をそのまま公開するものではありません。呼び出しのたびに現在の
+Runから生成するため、Bridgeが過去のRunや過去revisionのコピーを保持することはありません。
+
+主なフィールドは次のとおりです。
+
+| フィールド | 内容 |
+|---|---|
+| `session_id` | 現在のBridgeセッション |
+| `run_revision` | 現在のRunのrevision |
+| `captured_state_revision` | この`RunSnapshot`を生成した時点の`state_revision` |
+| `game_name` / `category_name` | `IRun`由来のゲーム名・カテゴリ名 |
+| `offset_ticks` | Runの開始オフセット。100ナノ秒単位 |
+| `file_path` / `layout_path` | 保存済みRun/Layoutのパス。存在しない場合はunset |
+| `metadata` | Run Metadata。`run_id`、platform、region、emulator使用、変数、custom variable |
+| `comparisons` | Run全体で利用可能なComparison名の一覧 |
+| `segments` | Segment一覧 |
+| `attempt_count` | 現在のRunのAttempt数 |
+
+`segments`の各`SegmentInfo`は`index`（0始まり）と`name`を持ちます。`comparisons`は
+Run全体のComparison一覧を正とし、各Segmentには同じ名前の`ComparisonTime`が入ります。
+値が存在しないComparisonも一覧には残り、対応する時間値が無い場合は`TimeValue`の
+real time / game timeがunsetになります。
+
+時間値は`TimeValue`で表し、`real_time_ticks` / `game_time_ticks`は100ナノ秒単位です。
+存在しない値はunsetで、空文字列や0で代用しません。Personal Bestを専用フィールドには
+分けておらず、`Personal Best`などのComparison名をそのまま使用します。
+
+### Run変更と`run_revision`
+
+`run_revision`はBridge起動時に`1`から始まり、Runが変更されるたびに増加します。同じ
+`session_id`の中では単調増加しますが、Bridgeを再起動すると`session_id`と`run_revision`は
+新しい値になります。クライアントは`(session_id, run_revision)`をRunSnapshotのidentityとして
+扱えます。
+
+Run変更時は、更新後の`run_revision`を持つ`TimerSnapshot`を含む`EVENT_RUN_CHANGED`が
+配信されます。通常のTimerおよびGame Timeイベント、定期snapshotにも現在の`run_revision`が
+含まれるため、クライアントは`TimerSnapshot.run_revision`の変化だけを見てRun変更を検出し、
+必要になった時点で`get_run`により詳細を再取得できます。`run_revision`が変化していなければ、
+`get_run`を再送する必要はありません。
+
+LiveSplitで別の`.lss`ファイルを開いた場合も、New Splitsで未保存のRunに切り替えた場合も、
+通常のRun変更として扱われます。未保存Runでは`file_path`、Layoutが無い場合は`layout_path`が
+unsetになります。
+
+### 再接続時の同期
+
+PUB/SUBは到達保証を持たないため、`run_revision`だけに依存してRun情報を再構築しないで
+ください。`session_id`の変更、`event_sequence`の欠落、ハートビートのタイムアウトを検出した
+場合は、通常の復旧手順に加えて`get_run`で最新の`RunSnapshot`を再取得し、記録済みの
+`run_revision`を更新してください。LiveSplitのRunが正であり、`get_run`は常に現在のRunを
+返します。
+
+### 今回対象外
+
+以下は現在のRun APIに含まれません。将来必要になった場合に別APIとして追加します。
+
+- Game icon / Segment icon
+- Attempt History / Segment History
+- Auto Splitter Settings
+- 進行中AttemptのSplitTime
 
 ## イベントストリーム
 
@@ -153,6 +217,3 @@ uv run livesplit-bridge events
 - `protocol_version`が未対応の場合は接続を継続せず、利用者へ明確なエラーを表示してください。
 - クライアントが依存する仕様変更では、対応する`.proto`とクライアント実装を同時に更新して
   ください。
-
-Bridge側の採番基準と非互換protocolの追加方針は
-[`DEVELOPMENT.md`のバージョン管理方針](DEVELOPMENT.md#バージョン管理方針)を参照してください。

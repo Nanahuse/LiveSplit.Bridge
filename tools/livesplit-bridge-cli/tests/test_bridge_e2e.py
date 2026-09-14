@@ -125,6 +125,37 @@ def test_cli_controls_bridge_timer(
     assert running["split_count"] == 2
 
 
+def test_cli_gets_current_run(
+    bridge_endpoints: tuple[str, str],
+) -> None:
+    rpc_endpoint, _ = bridge_endpoints
+
+    result = run_cli(rpc_endpoint, "--json", "run")
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)["get_run"]["run"]
+    assert run["run_revision"] == "1"
+    assert [segment["name"] for segment in run["segments"]] == ["First", "Second"]
+    assert [segment.get("index", 0) for segment in run["segments"]] == [0, 1]
+    assert run["comparisons"] == [
+        "Personal Best",
+        "Best Segments",
+        "Average Segments",
+    ]
+
+
+def test_cli_gets_run_revision_from_timer_snapshot(
+    bridge_endpoints: tuple[str, str],
+) -> None:
+    rpc_endpoint, _ = bridge_endpoints
+
+    result = run_cli(rpc_endpoint, "--json", "snapshot")
+
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads(result.stdout)["get_snapshot"]["snapshot"]
+    assert snapshot["run_revision"] == "1"
+
+
 def test_cli_sets_bridge_game_time(
     bridge_endpoints: tuple[str, str],
 ) -> None:

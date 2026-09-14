@@ -41,6 +41,7 @@ internal sealed class BridgeRuntime : IDisposable
     private Exception? publisherStartException;
     private readonly ulong sessionId;
     private long stateRevision;
+    private long runRevision;
     private GameTimeRevisionState observedGameTimeState;
     private int periodicSnapshotPending;
     private int disposed;
@@ -55,6 +56,7 @@ internal sealed class BridgeRuntime : IDisposable
         eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", $"tcp://127.0.0.1:{eventPort}");
         sessionId = GenerateSessionId();
         stateRevision = 1;
+        runRevision = 1;
 
         publisherThread = new Thread(PublisherLoop)
         {
@@ -256,7 +258,7 @@ internal sealed class BridgeRuntime : IDisposable
         }
     }
 
-    private Response HandleRequest(Request request)
+    internal Response HandleRequest(Request request)
     {
         if (request.ProtocolVersion != ProtocolVersion)
         {
@@ -288,6 +290,19 @@ internal sealed class BridgeRuntime : IDisposable
                     GetSnapshot = new GetSnapshotResponse
                     {
                         Snapshot = BuildCurrentSnapshot()
+                    }
+                };
+            }
+
+            if (request.GetRun != null)
+            {
+                return new Response
+                {
+                    ProtocolVersion = ProtocolVersion,
+                    RequestId = request.RequestId,
+                    GetRun = new GetRunResponse
+                    {
+                        Run = BuildCurrentRunSnapshot()
                     }
                 };
             }
@@ -340,8 +355,21 @@ internal sealed class BridgeRuntime : IDisposable
         return adapter.BuildSnapshot(
             ReadStateRevision(),
             sessionId,
-            eventSequence.LastSettled);
+            eventSequence.LastSettled,
+            ReadRunRevision());
     }
+
+    private RunSnapshot BuildCurrentRunSnapshot()
+    {
+        return adapter.BuildRunSnapshot(
+            ReadRunRevision(),
+            ReadStateRevision(),
+            sessionId);
+    }
+
+    internal ulong StateRevision => ReadStateRevision();
+
+    internal ulong RunRevision => ReadRunRevision();
 
     private void PublishPeriodicSnapshot()
     {
@@ -528,6 +556,16 @@ internal sealed class BridgeRuntime : IDisposable
         Interlocked.Increment(ref stateRevision);
     }
 
+    private ulong ReadRunRevision()
+    {
+        return unchecked((ulong)Interlocked.Read(ref runRevision));
+    }
+
+    private void IncrementRunRevision()
+    {
+        Interlocked.Increment(ref runRevision);
+    }
+
     private void AdapterGameTimeChanged(GameTimeOperationType operation)
     {
         RecordCurrentGameTimeState();
@@ -579,6 +617,7 @@ internal sealed class BridgeRuntime : IDisposable
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
         RecordCurrentGameTimeState();
+        IncrementRunRevision();
         PublishStateChangeEvent(BridgeEventType.EventRunChanged, "Run changed");
     }
 

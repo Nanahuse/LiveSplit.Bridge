@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <Protobuf Include="../../proto/livesplit/bridge/v1/common.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v1/run.proto" ProtoRoot="../../proto" />
     <Protobuf Include="../../proto/livesplit/bridge/v1/bridge.proto" ProtoRoot="../../proto" />
   </ItemGroup>
 

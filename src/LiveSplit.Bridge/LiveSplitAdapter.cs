@@ -1,10 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 using LiveSplit.Bridge.Protocol.V1;
 using LiveSplit.Model;
+using LiveSplit.Model.Comparisons;
 using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V1.TimerPhase;
 using ModelTimerPhase = LiveSplit.Model.TimerPhase;
+using ModelRunMetadata = LiveSplit.Model.RunMetadata;
+using ProtoCustomVariable = LiveSplit.Bridge.Protocol.V1.CustomVariable;
+using ProtoRunMetadata = LiveSplit.Bridge.Protocol.V1.RunMetadata;
 
 namespace LiveSplit.Bridge
 {
@@ -21,7 +27,7 @@ namespace LiveSplit.Bridge
             this.timerModel = new TimerModel { CurrentState = state };
         }
 
-        public TimerSnapshot BuildSnapshot(ulong stateRevision, ulong sessionId, ulong eventSequence)
+        public TimerSnapshot BuildSnapshot(ulong stateRevision, ulong sessionId, ulong eventSequence, ulong runRevision)
         {
             return InvokeOnUiThread(() =>
             {
@@ -29,6 +35,7 @@ namespace LiveSplit.Bridge
                 var snapshot = new TimerSnapshot
                 {
                     StateRevision = stateRevision,
+                    RunRevision = runRevision,
                     SessionId = sessionId,
                     EventSequence = eventSequence,
                     Phase = MapTimerPhase(state.CurrentPhase),
@@ -50,6 +57,160 @@ namespace LiveSplit.Bridge
 
                 return snapshot;
             });
+        }
+
+        public RunSnapshot BuildRunSnapshot(ulong runRevision, ulong stateRevision, ulong sessionId)
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var snapshot = new RunSnapshot
+                {
+                    SessionId = sessionId,
+                    RunRevision = runRevision,
+                    CapturedStateRevision = stateRevision,
+                };
+
+                var run = state.Run;
+                if (run == null)
+                {
+                    return snapshot;
+                }
+
+                snapshot.GameName = run.GameName ?? string.Empty;
+                snapshot.CategoryName = run.CategoryName ?? string.Empty;
+                snapshot.OffsetTicks = run.Offset.Ticks;
+
+                if (!string.IsNullOrEmpty(run.FilePath))
+                {
+                    snapshot.FilePath = run.FilePath;
+                }
+
+                if (!string.IsNullOrEmpty(run.LayoutPath))
+                {
+                    snapshot.LayoutPath = run.LayoutPath;
+                }
+
+                snapshot.Metadata = BuildRunMetadata(run.Metadata);
+
+                var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
+                    .Distinct()
+                    .ToList();
+                snapshot.Comparisons.Add(comparisons);
+
+                for (var index = 0; index < run.Count; index++)
+                {
+                    snapshot.Segments.Add(BuildSegmentInfo(run[index], index, comparisons));
+                }
+
+                snapshot.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
+
+                return snapshot;
+            });
+        }
+
+        private static ProtoRunMetadata BuildRunMetadata(ModelRunMetadata metadata)
+        {
+            var result = new ProtoRunMetadata();
+            if (metadata == null)
+            {
+                return result;
+            }
+
+            if (!string.IsNullOrEmpty(metadata.RunID))
+            {
+                result.RunId = metadata.RunID;
+            }
+
+            if (!string.IsNullOrEmpty(metadata.PlatformName))
+            {
+                result.PlatformName = metadata.PlatformName;
+            }
+
+            if (!string.IsNullOrEmpty(metadata.RegionName))
+            {
+                result.RegionName = metadata.RegionName;
+            }
+
+            result.UsesEmulator = metadata.UsesEmulator;
+
+            if (metadata.VariableValueNames != null)
+            {
+                foreach (var pair in metadata.VariableValueNames)
+                {
+                    result.Variables[pair.Key] = pair.Value ?? string.Empty;
+                }
+            }
+
+            if (metadata.CustomVariables != null)
+            {
+                foreach (var pair in metadata.CustomVariables)
+                {
+                    result.CustomVariables.Add(new ProtoCustomVariable
+                    {
+                        Name = pair.Key,
+                        Value = pair.Value?.Value ?? string.Empty,
+                        IsPermanent = pair.Value?.IsPermanent ?? false,
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        private static SegmentInfo BuildSegmentInfo(ISegment segment, int index, IReadOnlyList<string> comparisons)
+        {
+            var info = new SegmentInfo
+            {
+                Index = (uint)index,
+                Name = segment.Name ?? string.Empty,
+                BestSegmentTime = MapTime(segment.BestSegmentTime),
+            };
+
+            foreach (var comparison in comparisons)
+            {
+                info.Comparisons.Add(new ComparisonTime
+                {
+                    Name = comparison,
+                    Time = MapTime(segment.Comparisons, comparison),
+                });
+            }
+
+            if (segment.CustomVariableValues != null)
+            {
+                foreach (var pair in segment.CustomVariableValues)
+                {
+                    info.CustomVariables[pair.Key] = pair.Value ?? string.Empty;
+                }
+            }
+
+            return info;
+        }
+
+        private static TimeValue MapTime(Time time)
+        {
+            var value = new TimeValue();
+
+            if (time.RealTime.HasValue)
+            {
+                value.RealTimeTicks = time.RealTime.Value.Ticks;
+            }
+
+            if (time.GameTime.HasValue)
+            {
+                value.GameTimeTicks = time.GameTime.Value.Ticks;
+            }
+
+            return value;
+        }
+
+        private static TimeValue MapTime(IComparisons comparisons, string name)
+        {
+            if (comparisons != null && comparisons.TryGetValue(name, out var time))
+            {
+                return MapTime(time);
+            }
+
+            return new TimeValue();
         }
 
         public GameTimeRevisionState CaptureGameTimeRevisionState()
