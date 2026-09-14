@@ -10,6 +10,8 @@ using LiveSplit.UI.Components;
 
 namespace LiveSplit.Bridge;
 
+internal enum BridgeRuntimeStatus { Starting, Running, Failed, Stopped }
+
 public sealed class Component : IComponent
 {
     private readonly LiveSplitState state;
@@ -18,147 +20,37 @@ public sealed class Component : IComponent
     private static readonly object RuntimeLock = new();
     private static BridgeRuntime? ActiveRuntime;
     private static int ActiveComponentCount;
+    private static BridgeRuntimeStatus status = BridgeRuntimeStatus.Starting;
+    private static string? lastError;
+    private static long retryAt;
 
-    public Component(LiveSplitState state)
-    {
-        this.state = state ?? throw new ArgumentNullException(nameof(state));
-
-        lock (RuntimeLock)
-        {
-            ActiveComponentCount++;
-            if (ActiveRuntime == null)
-            {
-                ActiveRuntime = CreateRuntime();
-            }
-            else
-            {
-                Debug.WriteLine("[LiveSplit.Bridge] A Bridge runtime is already active. This component will not start a second runtime.");
-            }
-        }
-    }
-
+    public Component(LiveSplitState state) { this.state = state ?? throw new ArgumentNullException(nameof(state)); lock (RuntimeLock) { if (ActiveComponentCount == 0) { status = BridgeRuntimeStatus.Starting; lastError = null; retryAt = 0; } ActiveComponentCount++; } }
     public string ComponentName => "LiveSplit Bridge";
-
-    public float HorizontalWidth => 0;
-    public float VerticalHeight => 0;
-
-    public float MinimumWidth => 0;
-    public float MinimumHeight => 0;
-
-    public float PaddingTop => 0;
-    public float PaddingBottom => 0;
-    public float PaddingLeft => 0;
-    public float PaddingRight => 0;
-
-    public IDictionary<string, Action> ContextMenuControls { get; } =
-        new Dictionary<string, Action>();
-
-    public void DrawHorizontal(
-        Graphics graphics,
-        LiveSplitState state,
-        float height,
-        Region clipRegion)
-    {
-        // The Bridge does not render anything.
-    }
-
-    public void DrawVertical(
-        Graphics graphics,
-        LiveSplitState state,
-        float width,
-        Region clipRegion)
-    {
-        // The Bridge does not render anything.
-    }
-
-    public Control GetSettingsControl(LayoutMode mode)
-    {
-        settingsControl ??= new BridgeSettingsControl(settings);
-        settingsControl.PortsChanged -= SettingsControlOnPortsChanged;
-        settingsControl.PortsChanged += SettingsControlOnPortsChanged;
-        settingsControl.SetValues(settings);
-        return settingsControl;
-    }
-
-    public XmlNode GetSettings(XmlDocument document)
-    {
-        var element = document.CreateElement("Settings");
-        settings.WriteTo(element);
-        return element;
-    }
-
-    public void SetSettings(XmlNode settings)
-    {
-        var previousRpcPort = this.settings.RpcPort;
-        var previousEventPort = this.settings.EventPort;
-        this.settings.ReadFrom(settings);
-        settingsControl?.SetValues(this.settings);
-
-        if (previousRpcPort != this.settings.RpcPort || previousEventPort != this.settings.EventPort)
-        {
-            RestartRuntime();
-        }
-    }
-
-    public void Update(
-        IInvalidator invalidator,
-        LiveSplitState state,
-        float width,
-        float height,
-        LayoutMode mode)
+    public float HorizontalWidth => 0; public float VerticalHeight => 0; public float MinimumWidth => 0; public float MinimumHeight => 0;
+    public float PaddingTop => 0; public float PaddingBottom => 0; public float PaddingLeft => 0; public float PaddingRight => 0;
+    public IDictionary<string, Action> ContextMenuControls { get; } = new Dictionary<string, Action>();
+    public void DrawHorizontal(Graphics graphics, LiveSplitState state, float height, Region clipRegion) { }
+    public void DrawVertical(Graphics graphics, LiveSplitState state, float width, Region clipRegion) { }
+    public Control GetSettingsControl(LayoutMode mode) { settingsControl ??= new BridgeSettingsControl(settings); settingsControl.PortsChanged += SettingsControlOnPortsChanged; settingsControl.SetValues(settings); UpdateControl(); return settingsControl; }
+    public XmlNode GetSettings(XmlDocument document) { var e = document.CreateElement("Settings"); settings.WriteTo(e); return e; }
+    public void SetSettings(XmlNode node) { settings.ReadFrom(node); settingsControl?.SetValues(settings); }
+    public void Update(IInvalidator invalidator, LiveSplitState state, float width, float height, LayoutMode mode)
     {
         lock (RuntimeLock)
         {
-            ActiveRuntime?.ObserveExternalState();
+            if (status == BridgeRuntimeStatus.Stopped) return;
+            if (ActiveRuntime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
+            ActiveRuntime?.ObserveExternalState(); UpdateControl();
         }
     }
-
-    public void Dispose()
+    public void Dispose() { lock (RuntimeLock) { ActiveComponentCount = Math.Max(0, ActiveComponentCount - 1); if (ActiveComponentCount == 0) { status = BridgeRuntimeStatus.Stopped; retryAt = 0; ActiveRuntime?.Dispose(); ActiveRuntime = null; } } }
+    private void TryStartRuntime()
     {
-        lock (RuntimeLock)
-        {
-            ActiveComponentCount = Math.Max(0, ActiveComponentCount - 1);
-            if (ActiveComponentCount == 0)
-            {
-                ActiveRuntime?.Dispose();
-                ActiveRuntime = null;
-            }
-        }
+        status = BridgeRuntimeStatus.Starting; UpdateControl();
+        try { ActiveRuntime = new BridgeRuntime(state, settings.RpcPort, settings.EventPort); status = BridgeRuntimeStatus.Running; lastError = null; Debug.WriteLine("[LiveSplit.Bridge] Bridge runtime recovered successfully."); }
+        catch (BridgeTransportStartException ex) { ActiveRuntime = null; status = BridgeRuntimeStatus.Failed; lastError = $"Failed to bind {ex.EndpointKind} endpoint:\r\n{ex.Endpoint}\r\n\r\nThe port may already be in use.\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] {ex.Message}: {ex.InnerException?.Message}"); }
+        catch (Exception ex) { status = BridgeRuntimeStatus.Failed; lastError = $"Runtime startup failed:\r\n{ex.Message}\r\n\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] Runtime startup failed: {ex}"); }
     }
-
-    private BridgeRuntime CreateRuntime()
-    {
-        return new BridgeRuntime(state, settings.RpcPort, settings.EventPort);
-    }
-
-    private void SettingsControlOnPortsChanged(object sender, EventArgs e)
-    {
-        if (settingsControl == null)
-        {
-            return;
-        }
-
-        if (settingsControl.RpcPort == settingsControl.EventPort)
-        {
-            MessageBox.Show(
-                "RPC port and event port must be different.",
-                ComponentName,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        settings.RpcPort = settingsControl.RpcPort;
-        settings.EventPort = settingsControl.EventPort;
-        RestartRuntime();
-    }
-
-    private void RestartRuntime()
-    {
-        lock (RuntimeLock)
-        {
-            ActiveRuntime?.Dispose();
-            ActiveRuntime = CreateRuntime();
-        }
-    }
+    private void SettingsControlOnPortsChanged(object sender, EventArgs e) { if (settingsControl == null) return; if (settingsControl.RpcPort == settingsControl.EventPort) { settingsControl.SetValidationError("RPC port and Event port must be different."); return; } settings.RpcPort = settingsControl.RpcPort; settings.EventPort = settingsControl.EventPort; lock (RuntimeLock) { ActiveRuntime?.Dispose(); ActiveRuntime = null; retryAt = 0; TryStartRuntime(); } }
+    private void UpdateControl() => settingsControl?.SetRuntimeStatus(status.ToString(), status == BridgeRuntimeStatus.Failed ? lastError : null);
 }

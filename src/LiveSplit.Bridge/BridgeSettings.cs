@@ -48,6 +48,8 @@ internal sealed class BridgeSettingsControl : UserControl
 {
     private readonly NumericUpDown rpcPort = CreatePortInput();
     private readonly NumericUpDown eventPort = CreatePortInput();
+    private readonly Label status = new() { AutoSize = true };
+    private readonly Label validation = new() { AutoSize = true, ForeColor = System.Drawing.Color.DarkRed };
 
     public event EventHandler PortsChanged;
 
@@ -64,13 +66,15 @@ internal sealed class BridgeSettingsControl : UserControl
             Padding = new Padding(7)
         };
 
-        layout.Controls.Add(new Label { Text = "RPC port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        layout.Controls.Add(rpcPort, 1, 0);
-        layout.Controls.Add(new Label { Text = "Event port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        layout.Controls.Add(eventPort, 1, 1);
+        layout.Controls.Add(status, 0, 0); layout.SetColumnSpan(status, 2);
+        layout.Controls.Add(validation, 0, 1); layout.SetColumnSpan(validation, 2);
+        layout.Controls.Add(new Label { Text = "RPC port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        layout.Controls.Add(rpcPort, 1, 2);
+        layout.Controls.Add(new Label { Text = "Event port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        layout.Controls.Add(eventPort, 1, 3);
         var applyButton = new Button { Text = "Apply", AutoSize = true };
         applyButton.Click += (_, _) => PortsChanged?.Invoke(this, EventArgs.Empty);
-        layout.Controls.Add(applyButton, 1, 2);
+        layout.Controls.Add(applyButton, 1, 4);
         Controls.Add(layout);
 
         SetValues(settings);
@@ -78,6 +82,9 @@ internal sealed class BridgeSettingsControl : UserControl
 
     public int RpcPort => Decimal.ToInt32(rpcPort.Value);
     public int EventPort => Decimal.ToInt32(eventPort.Value);
+
+    public void SetRuntimeStatus(string text, string? error = null) { status.Text = $"Status: {text}"; validation.Text = error ?? string.Empty; }
+    public void SetValidationError(string text) => validation.Text = text;
 
     public void SetValues(BridgeSettings settings)
     {
