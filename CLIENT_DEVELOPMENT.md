@@ -1,7 +1,6 @@
 # LiveSplit.Bridge クライアント開発ガイド
 
 この文書は、LiveSplit.Bridgeへ接続する外部アプリケーションを開発する方向けです。
-Bridge本体のビルドや変更については[`DEVELOPMENT.md`](DEVELOPMENT.md)を参照してください。
 
 ## プロトコル
 
@@ -218,6 +217,3 @@ uv run livesplit-bridge events
 - `protocol_version`が未対応の場合は接続を継続せず、利用者へ明確なエラーを表示してください。
 - クライアントが依存する仕様変更では、対応する`.proto`とクライアント実装を同時に更新して
   ください。
-
-Bridge側の採番基準と非互換protocolの追加方針は
-[`DEVELOPMENT.md`のバージョン管理方針](DEVELOPMENT.md#バージョン管理方針)を参照してください。
