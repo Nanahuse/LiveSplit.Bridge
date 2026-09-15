@@ -8,6 +8,7 @@ using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge.Tests;
 
+[Collection("BridgeRuntimeEndpoints")]
 public class RunRevisionTests
 {
     [Fact]
