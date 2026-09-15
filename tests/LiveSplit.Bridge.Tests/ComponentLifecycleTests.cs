@@ -6,7 +6,6 @@ using System.Xml;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
 using LiveSplit.UI;
-using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -149,8 +148,9 @@ public class ComponentLifecycleTests
         var ports = GetFreePorts(2);
         var (rpcPort, eventPort) = (ports[0], ports[1]);
 
-        using var blocker = new ResponseSocket();
-        blocker.Bind($"tcp://127.0.0.1:{rpcPort}");
+        var blocker = new TcpListener(IPAddress.Loopback, rpcPort);
+        blocker.Server.ExclusiveAddressUse = true;
+        blocker.Start();
 
         using var component = new Component(state);
         SetSettings(component, rpcPort, eventPort);
@@ -160,11 +160,10 @@ public class ComponentLifecycleTests
         Assert.Equal("Status: Failed", GetStatusText(control));
         WaitForListener(eventPort, expected: false);
 
-        blocker.Close();
-        blocker.Dispose();
+        blocker.Stop();
 
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(12);
-        while (DateTime.UtcNow < deadline && !IsLoopbackListening(rpcPort))
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < deadline && !(IsLoopbackListening(rpcPort) && IsLoopbackListening(eventPort)))
         {
             Update(component, state);
             Thread.Sleep(200);
