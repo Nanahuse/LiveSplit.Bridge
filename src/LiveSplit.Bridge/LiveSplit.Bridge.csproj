@@ -3,11 +3,13 @@
   <ItemGroup>
     <ProjectReference
       Include="..\..\external\LiveSplit\src\LiveSplit.Core\LiveSplit.Core.csproj"
-      Private="false" />
+      Private="false"
+      ExcludeAssets="runtime" />
 
     <ProjectReference
       Include="..\..\external\LiveSplit\src\UpdateManager\UpdateManager.csproj"
-      Private="false" />
+      Private="false"
+      ExcludeAssets="runtime" />
 
     <ProjectReference
       Include="..\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
@@ -21,16 +23,28 @@
     <RootNamespace>LiveSplit.Bridge</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="NetMQ" Version="4.0.1.13" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;NetMQ.dll;AsyncIO.dll;NaCl.dll;Google.Protobuf.dll</BridgeDistributionFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <BridgeDistributionFile Include="$(BridgeDistributionFiles)" />
   </ItemGroup>
 
   <Target Name="DeployToLiveSplit" AfterTargets="Build">
     <MakeDir Directories="$(LiveSplitComponentsPath)" />
 
     <ItemGroup>
-      <BridgeDeployFiles Include="$(TargetPath);$(TargetDir)$(TargetName).pdb" />
-      <BridgeDeployFiles Include="@(ReferenceCopyLocalPaths)" />
+      <BridgeDeployFiles Include="@(BridgeDistributionFile->'$(TargetDir)%(Identity)')" />
     </ItemGroup>
 
     <Copy

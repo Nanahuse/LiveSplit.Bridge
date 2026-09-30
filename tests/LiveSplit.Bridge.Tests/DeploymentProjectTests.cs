@@ -35,6 +35,66 @@ public class DeploymentProjectTests
                 StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
+    [Fact]
+    public void DistributionAllowListContainsOnlyExpectedBridgeFiles()
+    {
+        var project = LoadBridgeProject();
+        XNamespace msbuild = project.Root!.Name.Namespace;
+        var files = ((string?)project
+            .Descendants(msbuild + "BridgeDistributionFiles")
+            .Single()
+            .Value ?? string.Empty)
+            .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.Equal(
+            new[]
+            {
+                "LiveSplit.Bridge.dll",
+                "LiveSplit.Bridge.Protocol.dll",
+                "NetMQ.dll",
+                "AsyncIO.dll",
+                "NaCl.dll",
+                "Google.Protobuf.dll",
+            },
+            files);
+        Assert.DoesNotContain(files, file => file.StartsWith("System.", StringComparison.Ordinal));
+        Assert.DoesNotContain("LiveSplit.Core.dll", files);
+        Assert.DoesNotContain("UpdateManager.dll", files);
+    }
+
+    [Fact]
+    public void DeploymentUsesDistributionAllowListInsteadOfReferenceCopyLocalPaths()
+    {
+        var project = LoadBridgeProject();
+        XNamespace msbuild = project.Root!.Name.Namespace;
+        var deployTarget = project
+            .Descendants(msbuild + "Target")
+            .Single(element => (string?)element.Attribute("Name") == "DeployToLiveSplit");
+        var includes = deployTarget
+            .Descendants(msbuild + "BridgeDeployFiles")
+            .Select(element => (string?)element.Attribute("Include"))
+            .ToArray();
+
+        Assert.Contains(includes, include => include?.Contains("BridgeDistributionFile", StringComparison.Ordinal) == true);
+        Assert.DoesNotContain(includes, include => include?.Contains("ReferenceCopyLocalPaths", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void ReleaseBuildDoesNotGenerateDebugSymbols()
+    {
+        var project = LoadBridgeProject();
+        XNamespace msbuild = project.Root!.Name.Namespace;
+        var releaseGroup = project
+            .Descendants(msbuild + "PropertyGroup")
+            .Single(element => (string?)element.Attribute("Condition") == "'$(Configuration)' == 'Release'");
+
+        Assert.Equal("None", (string?)releaseGroup.Element(msbuild + "DebugType"));
+        Assert.Equal("false", (string?)releaseGroup.Element(msbuild + "DebugSymbols"));
+        Assert.DoesNotContain(
+            project.Descendants(msbuild + "BridgeDistributionFiles").Single().Value.Split(';'),
+            file => file.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static XDocument LoadBridgeProject()
     {
         var repositoryRoot = Path.GetFullPath(
