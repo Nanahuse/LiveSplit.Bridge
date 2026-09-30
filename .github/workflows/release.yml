@@ -75,10 +75,30 @@ jobs:
           $artifactPath = Join-Path $PWD "artifacts"
           New-Item -ItemType Directory -Path $stagingPath, $artifactPath -Force
 
-          Copy-Item `
-            -Path "external/LiveSplit/bin/release/Components/*" `
-            -Destination $stagingPath `
-            -Recurse
+          $buildProperties = dotnet msbuild src/LiveSplit.Bridge/LiveSplit.Bridge.csproj `
+            -property:Configuration=Release `
+            -getProperty:TargetDir,BridgeDistributionFiles `
+            -nologo | ConvertFrom-Json
+          $distributionFiles = $buildProperties.Properties.BridgeDistributionFiles -split ";"
+          $buildOutputPath = $buildProperties.Properties.TargetDir
+          foreach ($file in $distributionFiles) {
+            $sourcePath = Join-Path $buildOutputPath $file
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+              throw "Expected release file was not produced: $sourcePath"
+            }
+
+            Copy-Item -LiteralPath $sourcePath -Destination $stagingPath
+          }
+
+          $expectedFiles = @($distributionFiles | Sort-Object)
+          $stagedFiles = @(Get-ChildItem -LiteralPath $stagingPath -File |
+            ForEach-Object Name | Sort-Object)
+          if (Compare-Object $expectedFiles $stagedFiles) {
+            throw "Release staging contents do not match BridgeDistributionFiles."
+          }
+          if (Get-ChildItem -LiteralPath $stagingPath -Filter "*.pdb" -File) {
+            throw "Release staging must not contain PDB files."
+          }
 
           $archivePath = Join-Path $artifactPath "$packageName.zip"
           Compress-Archive -Path "$stagingPath/*" -DestinationPath $archivePath
