@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <PackageReference Include="NetMQ" Version="4.0.1.13" />
+    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
   </ItemGroup>
 
   <PropertyGroup>

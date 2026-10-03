@@ -1,9 +1,6 @@
-using Google.Protobuf;
 using LiveSplit.Bridge.Protocol.V1;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
-using NetMQ;
-using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -11,16 +8,16 @@ namespace LiveSplit.Bridge.Tests;
 public class BridgeRuntimeEventTests
 {
     [Fact]
-    public void TimerStartedOnLiveSplitSidePublishesTimerEvent()
+    public async Task TimerStartedOnLiveSplitSidePublishesTimerEvent()
     {
-        using var harness = EventHarness.Create();
-        harness.WaitForHeartbeat();
+        using var harness = await EventHarness.CreateAsync();
+        await harness.WaitForHeartbeatAsync();
 
         var timerModel = new TimerModel { CurrentState = harness.State };
         harness.State.RegisterTimerModel(timerModel);
         timerModel.Start();
 
-        var bridgeEvent = harness.ReceiveUntil(BridgeEventType.EventTimerStarted);
+        var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventTimerStarted);
 
         Assert.NotNull(bridgeEvent.Snapshot);
         Assert.Equal("Timer started", bridgeEvent.Description);
@@ -29,12 +26,12 @@ public class BridgeRuntimeEventTests
     }
 
     [Fact]
-    public void GameTimeInitializePublishesGameTimeEvent()
+    public async Task GameTimeInitializePublishesGameTimeEvent()
     {
-        using var harness = EventHarness.Create();
-        harness.WaitForHeartbeat();
+        using var harness = await EventHarness.CreateAsync();
+        await harness.WaitForHeartbeatAsync();
 
-        var response = harness.Send(new Request
+        var response = await harness.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 1,
@@ -43,22 +40,22 @@ public class BridgeRuntimeEventTests
 
         Assert.True(response.Operation.Success);
 
-        var bridgeEvent = harness.ReceiveUntil(BridgeEventType.EventGameTimeInitialized);
+        var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventGameTimeInitialized);
 
         Assert.NotNull(bridgeEvent.Snapshot);
         Assert.Equal(1UL, bridgeEvent.EventSequence);
     }
 
     [Fact]
-    public void RunChangePublishesRunChangedEventWithIncrementingSequence()
+    public async Task RunChangePublishesRunChangedEventWithIncrementingSequence()
     {
-        using var harness = EventHarness.Create();
-        harness.WaitForHeartbeat();
+        using var harness = await EventHarness.CreateAsync();
+        await harness.WaitForHeartbeatAsync();
 
         harness.State.CallRunManuallyModified();
-        var first = harness.ReceiveUntil(BridgeEventType.EventRunChanged);
+        var first = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
         harness.State.CallRunManuallyModified();
-        var second = harness.ReceiveUntil(BridgeEventType.EventRunChanged);
+        var second = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
         Assert.Equal(1UL, first.EventSequence);
         Assert.Equal(2UL, second.EventSequence);
@@ -68,14 +65,14 @@ public class BridgeRuntimeEventTests
     }
 
     [Fact]
-    public void PeriodicSnapshotPublishesStateSnapshotEvent()
+    public async Task PeriodicSnapshotPublishesStateSnapshotEvent()
     {
-        using var harness = EventHarness.Create();
-        harness.WaitForHeartbeat();
+        using var harness = await EventHarness.CreateAsync();
+        await harness.WaitForHeartbeatAsync();
 
         harness.Runtime.PublishPeriodicSnapshot();
 
-        var bridgeEvent = harness.ReceiveUntil(BridgeEventType.EventStateSnapshot);
+        var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventStateSnapshot);
 
         Assert.NotNull(bridgeEvent.Snapshot);
         Assert.Equal("Periodic snapshot", bridgeEvent.Description);
@@ -83,12 +80,12 @@ public class BridgeRuntimeEventTests
     }
 
     [Fact]
-    public void HeartbeatHasNoSnapshotAndDoesNotAdvanceSequence()
+    public async Task HeartbeatHasNoSnapshotAndDoesNotAdvanceSequence()
     {
-        using var harness = EventHarness.Create();
+        using var harness = await EventHarness.CreateAsync();
 
-        var first = harness.ReceiveUntil(BridgeEventType.EventHeartbeat);
-        var second = harness.ReceiveUntil(BridgeEventType.EventHeartbeat);
+        var first = await harness.ReceiveUntilAsync(BridgeEventType.EventHeartbeat);
+        var second = await harness.ReceiveUntilAsync(BridgeEventType.EventHeartbeat);
 
         Assert.Null(first.Snapshot);
         Assert.Null(second.Snapshot);
@@ -97,12 +94,12 @@ public class BridgeRuntimeEventTests
     }
 
     [Fact]
-    public void EventsCarryTheSameSessionIdAsAttach()
+    public async Task EventsCarryTheSameSessionIdAsAttach()
     {
-        using var harness = EventHarness.Create();
-        harness.WaitForHeartbeat();
+        using var harness = await EventHarness.CreateAsync();
+        await harness.WaitForHeartbeatAsync();
 
-        var attach = harness.Send(new Request
+        var attach = await harness.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 1,
@@ -110,68 +107,61 @@ public class BridgeRuntimeEventTests
         });
 
         harness.State.CallRunManuallyModified();
-        var bridgeEvent = harness.ReceiveUntil(BridgeEventType.EventRunChanged);
+        var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
         Assert.Equal(attach.Attach.SessionId, bridgeEvent.SessionId);
     }
 
     private sealed class EventHarness : IDisposable
     {
-        private readonly RequestSocket requestSocket;
-        private readonly SubscriberSocket subscriber;
+        private readonly WebSocketTestClient events;
+        private readonly WebSocketTestClient rpc;
 
-        private EventHarness(BridgeRuntime runtime, LiveSplitState state, int rpcPort, int eventPort)
+        private EventHarness(BridgeRuntime runtime, LiveSplitState state, WebSocketTestClient events, WebSocketTestClient rpc)
         {
             Runtime = runtime;
             State = state;
-            subscriber = new SubscriberSocket();
-            subscriber.Subscribe(string.Empty);
-            subscriber.Connect(BridgeTestEndpoints.Event(eventPort));
-            requestSocket = new RequestSocket();
-            requestSocket.Connect(BridgeTestEndpoints.Rpc(rpcPort));
+            this.events = events;
+            this.rpc = rpc;
         }
 
         public BridgeRuntime Runtime { get; }
         public LiveSplitState State { get; }
 
-        public static EventHarness Create()
+        public static async Task<EventHarness> CreateAsync()
         {
-            var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
+            var port = BridgeTestEndpoints.GetFreePort();
             var run = new Run(new StandardComparisonGeneratorsFactory());
             run.Add(new Segment("One"));
             run.Add(new Segment("Two"));
             var state = TestLiveSplitState.Create(run);
-            var runtime = new BridgeRuntime(state, rpcPort, eventPort);
-            return new EventHarness(runtime, state, rpcPort, eventPort);
+            var runtime = new BridgeRuntime(state, port);
+            var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+            var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
+            return new EventHarness(runtime, state, events, rpc);
         }
 
-        public void WaitForHeartbeat()
+        public Task WaitForHeartbeatAsync()
         {
-            ReceiveUntil(BridgeEventType.EventHeartbeat);
+            return ReceiveUntilAsync(BridgeEventType.EventHeartbeat);
         }
 
-        public Response Send(Request request)
+        public Task<Response> SendAsync(Request request)
         {
             if (request.ProtocolVersion == 0)
             {
                 request.ProtocolVersion = 1;
             }
 
-            requestSocket.SendFrame(request.ToByteArray());
-            Assert.True(
-                requestSocket.TryReceiveFrameBytes(TimeSpan.FromSeconds(5), out var data),
-                "Timed out waiting for RPC response.");
-            return Response.Parser.ParseFrom(data);
+            return rpc.SendRequestAsync(request, TimeSpan.FromSeconds(5));
         }
 
-        public BridgeEvent ReceiveUntil(BridgeEventType type)
+        public async Task<BridgeEvent> ReceiveUntilAsync(BridgeEventType type)
         {
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
             while (DateTime.UtcNow < deadline)
             {
-                Assert.True(
-                    subscriber.TryReceiveFrameBytes(TimeSpan.FromSeconds(2), out var data),
-                    $"Timed out waiting for {type}.");
+                var data = await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(3));
                 var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
                 if (bridgeEvent.Type == type)
                 {
@@ -184,8 +174,8 @@ public class BridgeRuntimeEventTests
 
         public void Dispose()
         {
-            subscriber.Dispose();
-            requestSocket.Dispose();
+            events.Dispose();
+            rpc.Dispose();
             Runtime.Dispose();
         }
     }

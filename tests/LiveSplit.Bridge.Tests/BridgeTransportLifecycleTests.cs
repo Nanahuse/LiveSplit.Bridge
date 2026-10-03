@@ -1,8 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using LiveSplit.Bridge.Protocol.V1;
-using NetMQ;
-using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -10,35 +8,37 @@ namespace LiveSplit.Bridge.Tests;
 public class BridgeTransportLifecycleTests
 {
     [Fact]
-    public void StartBindsRpcAndEventEndpoints()
+    public async Task StartBindsWebSocketEndpoints()
     {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
-        using var transport = CreateTransport(rpcPort, eventPort);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var transport = CreateTransport(port);
 
         transport.Start();
 
-        BridgeTestEndpoints.WaitForListener(rpcPort, expected: true);
-        BridgeTestEndpoints.WaitForListener(eventPort, expected: true);
+        BridgeTestEndpoints.WaitForListener(port, expected: true);
+        Assert.True(transport.IsListening);
+
+        using var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
     }
 
     [Fact]
-    public void RpcBindFailureReportsRpcEndpoint()
+    public void StartOnUsedPortReportsWebSocketEndpoint()
     {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
-        var blocker = new TcpListener(IPAddress.Loopback, rpcPort);
+        var port = BridgeTestEndpoints.GetFreePort();
+        var blocker = new TcpListener(IPAddress.Loopback, port);
         blocker.Server.ExclusiveAddressUse = true;
         blocker.Start();
 
         try
         {
-            using var transport = CreateTransport(rpcPort, eventPort);
+            using var transport = CreateTransport(port);
 
             var exception = Assert.Throws<BridgeTransportStartException>(() => transport.Start());
 
-            Assert.Equal(BridgeEndpointKind.Rpc, exception.EndpointKind);
-            Assert.Equal(BridgeTestEndpoints.Rpc(rpcPort), exception.Endpoint);
+            Assert.Equal(BridgeEndpointKind.WebSocket, exception.EndpointKind);
+            Assert.Equal(BridgeTestEndpoints.WebSocket(port), exception.Endpoint);
             Assert.NotNull(exception.InnerException);
-            BridgeTestEndpoints.WaitForListener(eventPort, expected: false);
         }
         finally
         {
@@ -47,61 +47,30 @@ public class BridgeTransportLifecycleTests
     }
 
     [Fact]
-    public void EventBindFailureReportsEventEndpoint()
+    public void DisposeReleasesEndpointForRestart()
     {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
-        var blocker = new TcpListener(IPAddress.Loopback, eventPort);
-        blocker.Server.ExclusiveAddressUse = true;
-        blocker.Start();
+        var port = BridgeTestEndpoints.GetFreePort();
 
-        try
-        {
-            using var transport = CreateTransport(rpcPort, eventPort);
-
-            var exception = Assert.Throws<BridgeTransportStartException>(() => transport.Start());
-
-            Assert.Equal(BridgeEndpointKind.Event, exception.EndpointKind);
-            Assert.Equal(BridgeTestEndpoints.Event(eventPort), exception.Endpoint);
-            Assert.NotNull(exception.InnerException);
-            BridgeTestEndpoints.WaitForListener(rpcPort, expected: false);
-        }
-        finally
-        {
-            blocker.Stop();
-        }
-    }
-
-    [Fact]
-    public void DisposeReleasesEndpointsForRestart()
-    {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
-
-        var transport = CreateTransport(rpcPort, eventPort);
+        var transport = CreateTransport(port);
         transport.Start();
-        BridgeTestEndpoints.WaitForListener(rpcPort, expected: true);
-        BridgeTestEndpoints.WaitForListener(eventPort, expected: true);
+        BridgeTestEndpoints.WaitForListener(port, expected: true);
         transport.Dispose();
-        BridgeTestEndpoints.WaitForListener(rpcPort, expected: false);
-        BridgeTestEndpoints.WaitForListener(eventPort, expected: false);
+        BridgeTestEndpoints.WaitForListener(port, expected: false);
 
-        using var restarted = CreateTransport(rpcPort, eventPort);
+        using var restarted = CreateTransport(port);
         restarted.Start();
-        BridgeTestEndpoints.WaitForListener(rpcPort, expected: true);
-        BridgeTestEndpoints.WaitForListener(eventPort, expected: true);
+        BridgeTestEndpoints.WaitForListener(port, expected: true);
     }
 
     [Fact]
-    public void PublishedEventIsDeliveredToSubscriber()
+    public async Task PublishedEventIsDeliveredToClient()
     {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
-        using var transport = CreateTransport(rpcPort, eventPort);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var transport = CreateTransport(port);
         transport.Start();
 
-        using var subscriber = new SubscriberSocket();
-        subscriber.Subscribe(string.Empty);
-        subscriber.Connect(BridgeTestEndpoints.Event(eventPort));
-
-        WaitForHeartbeat(subscriber);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        await ReceiveEventUntilAsync(events, BridgeEventType.EventHeartbeat);
 
         transport.Publish(new BridgeEvent
         {
@@ -111,7 +80,7 @@ public class BridgeTransportLifecycleTests
             Snapshot = new TimerSnapshot(),
         });
 
-        var received = ReceiveUntil(subscriber, BridgeEventType.EventTimerStarted);
+        var received = await ReceiveEventUntilAsync(events, BridgeEventType.EventTimerStarted);
 
         Assert.Equal(7UL, received.SessionId);
         Assert.Equal(1UL, received.EventSequence);
@@ -119,13 +88,66 @@ public class BridgeTransportLifecycleTests
     }
 
     [Fact]
+    public async Task PublishedEventIsBroadcastToMultipleClients()
+    {
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var transport = CreateTransport(port);
+        transport.Start();
+
+        using var first = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        using var second = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        await ReceiveEventUntilAsync(first, BridgeEventType.EventHeartbeat);
+        await ReceiveEventUntilAsync(second, BridgeEventType.EventHeartbeat);
+
+        transport.Publish(new BridgeEvent
+        {
+            SessionId = 11,
+            EventSequence = 4,
+            Type = BridgeEventType.EventTimerSplit,
+            Snapshot = new TimerSnapshot(),
+        });
+
+        var firstEvent = await ReceiveEventUntilAsync(first, BridgeEventType.EventTimerSplit);
+        var secondEvent = await ReceiveEventUntilAsync(second, BridgeEventType.EventTimerSplit);
+
+        Assert.Equal(4UL, firstEvent.EventSequence);
+        Assert.Equal(4UL, secondEvent.EventSequence);
+    }
+
+    [Fact]
+    public async Task BroadcastContinuesAfterClientDisconnects()
+    {
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var transport = CreateTransport(port);
+        transport.Start();
+
+        var disconnected = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        using var remaining = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        await ReceiveEventUntilAsync(disconnected, BridgeEventType.EventHeartbeat);
+        await ReceiveEventUntilAsync(remaining, BridgeEventType.EventHeartbeat);
+
+        disconnected.Dispose();
+        Thread.Sleep(200);
+
+        transport.Publish(new BridgeEvent
+        {
+            SessionId = 13,
+            EventSequence = 9,
+            Type = BridgeEventType.EventTimerSplit,
+            Snapshot = new TimerSnapshot(),
+        });
+
+        var received = await ReceiveEventUntilAsync(remaining, BridgeEventType.EventTimerSplit);
+        Assert.Equal(9UL, received.EventSequence);
+    }
+
+    [Fact]
     public void PublishedEventSettlesSequenceThroughCallback()
     {
-        var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
+        var port = BridgeTestEndpoints.GetFreePort();
         var settled = new List<ulong>();
-        using var transport = new ZeroMqTransport(
-            BridgeTestEndpoints.Rpc(rpcPort),
-            BridgeTestEndpoints.Event(eventPort),
+        using var transport = new WebSocketTransport(
+            port,
             BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 1 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
@@ -163,30 +185,87 @@ public class BridgeTransportLifecycleTests
         Assert.Contains(5UL, settled);
     }
 
-    private static ZeroMqTransport CreateTransport(int rpcPort, int eventPort)
+    [Fact]
+    public async Task RpcRequestsAreSerializedAcrossClients()
     {
-        return new ZeroMqTransport(
-            BridgeTestEndpoints.Rpc(rpcPort),
-            BridgeTestEndpoints.Event(eventPort),
+        var port = BridgeTestEndpoints.GetFreePort();
+        var current = 0;
+        var maxConcurrent = 0;
+        using var transport = new WebSocketTransport(
+            port,
+            BridgeRuntime.HeartbeatInterval,
+            _ =>
+            {
+                var active = Interlocked.Increment(ref current);
+                int observed;
+                do
+                {
+                    observed = Volatile.Read(ref maxConcurrent);
+                    if (active <= observed)
+                    {
+                        break;
+                    }
+
+                    Interlocked.CompareExchange(ref maxConcurrent, active, observed);
+                }
+                while (true);
+
+                Thread.Sleep(100);
+                Interlocked.Decrement(ref current);
+                return new Response { ProtocolVersion = 1 };
+            },
+            () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
+            _ => { });
+        transport.Start();
+
+        var clients = new List<WebSocketTestClient>();
+        try
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                clients.Add(await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port)));
+            }
+
+            var sends = clients.Select(client => client.SendRequestAsync(
+                new Request
+                {
+                    ProtocolVersion = 1,
+                    RequestId = 1,
+                    GetSnapshot = new GetSnapshotRequest(),
+                },
+                TimeSpan.FromSeconds(10))).ToArray();
+
+            await Task.WhenAll(sends);
+        }
+        finally
+        {
+            foreach (var client in clients)
+            {
+                client.Dispose();
+            }
+        }
+
+        Assert.Equal(1, maxConcurrent);
+    }
+
+    private static WebSocketTransport CreateTransport(int port)
+    {
+        return new WebSocketTransport(
+            port,
             BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 1 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });
     }
 
-    private static void WaitForHeartbeat(SubscriberSocket subscriber)
-    {
-        ReceiveUntil(subscriber, BridgeEventType.EventHeartbeat);
-    }
-
-    private static BridgeEvent ReceiveUntil(SubscriberSocket subscriber, BridgeEventType type)
+    private static async Task<BridgeEvent> ReceiveEventUntilAsync(
+        WebSocketTestClient client,
+        BridgeEventType type)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTime.UtcNow < deadline)
         {
-            Assert.True(
-                subscriber.TryReceiveFrameBytes(TimeSpan.FromSeconds(2), out var data),
-                $"Timed out waiting for {type}.");
+            var data = await client.ReceiveBinaryAsync(TimeSpan.FromSeconds(3));
             var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
             if (bridgeEvent.Type == type)
             {

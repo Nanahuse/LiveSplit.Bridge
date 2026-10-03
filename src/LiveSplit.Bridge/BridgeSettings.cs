@@ -6,26 +6,28 @@ namespace LiveSplit.Bridge;
 
 internal sealed class BridgeSettings
 {
-    public const int DefaultRpcPort = 54000;
-    public const int DefaultEventPort = 54001;
+    public const int CurrentVersion = 1;
+    public const int DefaultWebSocketPort = 54000;
 
-    public int RpcPort { get; set; } = DefaultRpcPort;
-    public int EventPort { get; set; } = DefaultEventPort;
+    public int WebSocketPort { get; set; } = DefaultWebSocketPort;
 
     public void WriteTo(XmlElement settings)
     {
-        AppendValue(settings, "RpcPort", RpcPort);
-        AppendValue(settings, "EventPort", EventPort);
+        AppendValue(settings, "Version", CurrentVersion);
+        AppendValue(settings, "WebSocketPort", WebSocketPort);
     }
 
     public void ReadFrom(XmlNode settings)
     {
-        RpcPort = ReadPort(settings, "RpcPort", DefaultRpcPort);
-        EventPort = ReadPort(settings, "EventPort", DefaultEventPort);
-        if (EventPort == RpcPort)
+        WebSocketPort = DefaultWebSocketPort;
+
+        var versionText = settings.SelectSingleNode("Version")?.InnerText;
+        if (!int.TryParse(versionText, out var version) || version != CurrentVersion)
         {
-            EventPort = RpcPort == DefaultEventPort ? DefaultRpcPort : DefaultEventPort;
+            return;
         }
+
+        WebSocketPort = ReadPort(settings, "WebSocketPort", DefaultWebSocketPort);
     }
 
     private static int ReadPort(XmlNode settings, string name, int defaultValue)
@@ -46,12 +48,11 @@ internal sealed class BridgeSettings
 
 internal sealed class BridgeSettingsControl : UserControl
 {
-    private readonly NumericUpDown rpcPort = CreatePortInput();
-    private readonly NumericUpDown eventPort = CreatePortInput();
+    private readonly NumericUpDown webSocketPort = CreatePortInput();
     private readonly Label status = new() { AutoSize = true };
     private readonly Label validation = new() { AutoSize = true, ForeColor = System.Drawing.Color.DarkRed };
 
-    public event EventHandler PortsChanged;
+    public event EventHandler PortChanged;
 
     public BridgeSettingsControl(BridgeSettings settings)
     {
@@ -68,28 +69,23 @@ internal sealed class BridgeSettingsControl : UserControl
 
         layout.Controls.Add(status, 0, 0); layout.SetColumnSpan(status, 2);
         layout.Controls.Add(validation, 0, 1); layout.SetColumnSpan(validation, 2);
-        layout.Controls.Add(new Label { Text = "RPC port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        layout.Controls.Add(rpcPort, 1, 2);
-        layout.Controls.Add(new Label { Text = "Event port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        layout.Controls.Add(eventPort, 1, 3);
+        layout.Controls.Add(new Label { Text = "WebSocket port:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        layout.Controls.Add(webSocketPort, 1, 2);
         var applyButton = new Button { Text = "Apply", AutoSize = true };
-        applyButton.Click += (_, _) => PortsChanged?.Invoke(this, EventArgs.Empty);
-        layout.Controls.Add(applyButton, 1, 4);
+        applyButton.Click += (_, _) => PortChanged?.Invoke(this, EventArgs.Empty);
+        layout.Controls.Add(applyButton, 1, 3);
         Controls.Add(layout);
 
         SetValues(settings);
     }
 
-    public int RpcPort => Decimal.ToInt32(rpcPort.Value);
-    public int EventPort => Decimal.ToInt32(eventPort.Value);
+    public int WebSocketPort => Decimal.ToInt32(webSocketPort.Value);
 
     public void SetRuntimeStatus(string text, string? error = null) { status.Text = $"Status: {text}"; validation.Text = error ?? string.Empty; }
-    public void SetValidationError(string text) => validation.Text = text;
 
     public void SetValues(BridgeSettings settings)
     {
-        rpcPort.Value = settings.RpcPort;
-        eventPort.Value = settings.EventPort;
+        webSocketPort.Value = settings.WebSocketPort;
     }
 
     private static NumericUpDown CreatePortInput()

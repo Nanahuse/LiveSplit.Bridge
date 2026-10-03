@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-import zmq
+import websocket
 from google.protobuf.json_format import MessageToDict
 
 from livesplit.bridge.v1 import common_pb2, run_pb2
@@ -17,20 +17,33 @@ from .client import (
     BridgeClientError,
 )
 
-DEFAULT_RPC_ENDPOINT = "tcp://127.0.0.1:54000"
-DEFAULT_EVENT_ENDPOINT = "tcp://127.0.0.1:54001"
+DEFAULT_PORT = 54000
+RPC_PATH = "/bridge/v1/rpc"
+EVENTS_PATH = "/bridge/v1/events"
 TICKS_PER_SECOND = 10_000_000
 
 
+def rpc_url(port: int) -> str:
+    return f"ws://127.0.0.1:{port}{RPC_PATH}"
+
+
+def events_url(port: int) -> str:
+    return f"ws://127.0.0.1:{port}{EVENTS_PATH}"
+
+
+def default_port() -> int:
+    return int(os.getenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", str(DEFAULT_PORT)))
+
+
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description="Debug LiveSplit.Bridge over ZeroMQ")
-    result.add_argument(
-        "--rpc-endpoint",
-        default=os.getenv("LIVESPLIT_BRIDGE_RPC_ENDPOINT", DEFAULT_RPC_ENDPOINT),
+    result = argparse.ArgumentParser(
+        description="Debug LiveSplit.Bridge over WebSocket"
     )
     result.add_argument(
-        "--event-endpoint",
-        default=os.getenv("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", DEFAULT_EVENT_ENDPOINT),
+        "--port",
+        type=int,
+        default=default_port(),
+        help="WebSocket port of the bridge (default: 54000)",
     )
     result.add_argument(
         "--timeout", type=float, default=3.0, help="RPC timeout in seconds (default: 3)"
@@ -121,16 +134,15 @@ def print_message(message: object, as_json: bool) -> None:
 
 
 def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
-    context = zmq.Context()
-    socket = context.socket(zmq.SUB)
-    socket.setsockopt(zmq.LINGER, 0)
-    socket.setsockopt(zmq.SUBSCRIBE, b"")
-    socket.connect(endpoint)
+    socket = websocket.create_connection(endpoint, timeout=None)
     received = 0
     print(f"Monitoring {endpoint} (Ctrl+C to stop)", file=sys.stderr)
     try:
         while count is None or received < count:
-            event = common_pb2.BridgeEvent.FromString(socket.recv())
+            data = socket.recv()
+            if isinstance(data, str):
+                continue
+            event = common_pb2.BridgeEvent.FromString(data)
             if as_json:
                 print_message(event, True)
             else:
@@ -143,7 +155,6 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
         return 0
     finally:
         socket.close()
-        context.term()
     return 0
 
 
@@ -151,12 +162,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.timeout <= 0:
         parser().error("--timeout must be greater than zero")
+    if not 1 <= args.port <= 65535:
+        parser().error("--port must be between 1 and 65535")
+
     match args.command:
         case "events":
-            return run_events(args.event_endpoint, args.json, args.count)
+            return run_events(events_url(args.port), args.json, args.count)
 
     try:
-        with BridgeClient(args.rpc_endpoint, round(args.timeout * 1000)) as client:
+        with BridgeClient(rpc_url(args.port), round(args.timeout * 1000)) as client:
             match args.command:
                 case "attach":
                     response = client.attach()
@@ -200,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     if not response.operation.success:
                         return 2
-    except (BridgeClientError, zmq.ZMQError, ValueError) as error:
+    except (BridgeClientError, websocket.WebSocketException, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     return 0

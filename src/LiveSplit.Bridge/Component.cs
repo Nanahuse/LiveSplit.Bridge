@@ -30,7 +30,7 @@ public sealed class Component : IComponent
     public IDictionary<string, Action> ContextMenuControls { get; } = new Dictionary<string, Action>();
     public void DrawHorizontal(Graphics graphics, LiveSplitState state, float height, Region clipRegion) { }
     public void DrawVertical(Graphics graphics, LiveSplitState state, float width, Region clipRegion) { }
-    public Control GetSettingsControl(LayoutMode mode) { settingsControl ??= new BridgeSettingsControl(settings); settingsControl.PortsChanged -= SettingsControlOnPortsChanged; settingsControl.PortsChanged += SettingsControlOnPortsChanged; settingsControl.SetValues(settings); UpdateControl(); return settingsControl; }
+    public Control GetSettingsControl(LayoutMode mode) { settingsControl ??= new BridgeSettingsControl(settings); settingsControl.PortChanged -= SettingsControlOnPortChanged; settingsControl.PortChanged += SettingsControlOnPortChanged; settingsControl.SetValues(settings); UpdateControl(); return settingsControl; }
     public XmlNode GetSettings(XmlDocument document) { var e = document.CreateElement("Settings"); settings.WriteTo(e); return e; }
     public void SetSettings(XmlNode node) { settings.ReadFrom(node); settingsControl?.SetValues(settings); }
     public void Update(IInvalidator invalidator, LiveSplitState state, float width, float height, LayoutMode mode)
@@ -46,10 +46,10 @@ public sealed class Component : IComponent
     private void TryStartRuntime()
     {
         status = BridgeRuntimeStatus.Starting; UpdateControl();
-        try { runtime = new BridgeRuntime(state, settings.RpcPort, settings.EventPort); status = BridgeRuntimeStatus.Running; lastError = null; Debug.WriteLine("[LiveSplit.Bridge] Bridge runtime recovered successfully."); }
+        try { runtime = new BridgeRuntime(state, settings.WebSocketPort); status = BridgeRuntimeStatus.Running; lastError = null; Debug.WriteLine("[LiveSplit.Bridge] Bridge runtime recovered successfully."); }
         catch (BridgeTransportStartException ex) { runtime = null; status = BridgeRuntimeStatus.Failed; lastError = $"Failed to bind {ex.EndpointKind} endpoint:\r\n{ex.Endpoint}\r\n\r\nThe port may already be in use.\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] {ex.Message}: {ex.InnerException?.Message}"); }
         catch (Exception ex) { runtime = null; status = BridgeRuntimeStatus.Failed; lastError = $"Runtime startup failed:\r\n{ex.Message}\r\n\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] Runtime startup failed: {ex}"); }
     }
-    private void SettingsControlOnPortsChanged(object sender, EventArgs e) { if (settingsControl == null) return; if (settingsControl.RpcPort == settingsControl.EventPort) { settingsControl.SetValidationError("RPC port and Event port must be different."); return; } settings.RpcPort = settingsControl.RpcPort; settings.EventPort = settingsControl.EventPort; lock (runtimeLock) { runtime?.Dispose(); runtime = null; status = BridgeRuntimeStatus.Starting; lastError = null; retryAt = 0; TryStartRuntime(); } }
+    private void SettingsControlOnPortChanged(object sender, EventArgs e) { if (settingsControl == null) return; settings.WebSocketPort = settingsControl.WebSocketPort; lock (runtimeLock) { runtime?.Dispose(); runtime = null; status = BridgeRuntimeStatus.Starting; lastError = null; retryAt = 0; TryStartRuntime(); } }
     private void UpdateControl() => settingsControl?.SetRuntimeStatus(status.ToString(), status == BridgeRuntimeStatus.Failed ? lastError : null);
 }

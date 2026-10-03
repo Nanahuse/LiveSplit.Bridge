@@ -26,21 +26,19 @@ internal sealed class BridgeRuntime : IDisposable
     private int periodicSnapshotPending;
     private int disposed;
 
-    public BridgeRuntime(LiveSplitState state, int rpcPort, int eventPort)
+    public BridgeRuntime(LiveSplitState state, int webSocketPort)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
         adapter = new LiveSplitAdapter(state);
         observedGameTimeState = adapter.CaptureGameTimeRevisionState();
 
-        var rpcEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_RPC_ENDPOINT", $"tcp://127.0.0.1:{rpcPort}");
-        var eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", $"tcp://127.0.0.1:{eventPort}");
+        var port = GetPort("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", webSocketPort);
         sessionId = GenerateSessionId();
         stateRevision = 1;
         runRevision = 1;
 
-        transport = new ZeroMqTransport(
-            rpcEndpoint,
-            eventEndpoint,
+        transport = new WebSocketTransport(
+            port,
             HeartbeatInterval,
             HandleRequest,
             CreateHeartbeatEvent,
@@ -447,9 +445,11 @@ internal sealed class BridgeRuntime : IDisposable
         return value;
     }
 
-    private static string GetEndpoint(string name, string defaultValue)
+    private static int GetPort(string name, int defaultValue)
     {
         var value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
+        return int.TryParse(value, out var port) && port >= 1 && port <= 65535
+            ? port
+            : defaultValue;
     }
 }
