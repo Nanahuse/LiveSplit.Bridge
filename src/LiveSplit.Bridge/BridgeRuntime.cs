@@ -13,7 +13,7 @@ internal sealed class BridgeRuntime : IDisposable
     internal static readonly TimeSpan PeriodicSnapshotInterval = TimeSpan.FromSeconds(30);
 
     private readonly LiveSplitAdapter adapter;
-    private readonly IBridgeTransport transport;
+    private readonly WebSocketTransport transport;
     private readonly EventSequence eventSequence = new();
     private readonly object sequenceLock = new();
     private readonly object observedStateLock = new();

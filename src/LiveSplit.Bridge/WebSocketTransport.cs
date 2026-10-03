@@ -9,7 +9,7 @@ using WebSocketSharp.Server;
 
 namespace LiveSplit.Bridge;
 
-internal sealed class WebSocketTransport : IBridgeTransport
+internal sealed class WebSocketTransport : IDisposable
 {
     internal const string RpcPath = "/bridge/v1/rpc";
     internal const string EventPath = "/bridge/v1/events";
@@ -72,14 +72,13 @@ internal sealed class WebSocketTransport : IBridgeTransport
         catch (Exception exception)
         {
             StopServer();
-            throw new BridgeTransportStartException(BridgeEndpointKind.WebSocket, Endpoint, exception);
+            throw new BridgeTransportStartException(Endpoint, exception);
         }
 
         if (!server.IsListening)
         {
             StopServer();
             throw new BridgeTransportStartException(
-                BridgeEndpointKind.WebSocket,
                 Endpoint,
                 new InvalidOperationException("The WebSocket server did not start listening."));
         }

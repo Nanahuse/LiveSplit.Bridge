@@ -29,12 +29,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="NetMQ" Version="4.0.1.13" />
     <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
   </ItemGroup>
 
   <PropertyGroup>
-    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;NetMQ.dll;AsyncIO.dll;NaCl.dll;Google.Protobuf.dll</BridgeDistributionFiles>
+    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;Google.Protobuf.dll</BridgeDistributionFiles>
   </PropertyGroup>
 
   <ItemGroup>
