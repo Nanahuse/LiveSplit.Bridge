@@ -41,6 +41,7 @@ internal sealed class BridgeRuntime : IDisposable
         transport = new ZeroMqTransport(
             rpcEndpoint,
             eventEndpoint,
+            HeartbeatInterval,
             HandleRequest,
             CreateHeartbeatEvent,
             OnEventSettled);

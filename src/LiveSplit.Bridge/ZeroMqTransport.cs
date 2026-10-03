@@ -35,6 +35,7 @@ internal sealed class ZeroMqTransport : IBridgeTransport
 {
     private readonly string rpcEndpoint;
     private readonly string eventEndpoint;
+    private readonly TimeSpan heartbeatInterval;
     private readonly Func<Request, Response> requestHandler;
     private readonly Func<BridgeEvent> heartbeatFactory;
     private readonly Action<ulong> eventSettled;
@@ -50,12 +51,14 @@ internal sealed class ZeroMqTransport : IBridgeTransport
     public ZeroMqTransport(
         string rpcEndpoint,
         string eventEndpoint,
+        TimeSpan heartbeatInterval,
         Func<Request, Response> requestHandler,
         Func<BridgeEvent> heartbeatFactory,
         Action<ulong> eventSettled)
     {
         this.rpcEndpoint = rpcEndpoint ?? throw new ArgumentNullException(nameof(rpcEndpoint));
         this.eventEndpoint = eventEndpoint ?? throw new ArgumentNullException(nameof(eventEndpoint));
+        this.heartbeatInterval = heartbeatInterval;
         this.requestHandler = requestHandler ?? throw new ArgumentNullException(nameof(requestHandler));
         this.heartbeatFactory = heartbeatFactory ?? throw new ArgumentNullException(nameof(heartbeatFactory));
         this.eventSettled = eventSettled ?? throw new ArgumentNullException(nameof(eventSettled));
@@ -210,7 +213,7 @@ internal sealed class ZeroMqTransport : IBridgeTransport
             publisherReady.Set();
 
             var clock = Stopwatch.StartNew();
-            var nextHeartbeat = BridgeRuntime.HeartbeatInterval;
+            var nextHeartbeat = heartbeatInterval;
 
             while (!cancellation.IsCancellationRequested)
             {
@@ -232,7 +235,7 @@ internal sealed class ZeroMqTransport : IBridgeTransport
                     PublishHeartbeat(publisher);
                     do
                     {
-                        nextHeartbeat += BridgeRuntime.HeartbeatInterval;
+                        nextHeartbeat += heartbeatInterval;
                     }
                     while (nextHeartbeat <= clock.Elapsed);
                 }

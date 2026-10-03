@@ -126,6 +126,7 @@ public class BridgeTransportLifecycleTests
         using var transport = new ZeroMqTransport(
             BridgeTestEndpoints.Rpc(rpcPort),
             BridgeTestEndpoints.Event(eventPort),
+            BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 1 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             sequence =>
@@ -167,6 +168,7 @@ public class BridgeTransportLifecycleTests
         return new ZeroMqTransport(
             BridgeTestEndpoints.Rpc(rpcPort),
             BridgeTestEndpoints.Event(eventPort),
+            BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 1 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });
