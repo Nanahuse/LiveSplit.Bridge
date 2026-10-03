@@ -1,23 +1,10 @@
 using System;
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Threading;
-using Google.Protobuf;
 using LiveSplit.Bridge.Protocol.V1;
 using LiveSplit.Model;
-using NetMQ;
-using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge;
-
-internal enum BridgeEndpointKind { Rpc, Event, Other }
-internal sealed class BridgeTransportStartException : Exception
-{
-    public BridgeTransportStartException(BridgeEndpointKind kind, string endpoint, Exception inner) : base($"Failed to bind {kind} endpoint {endpoint}.", inner) { EndpointKind = kind; Endpoint = endpoint; }
-    public BridgeEndpointKind EndpointKind { get; }
-    public string Endpoint { get; }
-}
 
 internal sealed class BridgeRuntime : IDisposable
 {
@@ -26,19 +13,12 @@ internal sealed class BridgeRuntime : IDisposable
     internal static readonly TimeSpan PeriodicSnapshotInterval = TimeSpan.FromSeconds(30);
 
     private readonly LiveSplitAdapter adapter;
-    private readonly string rpcEndpoint;
-    private readonly string eventEndpoint;
-    private readonly CancellationTokenSource cancellation = new();
-    private readonly BlockingCollection<PublishWorkItem> publishQueue = new();
-    private readonly ManualResetEventSlim publisherReady = new(false);
+    private readonly IBridgeTransport transport;
     private readonly EventSequence eventSequence = new();
+    private readonly object sequenceLock = new();
     private readonly object observedStateLock = new();
     private readonly LiveSplitState state;
     private readonly Timer timerSnapshotTimer;
-    private readonly Thread publisherThread;
-    private readonly Thread requestThread;
-    private ResponseSocket? responder;
-    private Exception? publisherStartException;
     private readonly ulong sessionId;
     private long stateRevision;
     private long runRevision;
@@ -52,24 +32,20 @@ internal sealed class BridgeRuntime : IDisposable
         adapter = new LiveSplitAdapter(state);
         observedGameTimeState = adapter.CaptureGameTimeRevisionState();
 
-        rpcEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_RPC_ENDPOINT", $"tcp://127.0.0.1:{rpcPort}");
-        eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", $"tcp://127.0.0.1:{eventPort}");
+        var rpcEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_RPC_ENDPOINT", $"tcp://127.0.0.1:{rpcPort}");
+        var eventEndpoint = GetEndpoint("LIVESPLIT_BRIDGE_EVENT_ENDPOINT", $"tcp://127.0.0.1:{eventPort}");
         sessionId = GenerateSessionId();
         stateRevision = 1;
         runRevision = 1;
 
-        publisherThread = new Thread(PublisherLoop)
-        {
-            IsBackground = true,
-            Name = "LiveSplit.Bridge.PublisherLoop"
-        };
-        requestThread = new Thread(RequestLoop)
-        {
-            IsBackground = true,
-            Name = "LiveSplit.Bridge.RequestLoop"
-        };
+        transport = new ZeroMqTransport(
+            rpcEndpoint,
+            eventEndpoint,
+            HandleRequest,
+            CreateHeartbeatEvent,
+            OnEventSettled);
 
-        StartTransport();
+        transport.Start();
         AttachStateEvents();
 
         timerSnapshotTimer = new Timer(
@@ -77,8 +53,6 @@ internal sealed class BridgeRuntime : IDisposable
             null,
             PeriodicSnapshotInterval,
             PeriodicSnapshotInterval);
-
-        requestThread.Start();
     }
 
     public void Dispose()
@@ -90,18 +64,7 @@ internal sealed class BridgeRuntime : IDisposable
 
         DetachStateEvents();
         timerSnapshotTimer.Dispose();
-        cancellation.Cancel();
-        publishQueue.CompleteAdding();
-
-        requestThread.Join(TimeSpan.FromSeconds(2));
-        publisherThread.Join(TimeSpan.FromSeconds(2));
-
-        responder?.Close();
-        responder?.Dispose();
-        publisherReady.Dispose();
-        publishQueue.Dispose();
-        cancellation.Dispose();
-        NetMQConfig.Cleanup(true);
+        transport.Dispose();
     }
 
     private void AttachStateEvents()
@@ -128,134 +91,6 @@ internal sealed class BridgeRuntime : IDisposable
         state.OnResume -= StateOnResume;
         state.RunManuallyModified -= StateRunManuallyModified;
         adapter.GameTimeChanged -= AdapterGameTimeChanged;
-    }
-
-    private void StartTransport()
-    {
-        publisherThread.Start();
-        if (!publisherReady.Wait(TimeSpan.FromSeconds(5)))
-        {
-            StopPublisherAfterStartFailure();
-            throw new BridgeTransportStartException(BridgeEndpointKind.Event, eventEndpoint, new TimeoutException("Timed out while binding the event endpoint."));
-        }
-
-        if (publisherStartException != null)
-        {
-            StopPublisherAfterStartFailure();
-            throw new BridgeTransportStartException(BridgeEndpointKind.Event, eventEndpoint, publisherStartException);
-        }
-
-        try
-        {
-            responder = new ResponseSocket();
-            responder.Bind(rpcEndpoint);
-            Debug.WriteLine($"[LiveSplit.Bridge] RPC endpoint bound to {rpcEndpoint}");
-        }
-        catch (Exception exception)
-        {
-            responder?.Close();
-            responder?.Dispose();
-            responder = null;
-            StopPublisherAfterStartFailure();
-            throw new BridgeTransportStartException(BridgeEndpointKind.Rpc, rpcEndpoint, exception);
-        }
-    }
-
-    private void StopPublisherAfterStartFailure()
-    {
-        cancellation.Cancel();
-        publishQueue.CompleteAdding();
-        publisherThread.Join(TimeSpan.FromSeconds(2));
-    }
-
-    private void RequestLoop()
-    {
-        if (responder == null)
-        {
-            return;
-        }
-
-        while (!cancellation.IsCancellationRequested)
-        {
-            try
-            {
-                if (!responder.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(100), out var requestData))
-                {
-                    continue;
-                }
-
-                var request = Request.Parser.ParseFrom(requestData);
-                var response = HandleRequest(request);
-                responder.SendFrame(response.ToByteArray());
-            }
-            catch (Exception exception)
-            {
-                Debug.WriteLine($"[LiveSplit.Bridge] Request loop error: {exception.Message}");
-            }
-        }
-    }
-
-    private void PublisherLoop()
-    {
-        PublisherSocket? publisher = null;
-
-        try
-        {
-            publisher = new PublisherSocket();
-            publisher.Bind(eventEndpoint);
-            Debug.WriteLine($"[LiveSplit.Bridge] Event endpoint bound to {eventEndpoint}");
-            publisherReady.Set();
-
-            var clock = Stopwatch.StartNew();
-            var nextHeartbeat = HeartbeatInterval;
-
-            while (!cancellation.IsCancellationRequested)
-            {
-                var remaining = nextHeartbeat - clock.Elapsed;
-                var waitMilliseconds = remaining <= TimeSpan.Zero
-                    ? 0
-                    : (int)Math.Min(Math.Ceiling(remaining.TotalMilliseconds), int.MaxValue);
-
-                if (publishQueue.TryTake(
-                    out var workItem,
-                    waitMilliseconds,
-                    cancellation.Token))
-                {
-                    PublishSequencedEvent(publisher, workItem);
-                }
-
-                if (clock.Elapsed >= nextHeartbeat)
-                {
-                    PublishHeartbeat(publisher);
-                    do
-                    {
-                        nextHeartbeat += HeartbeatInterval;
-                    }
-                    while (nextHeartbeat <= clock.Elapsed);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown.
-        }
-        catch (Exception exception)
-        {
-            if (!publisherReady.IsSet)
-            {
-                publisherStartException = exception;
-            }
-            else
-            {
-                Debug.WriteLine($"[LiveSplit.Bridge] Publisher loop error: {exception.Message}");
-            }
-        }
-        finally
-        {
-            publisherReady.Set();
-            publisher?.Close();
-            publisher?.Dispose();
-        }
     }
 
     internal Response HandleRequest(Request request)
@@ -371,7 +206,7 @@ internal sealed class BridgeRuntime : IDisposable
 
     internal ulong RunRevision => ReadRunRevision();
 
-    private void PublishPeriodicSnapshot()
+    internal void PublishPeriodicSnapshot()
     {
         if (Interlocked.Exchange(ref periodicSnapshotPending, 1) != 0)
         {
@@ -380,7 +215,7 @@ internal sealed class BridgeRuntime : IDisposable
 
         try
         {
-            QueueSnapshotEvent(BridgeEventType.EventStateSnapshot, "Periodic snapshot");
+            PublishEvent(BridgeEventType.EventStateSnapshot, "Periodic snapshot");
         }
         finally
         {
@@ -470,80 +305,44 @@ internal sealed class BridgeRuntime : IDisposable
     private void PublishStateChangeEvent(BridgeEventType type, string description)
     {
         IncrementStateRevision();
-        QueueSnapshotEvent(type, description);
+        PublishEvent(type, description);
     }
 
-    private void QueueSnapshotEvent(BridgeEventType type, string description)
+    private void PublishEvent(BridgeEventType type, string description)
     {
-        if (cancellation.IsCancellationRequested || publishQueue.IsAddingCompleted)
-        {
-            return;
-        }
-
         var snapshot = BuildCurrentSnapshot();
-        var workItem = new PublishWorkItem(type, snapshot, description);
 
-        try
+        lock (sequenceLock)
         {
-            publishQueue.Add(workItem, cancellation.Token);
-        }
-        catch (InvalidOperationException)
-        {
-            // The queue was completed during shutdown.
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown.
-        }
-    }
-
-    private void PublishSequencedEvent(PublisherSocket publisher, PublishWorkItem workItem)
-    {
-        var sequence = eventSequence.Begin();
-
-        try
-        {
-            workItem.Snapshot.SessionId = sessionId;
-            workItem.Snapshot.EventSequence = sequence;
+            var sequence = eventSequence.Begin();
+            snapshot.EventSequence = sequence;
 
             var bridgeEvent = new BridgeEvent
             {
                 SessionId = sessionId,
                 EventSequence = sequence,
-                Type = workItem.Type,
-                Snapshot = workItem.Snapshot,
-                Description = workItem.Description
+                Type = type,
+                Snapshot = snapshot,
+                Description = description
             };
 
-            publisher.SendFrame(bridgeEvent.ToByteArray());
-        }
-        catch (Exception exception)
-        {
-            Debug.WriteLine($"[LiveSplit.Bridge] Event publish failed: {exception.Message}");
-        }
-        finally
-        {
-            eventSequence.Settle(sequence);
+            transport.Publish(bridgeEvent);
         }
     }
 
-    private void PublishHeartbeat(PublisherSocket publisher)
+    private BridgeEvent CreateHeartbeatEvent()
     {
-        var heartbeat = new BridgeEvent
+        return new BridgeEvent
         {
             SessionId = sessionId,
             EventSequence = eventSequence.LastSettled,
             Type = BridgeEventType.EventHeartbeat
         };
+    }
 
-        try
-        {
-            publisher.SendFrame(heartbeat.ToByteArray());
-        }
-        catch (Exception exception)
-        {
-            Debug.WriteLine($"[LiveSplit.Bridge] Heartbeat publish failed: {exception.Message}");
-        }
+    private void OnEventSettled(ulong sequence)
+    {
+        eventSequence.Settle(sequence);
     }
 
     private ulong ReadStateRevision()
@@ -651,22 +450,5 @@ internal sealed class BridgeRuntime : IDisposable
     {
         var value = Environment.GetEnvironmentVariable(name);
         return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
-    }
-
-    private sealed class PublishWorkItem
-    {
-        public PublishWorkItem(
-            BridgeEventType type,
-            TimerSnapshot snapshot,
-            string description)
-        {
-            Type = type;
-            Snapshot = snapshot;
-            Description = description;
-        }
-
-        public BridgeEventType Type { get; }
-        public TimerSnapshot Snapshot { get; }
-        public string Description { get; }
     }
 }

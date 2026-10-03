@@ -16,4 +16,20 @@ public class NetMqCompatibilityTests
 
         Assert.True(systemMemory.Version <= new Version(4, 0, 1, 2));
     }
+
+    [Fact]
+    public void BridgeRuntimeDoesNotHoldNetMqTypes()
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var runtimeTypes = typeof(BridgeRuntime).GetFields(flags).Select(field => field.FieldType)
+            .Concat(typeof(BridgeRuntime).GetProperties(flags).Select(property => property.PropertyType));
+
+        Assert.DoesNotContain(runtimeTypes, IsNetMqType);
+    }
+
+    private static bool IsNetMqType(Type type)
+    {
+        return type.Namespace is string @namespace
+            && @namespace.StartsWith("NetMQ", StringComparison.Ordinal);
+    }
 }
