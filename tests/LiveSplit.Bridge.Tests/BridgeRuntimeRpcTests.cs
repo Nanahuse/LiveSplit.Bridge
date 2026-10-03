@@ -1,9 +1,6 @@
-using Google.Protobuf;
 using LiveSplit.Bridge.Protocol.V1;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
-using NetMQ;
-using NetMQ.Sockets;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -11,11 +8,11 @@ namespace LiveSplit.Bridge.Tests;
 public class BridgeRuntimeRpcTests
 {
     [Fact]
-    public void AttachReturnsSessionIdSnapshotAndPreservesRequestId()
+    public async Task AttachReturnsSessionIdSnapshotAndPreservesRequestId()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 42,
@@ -32,11 +29,11 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public void UnsupportedProtocolVersionReturnsErrorAndPreservesRequestId()
+    public async Task UnsupportedProtocolVersionReturnsErrorAndPreservesRequestId()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 99,
             RequestId = 7,
@@ -49,11 +46,11 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public void GetSnapshotReturnsCurrentSnapshot()
+    public async Task GetSnapshotReturnsCurrentSnapshot()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 8,
@@ -67,11 +64,11 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public void GetRunReturnsCurrentlyLoadedRun()
+    public async Task GetRunReturnsCurrentlyLoadedRun()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 9,
@@ -85,11 +82,11 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public void TimerOperationStartSucceedsAndReturnsSnapshot()
+    public async Task TimerOperationStartSucceedsAndReturnsSnapshot()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 10,
@@ -102,11 +99,11 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public void GameTimeOperationInitializeSucceedsAndReturnsSnapshot()
+    public async Task GameTimeOperationInitializeSucceedsAndReturnsSnapshot()
     {
-        using var fixture = RpcFixture.Create();
+        using var fixture = await RpcFixture.CreateAsync();
 
-        var response = fixture.Send(new Request
+        var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
             RequestId = 11,
@@ -121,20 +118,19 @@ public class BridgeRuntimeRpcTests
 
     private sealed class RpcFixture : IDisposable
     {
-        private readonly RequestSocket requestSocket;
+        private readonly WebSocketTestClient client;
 
-        private RpcFixture(BridgeRuntime runtime, int rpcPort)
+        private RpcFixture(BridgeRuntime runtime, WebSocketTestClient client)
         {
             Runtime = runtime;
-            requestSocket = new RequestSocket();
-            requestSocket.Connect(BridgeTestEndpoints.Rpc(rpcPort));
+            this.client = client;
         }
 
         public BridgeRuntime Runtime { get; }
 
-        public static RpcFixture Create()
+        public static async Task<RpcFixture> CreateAsync()
         {
-            var (rpcPort, eventPort) = BridgeTestEndpoints.GetFreePorts();
+            var port = BridgeTestEndpoints.GetFreePort();
             var run = new Run(new StandardComparisonGeneratorsFactory())
             {
                 GameName = "RPC Game",
@@ -142,27 +138,24 @@ public class BridgeRuntimeRpcTests
             };
             run.Add(new Segment("One"));
             var state = TestLiveSplitState.Create(run);
-            var runtime = new BridgeRuntime(state, rpcPort, eventPort);
-            return new RpcFixture(runtime, rpcPort);
+            var runtime = new BridgeRuntime(state, port);
+            var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
+            return new RpcFixture(runtime, client);
         }
 
-        public Response Send(Request request)
+        public Task<Response> SendAsync(Request request)
         {
             if (request.ProtocolVersion == 0)
             {
                 request.ProtocolVersion = 1;
             }
 
-            requestSocket.SendFrame(request.ToByteArray());
-            Assert.True(
-                requestSocket.TryReceiveFrameBytes(TimeSpan.FromSeconds(5), out var data),
-                "Timed out waiting for RPC response.");
-            return Response.Parser.ParseFrom(data);
+            return client.SendRequestAsync(request, TimeSpan.FromSeconds(5));
         }
 
         public void Dispose()
         {
-            requestSocket.Dispose();
+            client.Dispose();
             Runtime.Dispose();
         }
     }

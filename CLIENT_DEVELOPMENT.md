@@ -18,15 +18,18 @@ Protobufスキーマです。現在の`protocol_version`は`1`です。
 
 ## 接続先
 
-Bridgeは既定でローカルPC上の次のエンドポイントを使用します。
+Bridgeは既定でローカルPC上の`127.0.0.1:54000`でWebSocketサーバーを起動し、次の2つの
+endpointを公開します。
 
-| 用途 | エンドポイント | ZeroMQパターン |
-|---|---|---|
-| 状態取得・操作 | `tcp://127.0.0.1:54000` | REQ/REP |
-| イベント監視 | `tcp://127.0.0.1:54001` | PUB/SUB |
+| 用途 | エンドポイント |
+|---|---|
+| 状態取得・操作 | `ws://127.0.0.1:<port>/bridge/v1/rpc` |
+| イベント監視 | `ws://127.0.0.1:<port>/bridge/v1/events` |
 
-ポートはLiveSplitのコンポーネント設定で変更できます。クライアント側でも接続先を設定可能に
-してください。Bridgeはloopbackだけにbindするため、別のPCから直接接続することはできません。
+Payloadは既存のProtobufメッセージをWebSocketのBinary Messageとして送受信します。JSONでは
+ありません。ポートはLiveSplitのコンポーネント設定で変更できます。クライアント側でも接続先を
+設定可能にしてください。Bridgeはloopbackだけにbindするため、別のPCから直接接続することは
+できません。
 
 ## RPC
 
@@ -104,9 +107,9 @@ unsetになります。
 
 ### 再接続時の同期
 
-PUB/SUBは到達保証を持たないため、`run_revision`だけに依存してRun情報を再構築しないで
-ください。`session_id`の変更、`event_sequence`の欠落、ハートビートのタイムアウトを検出した
-場合は、通常の復旧手順に加えて`get_run`で最新の`RunSnapshot`を再取得し、記録済みの
+イベントストリームは到達保証を持たないため、`run_revision`だけに依存してRun情報を再構築
+しないでください。`session_id`の変更、`event_sequence`の欠落、ハートビートのタイムアウトを
+検出した場合は、通常の復旧手順に加えて`get_run`で最新の`RunSnapshot`を再取得し、記録済みの
 `run_revision`を更新してください。LiveSplitのRunが正であり、`get_run`は常に現在のRunを
 返します。
 
@@ -121,7 +124,9 @@ PUB/SUBは到達保証を持たないため、`run_revision`だけに依存し�
 
 ## イベントストリーム
 
-イベントは既存のPUB/SUB endpointから`BridgeEvent`として届きます。
+イベントは`/bridge/v1/events`へ接続したすべてのクライアントへ`BridgeEvent`として
+broadcastされます。イベント種別ごとの購読機能はなく、接続したクライアントはすべての
+`BridgeEvent`を受信します。
 
 - 状態変更イベントにはイベント処理後の`TimerSnapshot`が含まれます。
 - 定期フルsnapshotは30秒周期で配信され、通常のsequence対象です。
@@ -152,21 +157,20 @@ heartbeat   sequence=11
 
 ### `session_id`
 
-`session_id`はBridgeの配信セッションを識別します。Bridgeの再起動やPUBセッションの再作成後は
-新しい値になります。異なる`session_id`を受信した場合、以前の`event_sequence`との連続性を
-仮定しないでください。
+`session_id`はBridgeの配信セッションを識別します。Bridgeの再起動後は新しい値になります。
+異なる`session_id`を受信した場合、以前の`event_sequence`との連続性を仮定しないでください。
 
 ## 接続手順
 
 起動時は次の順序を推奨します。
 
-1. SUB socketをイベントendpointへ接続し、すべての`BridgeEvent`を購読する
+1. イベントendpointへWebSocketで接続し、`BridgeEvent`の受信を開始する
 2. RPCの`attach`で`session_id`とフルsnapshotを取得する
 3. snapshotを初期状態として適用し、その`event_sequence`を記録する
 4. 同じ`session_id`のイベントをsequence順に処理する
 5. snapshot取得前からキューに残っていた、記録済みsequence以下のイベントは再適用しない
 
-ZeroMQ PUB/SUBでは購読確立前のイベントを受信できません。初期状態はイベントから推測せず、
+WebSocket接続を確立する前のイベントは受信できません。初期状態はイベントから推測せず、
 必ずRPC snapshotを基準にしてください。
 
 ## 切断・欠落からの復旧

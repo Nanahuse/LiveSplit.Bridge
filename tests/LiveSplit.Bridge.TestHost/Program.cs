@@ -23,8 +23,7 @@ internal static class Program
         var state = new LiveSplitState(run, form, layout, layoutSettings, new Settings());
         using var runtime = new BridgeRuntime(
             state,
-            BridgeSettings.DefaultRpcPort,
-            BridgeSettings.DefaultEventPort);
+            BridgeSettings.DefaultWebSocketPort);
 
         Console.WriteLine("READY");
         Console.Out.Flush();

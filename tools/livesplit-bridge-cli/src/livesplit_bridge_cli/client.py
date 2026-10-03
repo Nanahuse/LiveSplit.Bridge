@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self
 
-import zmq
+import websocket
 
 from livesplit.bridge.v1 import bridge_pb2
 
@@ -20,15 +20,19 @@ class BridgeClient:
     timeout_ms: int = 3000
 
     def __post_init__(self) -> None:
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.REQ)
-        self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.connect(self.rpc_endpoint)
+        try:
+            self._socket = websocket.create_connection(
+                self.rpc_endpoint,
+                timeout=self.timeout_ms / 1000,
+            )
+        except (OSError, websocket.WebSocketException) as error:
+            raise BridgeClientError(
+                f"Failed to connect to {self.rpc_endpoint}: {error}"
+            ) from error
         self._next_request_id = 1
 
     def close(self) -> None:
         self._socket.close()
-        self._context.term()
 
     def __enter__(self) -> Self:
         return self
@@ -41,12 +45,18 @@ class BridgeClient:
         self._next_request_id += 1
         request.protocol_version = PROTOCOL_VERSION
         request.request_id = request_id
-        self._socket.send(request.SerializeToString())
-        if not self._socket.poll(self.timeout_ms, zmq.POLLIN):
+        try:
+            self._socket.send_binary(request.SerializeToString())
+            data = self._socket.recv()
+        except websocket.WebSocketTimeoutException as error:
             raise BridgeClientError(
                 f"RPC timed out after {self.timeout_ms} ms ({self.rpc_endpoint})"
-            )
-        response = bridge_pb2.Response.FromString(self._socket.recv())
+            ) from error
+        except websocket.WebSocketException as error:
+            raise BridgeClientError(f"RPC failed: {error}") from error
+        if isinstance(data, str):
+            raise BridgeClientError("Bridge returned a text frame; binary expected")
+        response = bridge_pb2.Response.FromString(data)
         if response.request_id != request_id:
             raise BridgeClientError(
                 f"Request ID mismatch: expected {request_id}, got {response.request_id}"

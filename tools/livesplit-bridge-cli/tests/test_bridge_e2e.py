@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import zmq
+import websocket
 
 from livesplit.bridge.v1 import common_pb2
 
@@ -40,6 +40,10 @@ def unused_tcp_port() -> int:
         return listener.getsockname()[1]
 
 
+def events_endpoint(port: int) -> str:
+    return f"ws://127.0.0.1:{port}/bridge/v1/events"
+
+
 @pytest.fixture(scope="session")
 def build_test_host() -> None:
     subprocess.run(
@@ -51,16 +55,10 @@ def build_test_host() -> None:
 
 
 @pytest.fixture
-def bridge_endpoints(build_test_host: None) -> Iterator[tuple[str, str]]:
-    rpc_port = unused_tcp_port()
-    event_port = unused_tcp_port()
-    while event_port == rpc_port:
-        event_port = unused_tcp_port()
-    rpc_endpoint = f"tcp://127.0.0.1:{rpc_port}"
-    event_endpoint = f"tcp://127.0.0.1:{event_port}"
+def bridge_port(build_test_host: None) -> Iterator[int]:
+    port = unused_tcp_port()
     environment = os.environ.copy()
-    environment["LIVESPLIT_BRIDGE_RPC_ENDPOINT"] = rpc_endpoint
-    environment["LIVESPLIT_BRIDGE_EVENT_ENDPOINT"] = event_endpoint
+    environment["LIVESPLIT_BRIDGE_WEBSOCKET_PORT"] = str(port)
     process = subprocess.Popen(
         [str(TEST_HOST)],
         env=environment,
@@ -75,14 +73,14 @@ def bridge_endpoints(build_test_host: None) -> Iterator[tuple[str, str]]:
     threading.Thread(target=lambda: ready.put(stdout.readline()), daemon=True).start()
     assert ready.get(timeout=10).strip() == "READY"
     try:
-        yield rpc_endpoint, event_endpoint
+        yield port
     finally:
         process.communicate("\n", timeout=10)
 
 
-def run_cli(rpc_endpoint: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_cli(port: int, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(CLI), "--rpc-endpoint", rpc_endpoint, "--timeout", "3", *arguments],
+        [str(CLI), "--port", str(port), "--timeout", "3", *arguments],
         capture_output=True,
         check=False,
         text=True,
@@ -90,22 +88,24 @@ def run_cli(rpc_endpoint: str, *arguments: str) -> subprocess.CompletedProcess[s
     )
 
 
-def receive_heartbeat(subscriber: zmq.Socket[bytes]) -> common_pb2.BridgeEvent:
+def connect_events(port: int) -> websocket.WebSocket:
+    return websocket.create_connection(events_endpoint(port), timeout=4)
+
+
+def receive_heartbeat(subscriber: websocket.WebSocket) -> common_pb2.BridgeEvent:
     while True:
-        event = common_pb2.BridgeEvent.FromString(subscriber.recv())
+        data = subscriber.recv()
+        assert isinstance(data, bytes)
+        event = common_pb2.BridgeEvent.FromString(data)
         if event.type == common_pb2.EVENT_HEARTBEAT:
             return event
 
 
-def test_cli_controls_bridge_timer(
-    bridge_endpoints: tuple[str, str],
-) -> None:
-    rpc_endpoint, _ = bridge_endpoints
-
-    initial = run_cli(rpc_endpoint, "--json", "snapshot")
-    no_op = run_cli(rpc_endpoint, "--json", "timer", "pause")
-    started = run_cli(rpc_endpoint, "--json", "timer", "start")
-    snapshot = run_cli(rpc_endpoint, "--json", "snapshot")
+def test_cli_controls_bridge_timer(bridge_port: int) -> None:
+    initial = run_cli(bridge_port, "--json", "snapshot")
+    no_op = run_cli(bridge_port, "--json", "timer", "pause")
+    started = run_cli(bridge_port, "--json", "timer", "start")
+    snapshot = run_cli(bridge_port, "--json", "snapshot")
 
     assert initial.returncode == 0, initial.stderr
     initial_snapshot = json.loads(initial.stdout)["get_snapshot"]["snapshot"]
@@ -125,12 +125,8 @@ def test_cli_controls_bridge_timer(
     assert running["split_count"] == 2
 
 
-def test_cli_gets_current_run(
-    bridge_endpoints: tuple[str, str],
-) -> None:
-    rpc_endpoint, _ = bridge_endpoints
-
-    result = run_cli(rpc_endpoint, "--json", "run")
+def test_cli_gets_current_run(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "run")
 
     assert result.returncode == 0, result.stderr
     run = json.loads(result.stdout)["get_run"]["run"]
@@ -144,25 +140,17 @@ def test_cli_gets_current_run(
     ]
 
 
-def test_cli_gets_run_revision_from_timer_snapshot(
-    bridge_endpoints: tuple[str, str],
-) -> None:
-    rpc_endpoint, _ = bridge_endpoints
-
-    result = run_cli(rpc_endpoint, "--json", "snapshot")
+def test_cli_gets_run_revision_from_timer_snapshot(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "snapshot")
 
     assert result.returncode == 0, result.stderr
     snapshot = json.loads(result.stdout)["get_snapshot"]["snapshot"]
     assert snapshot["run_revision"] == "1"
 
 
-def test_cli_sets_bridge_game_time(
-    bridge_endpoints: tuple[str, str],
-) -> None:
-    rpc_endpoint, _ = bridge_endpoints
-
-    result = run_cli(rpc_endpoint, "--json", "game-time", "set", "12.345")
-    no_op = run_cli(rpc_endpoint, "--json", "game-time", "set", "12.345")
+def test_cli_sets_bridge_game_time(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "game-time", "set", "12.345")
+    no_op = run_cli(bridge_port, "--json", "game-time", "set", "12.345")
 
     assert result.returncode == 0, result.stderr
     operation = json.loads(result.stdout)["operation"]
@@ -178,24 +166,20 @@ def test_cli_sets_bridge_game_time(
 
 
 def test_bridge_publishes_heartbeat_without_advancing_sequence(
-    bridge_endpoints: tuple[str, str],
+    bridge_port: int,
 ) -> None:
-    rpc_endpoint, event_endpoint = bridge_endpoints
-    context = zmq.Context()
-    subscriber = context.socket(zmq.SUB)
-    subscriber.setsockopt(zmq.LINGER, 0)
-    subscriber.setsockopt(zmq.RCVTIMEO, 4_000)
-    subscriber.setsockopt(zmq.SUBSCRIBE, b"")
-    subscriber.connect(event_endpoint)
+    subscriber = connect_events(bridge_port)
 
     try:
         initial_heartbeat = receive_heartbeat(subscriber)
         repeated_heartbeat = receive_heartbeat(subscriber)
-        started = run_cli(rpc_endpoint, "timer", "start")
+        started = run_cli(bridge_port, "timer", "start")
         assert started.returncode == 0, started.stderr
 
         while True:
-            timer_event = common_pb2.BridgeEvent.FromString(subscriber.recv())
+            data = subscriber.recv()
+            assert isinstance(data, bytes)
+            timer_event = common_pb2.BridgeEvent.FromString(data)
             if timer_event.type == common_pb2.EVENT_TIMER_STARTED:
                 break
 
@@ -214,4 +198,3 @@ def test_bridge_publishes_heartbeat_without_advancing_sequence(
         assert not next_heartbeat.HasField("snapshot")
     finally:
         subscriber.close()
-        context.term()

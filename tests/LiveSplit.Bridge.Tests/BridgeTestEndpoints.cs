@@ -6,17 +6,15 @@ namespace LiveSplit.Bridge.Tests;
 
 internal static class BridgeTestEndpoints
 {
-    public static (int Rpc, int Event) GetFreePorts()
+    public static int[] GetFreePorts(int count)
     {
-        var rpc = GetFreePort();
-        int @event;
-        do
+        var ports = new HashSet<int>();
+        while (ports.Count < count)
         {
-            @event = GetFreePort();
+            ports.Add(GetFreePort());
         }
-        while (@event == rpc);
 
-        return (rpc, @event);
+        return ports.ToArray();
     }
 
     public static int GetFreePort()
@@ -33,9 +31,11 @@ internal static class BridgeTestEndpoints
         }
     }
 
-    public static string Rpc(int port) => $"tcp://127.0.0.1:{port}";
+    public static string Rpc(int port) => $"ws://127.0.0.1:{port}/bridge/v1/rpc";
 
-    public static string Event(int port) => $"tcp://127.0.0.1:{port}";
+    public static string Events(int port) => $"ws://127.0.0.1:{port}/bridge/v1/events";
+
+    public static string WebSocket(int port) => $"ws://127.0.0.1:{port}";
 
     public static bool IsLoopbackListening(int port)
     {
