@@ -51,13 +51,14 @@ public class DeploymentProjectTests
             {
                 "LiveSplit.Bridge.dll",
                 "LiveSplit.Bridge.Protocol.dll",
-                "NetMQ.dll",
-                "AsyncIO.dll",
-                "NaCl.dll",
                 "Google.Protobuf.dll",
             },
             files);
         Assert.DoesNotContain(files, file => file.StartsWith("System.", StringComparison.Ordinal));
+        Assert.DoesNotContain("NetMQ.dll", files);
+        Assert.DoesNotContain("AsyncIO.dll", files);
+        Assert.DoesNotContain("NaCl.dll", files);
+        Assert.DoesNotContain("WebSocketSharp.dll", files);
         Assert.DoesNotContain("LiveSplit.Core.dll", files);
         Assert.DoesNotContain("UpdateManager.dll", files);
     }

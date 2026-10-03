@@ -36,7 +36,6 @@ public class BridgeTransportLifecycleTests
 
             var exception = Assert.Throws<BridgeTransportStartException>(() => transport.Start());
 
-            Assert.Equal(BridgeEndpointKind.WebSocket, exception.EndpointKind);
             Assert.Equal(BridgeTestEndpoints.WebSocket(port), exception.Endpoint);
             Assert.NotNull(exception.InnerException);
         }
