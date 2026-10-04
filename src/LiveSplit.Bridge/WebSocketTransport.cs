@@ -58,11 +58,16 @@ internal sealed class WebSocketTransport : IDisposable
 
     internal bool IsListening => server?.IsListening ?? false;
 
+    internal bool IsInactiveSessionCleanupEnabled => server?.KeepClean ?? false;
+
     public void Start()
     {
         try
         {
-            server = new WebSocketServer(IPAddress.Loopback, port);
+            server = new WebSocketServer(IPAddress.Loopback, port)
+            {
+                KeepClean = false
+            };
             server.AddWebSocketService<WebSocketRpcBehavior>(
                 RpcPath,
                 () => new WebSocketRpcBehavior(requestHandler, rpcLock));
