@@ -79,8 +79,57 @@ public class UiOperationTests
         });
         var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
         var runtime = await ReadEventAsync(events, BridgeEventType.EventRuntimeChanged);
+        // RUN_CHANGED and RUNTIME_CHANGED are consecutive, with no second run event.
         Assert.Equal(run.EventSequence + 1, runtime.EventSequence);
+        Assert.Equal(2UL, run.TimerState.RunRevision);
         Assert.Equal(2UL, runtime.TimerState.RunRevision);
+        Assert.Equal(2UL, runtime.TimerState.RuntimeRevision);
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+    }
+
+    [Fact]
+    public async Task UnrelatedComparisonRenamePublishesOnlyRunChanged()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(ui.Port));
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+        await ui.InvokeAsync(() =>
+        {
+            // The current comparison is unchanged by this rename.
+            ui.State.CallComparisonRenamed(EventArgs.Empty);
+            ui.State.CallRunManuallyModified();
+        });
+        var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
+        Assert.Equal(2UL, run.TimerState.RunRevision);
+        Assert.Equal(1UL, run.TimerState.RuntimeRevision);
+        // A RUNTIME_CHANGED here would fail this heartbeat read.
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+    }
+
+    [Fact]
+    public async Task NormalRunChangePublishesOnlyRunChangedAndDoesNotLeakPendingRename()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(ui.Port));
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+
+        await ui.InvokeAsync(() =>
+        {
+            ui.State.CallComparisonRenamed(EventArgs.Empty);
+            ui.State.CallRunManuallyModified();
+        });
+        await ReadEventAsync(events, BridgeEventType.EventRunChanged);
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+
+        await ui.InvokeAsync(() =>
+        {
+            ui.State.Run.GameName = "Changed";
+            ui.State.CallRunManuallyModified();
+        });
+        var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
+        Assert.Equal(3UL, run.TimerState.RunRevision);
+        Assert.Equal(1UL, run.TimerState.RuntimeRevision);
+        // The earlier rename pending state must not survive into this change.
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
     }
 

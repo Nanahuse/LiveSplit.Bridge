@@ -137,6 +137,53 @@ public class RunRevisionTests
     }
 
     [Fact]
+    public void ComparisonRenameAdvancesRunExactlyOnceAndRuntimeOnlyWhenSelectionChanges()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        state.CurrentComparison = "Personal Best";
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        // Rename that leaves the current comparison unchanged: only run_revision moves.
+        state.CallComparisonRenamed(EventArgs.Empty);
+        state.CallRunManuallyModified();
+        Assert.Equal(2UL, runtime.RunRevision);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+
+        // Rename of the current comparison: run_revision and runtime_revision each move once.
+        state.CurrentComparison = "Renamed";
+        state.CallComparisonRenamed(EventArgs.Empty);
+        state.CallRunManuallyModified();
+        Assert.Equal(3UL, runtime.RunRevision);
+        Assert.Equal(2UL, runtime.RuntimeRevision);
+    }
+
+    [Fact]
+    public void NormalRunChangeDoesNotSynchronizeRuntimeAndDoesNotLeakRenamePending()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        state.CurrentComparison = "Personal Best";
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        state.CallComparisonRenamed(EventArgs.Empty);
+        state.CallRunManuallyModified();
+        Assert.Equal(2UL, runtime.RunRevision);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+
+        // A plain run change must not carry the earlier rename's runtime check.
+        run.GameName = "Changed";
+        state.CallRunManuallyModified();
+        Assert.Equal(3UL, runtime.RunRevision);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+
+        runtime.ObserveExternalState();
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+    }
+
+    [Fact]
     public void RunChangePublishesRunChangedEventWithUpdatedRevision()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());

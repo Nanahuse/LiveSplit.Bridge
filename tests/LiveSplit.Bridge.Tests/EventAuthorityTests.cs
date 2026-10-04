@@ -115,6 +115,8 @@ public class EventAuthorityTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
+        // The rename pair has finished in the same call stack; the pending
+        // runtime check must not leak into a later UI turn.
         Application.DoEvents();
         Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
@@ -122,12 +124,12 @@ public class EventAuthorityTests
         state.CurrentComparison = "Renamed";
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
-        Assert.Equal(3UL, runtime.RunRevision);
-        Assert.Equal(1UL, runtime.RuntimeRevision);
-        Application.DoEvents();
+        // The current comparison changed, so RuntimeState is synchronized in the
+        // same call stack, right after the run change.
         Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(2UL, runtime.RuntimeRevision);
         runtime.ObserveExternalState();
+        Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
 

@@ -204,13 +204,55 @@ Runを再取得すべき変更世代です。LiveSplitの`RunManuallyModified`�
 `EVENT_RUN_CHANGED`を発行します。Run EditorによるGame / Category、Segment名、Metadata、
 Comparison、PB / Best Segment、アイコン等の編集をこのイベントで扱います。
 内容の比較は行わないため、結果的に同じ内容でも世代が進むことがあります。
+
 Comparison renameでは`ComparisonRenamed`と`RunManuallyModified`の両方が届きますが、
-Runの世代更新は後者で一度だけ行います。Current Comparisonも変わった場合は、続いて
-`EVENT_RUNTIME_CHANGED`を発行します。
+`run_revision`を増加させるのは後者だけで、Comparison rename単独では増加しません。
+RenameによってCurrent Comparisonも変わった場合は、`RunManuallyModified`の処理中に続けて
+`EVENT_RUNTIME_CHANGED`を発行します。そのためEventsチャネルでは同一の送信処理内で
+
+```text
+EVENT_RUN_CHANGED
+→ EVENT_RUNTIME_CHANGED
+```
+
+の順序になります。Current Comparisonが変わらなかったrenameでは`EVENT_RUN_CHANGED`だけが
+発行され、`runtime_revision`は増加しません。
 
 Resetでは`EVENT_TIMER_RESET`を先に発行し、LiveSplitのReset処理（`FixSplits`を含む）が
 完了した後のUI処理で`run_revision`を増加させ、`EVENT_RUN_CHANGED`を発行します。
-PB等が結果的に変わらないResetでも増加します。
+PB等が結果的に変わらないResetでも増加します。したがってEventsチャネルでは
+
+```text
+EVENT_TIMER_RESET
+→ EVENT_RUN_CHANGED
+```
+
+の順序になります。`EVENT_TIMER_RESET`は旧`run_revision`を、`EVENT_RUN_CHANGED`は更新後の
+`run_revision`を持ちます。
+
+### RPCとEventsの順序
+
+RPC WebSocket（`/bridge/v2/rpc`）とEvents WebSocket（`/bridge/v2/events`）は別接続です。
+クライアントがTimer操作をRPCで送信した場合、`OperationResponse`と、その操作を契機に発行
+される`BridgeEvent`の受信順序は保証しません。RPC responseとEventsのどちらが先に到着しても
+正常な動作として扱ってください。
+
+ただしEventsチャネル内では、前述のとおり`EVENT_TIMER_RESET` → `EVENT_RUN_CHANGED`など、
+LiveSplitのイベント配送に基づく順序を保証します。
+
+クライアントは次の使い分けを想定しています。
+
+```text
+OperationResponse.timer_state
+= 実行した操作の結果確認用
+
+Events
+= 継続的なLiveSplit状態遷移のauthority
+```
+
+操作によって`run_revision`や`attempt_revision`が進む場合、RPC responseとEventsのどちらで
+先に新しいrevisionを観測してもかまいません。最終的なRun / Attempt / Runtime状態はEventsで
+届く更新を継続して処理し、必要になった時点で該当Stateを再取得してください。
 
 ### `attempt_revision`
 
@@ -251,11 +293,27 @@ RuntimeはComparison切替イベント等を使用し、専用イベントで網
 世代を進めません。
 
 Timer操作の`OperationResponse.timer_state`は操作完了直後に同じUI呼び出し内で取得します。
-Run / Attempt全体の走査やRuntime同期は行いません。Reset応答後には遅延した
-`EVENT_RUN_CHANGED`によって`run_revision`がさらに進むため、クライアントは応答に加えて
-Events側のrevision更新も継続して処理してください。
+Run / Attempt全体の走査やRuntime同期は行いません。Resetでも応答は`run_revision`の更新を
+待ちません。更新後の`run_revision`はEventsチャネルの`EVENT_RUN_CHANGED`で通知されるため、
+クライアントは`OperationResponse.timer_state`を操作結果の確認に用い、Run / Attempt /
+Runtimeの世代更新はEvents側で継続して処理してください。RPCとEventsの受信順序は保証されない
+ため、どちらを先に観測しても正常です。
 
 ## クライアント利用モデル
+
+クライアントは役割を次のように分けて扱ってください。
+
+```text
+OperationResponse.timer_state
+= 実行した操作の結果確認用
+
+Events
+= 継続的なLiveSplit状態遷移のauthority
+```
+
+RPC responseとEventsは別接続のため受信順序は保証されませんが、どちらを先に観測しても
+正常です。Run / Attempt / Runtimeの世代更新はEvents側で継続して処理し、必要な詳細を
+各RPCで再取得してください。
 
 ### Web UI
 

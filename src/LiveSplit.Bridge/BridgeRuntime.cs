@@ -24,6 +24,7 @@ internal sealed class BridgeRuntime : IDisposable
     private long runtimeRevision;
     private GameTimeRevisionState observedGameTimeState;
     private RuntimeRevisionState observedRuntimeState;
+    private int runtimeChangePending;
     private int disposed;
 
     public BridgeRuntime(LiveSplitState state, int webSocketPort)
@@ -457,19 +458,21 @@ internal sealed class BridgeRuntime : IDisposable
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
         PublishRunChange();
+
+        // ComparisonRenamed precedes RunManuallyModified. When the rename also
+        // changed the current comparison, synchronize RuntimeState in this same
+        // call stack so RUN_CHANGED is always published before RUNTIME_CHANGED.
+        if (Interlocked.Exchange(ref runtimeChangePending, 0) != 0)
+        {
+            SyncRuntimeStateAndPublish();
+        }
     }
 
     private void StateComparisonRenamed(object sender, EventArgs args)
     {
-        // RunEdited raises RunManuallyModified after ComparisonRenamed. Defer the
-        // runtime check to preserve RUN_CHANGED, RUNTIME_CHANGED ordering.
-        state.Form.BeginInvoke((Action)(() =>
-        {
-            if (Volatile.Read(ref disposed) == 0)
-            {
-                SyncRuntimeStateAndPublish();
-            }
-        }));
+        // RunEdited raises RunManuallyModified after ComparisonRenamed. Remember
+        // the pending runtime check and let that event synchronize RuntimeState.
+        Interlocked.Exchange(ref runtimeChangePending, 1);
     }
 
     private void StateComparisonSwitched(object sender, EventArgs args)
