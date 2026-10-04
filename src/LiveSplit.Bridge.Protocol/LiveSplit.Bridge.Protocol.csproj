@@ -12,9 +12,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="../../proto/livesplit/bridge/v1/common.proto" ProtoRoot="../../proto" />
-    <Protobuf Include="../../proto/livesplit/bridge/v1/run.proto" ProtoRoot="../../proto" />
-    <Protobuf Include="../../proto/livesplit/bridge/v1/bridge.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v2/common.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v2/run.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v2/bridge.proto" ProtoRoot="../../proto" />
   </ItemGroup>
 
 </Project>

@@ -43,8 +43,8 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 |---|---:|
 | WebSocketポート | `54000` |
 
-RPCは`ws://127.0.0.1:<port>/bridge/v1/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v1/events`で接続します。通常は既定値のまま使用できます。
+RPCは`ws://127.0.0.1:<port>/bridge/v2/rpc`、イベントは
+`ws://127.0.0.1:<port>/bridge/v2/events`で接続します。通常は既定値のまま使用できます。
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 

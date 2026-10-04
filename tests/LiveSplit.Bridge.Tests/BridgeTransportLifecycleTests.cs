@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -76,14 +76,14 @@ public class BridgeTransportLifecycleTests
             SessionId = 7,
             EventSequence = 1,
             Type = BridgeEventType.EventTimerStarted,
-            Snapshot = new TimerSnapshot(),
+            TimerState = new TimerState(),
         });
 
         var received = await ReceiveEventUntilAsync(events, BridgeEventType.EventTimerStarted);
 
         Assert.Equal(7UL, received.SessionId);
         Assert.Equal(1UL, received.EventSequence);
-        Assert.NotNull(received.Snapshot);
+        Assert.NotNull(received.TimerState);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public class BridgeTransportLifecycleTests
             SessionId = 11,
             EventSequence = 4,
             Type = BridgeEventType.EventTimerSplit,
-            Snapshot = new TimerSnapshot(),
+            TimerState = new TimerState(),
         });
 
         var firstEvent = await ReceiveEventUntilAsync(first, BridgeEventType.EventTimerSplit);
@@ -133,7 +133,7 @@ public class BridgeTransportLifecycleTests
             SessionId = 13,
             EventSequence = 9,
             Type = BridgeEventType.EventTimerSplit,
-            Snapshot = new TimerSnapshot(),
+            TimerState = new TimerState(),
         });
 
         var received = await ReceiveEventUntilAsync(remaining, BridgeEventType.EventTimerSplit);
@@ -148,7 +148,7 @@ public class BridgeTransportLifecycleTests
         using var transport = new WebSocketTransport(
             port,
             BridgeRuntime.HeartbeatInterval,
-            _ => new Response { ProtocolVersion = 1 },
+            _ => new Response { ProtocolVersion = 2 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             sequence =>
             {
@@ -164,7 +164,7 @@ public class BridgeTransportLifecycleTests
             SessionId = 1,
             EventSequence = 5,
             Type = BridgeEventType.EventTimerSplit,
-            Snapshot = new TimerSnapshot(),
+            TimerState = new TimerState(),
         });
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -211,7 +211,7 @@ public class BridgeTransportLifecycleTests
 
                 Thread.Sleep(100);
                 Interlocked.Decrement(ref current);
-                return new Response { ProtocolVersion = 1 };
+                return new Response { ProtocolVersion = 2 };
             },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });
@@ -228,9 +228,9 @@ public class BridgeTransportLifecycleTests
             var sends = clients.Select(client => client.SendRequestAsync(
                 new Request
                 {
-                    ProtocolVersion = 1,
+                    ProtocolVersion = 2,
                     RequestId = 1,
-                    GetSnapshot = new GetSnapshotRequest(),
+                    GetTimerState = new GetTimerStateRequest(),
                 },
                 TimeSpan.FromSeconds(10))).ToArray();
 
@@ -252,7 +252,7 @@ public class BridgeTransportLifecycleTests
         return new WebSocketTransport(
             port,
             BridgeRuntime.HeartbeatInterval,
-            _ => new Response { ProtocolVersion = 1 },
+            _ => new Response { ProtocolVersion = 2 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });
     }
