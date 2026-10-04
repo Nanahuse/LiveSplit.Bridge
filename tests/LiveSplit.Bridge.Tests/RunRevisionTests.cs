@@ -8,7 +8,7 @@ namespace LiveSplit.Bridge.Tests;
 public class RunRevisionTests
 {
     [Fact]
-    public void RunRevisionStartsAtOneAndAdvancesWithRunChanges()
+    public void RunRevisionAdvancesOnlyWhenRunContentChanges()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -23,24 +23,22 @@ public class RunRevisionTests
         Assert.Equal(1UL, attached.Attach.TimerState.RunRevision);
         Assert.Equal(initialStateRevision, attached.Attach.TimerState.StateRevision);
 
+        // RunManuallyModified without any content change must not advance anything.
+        state.CallRunManuallyModified();
+        runtime.ObserveExternalState();
+        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(initialStateRevision, runtime.StateRevision);
+
+        run.GameName = "Changed Game";
         state.CallRunManuallyModified();
 
         Assert.Equal(2UL, runtime.RunRevision);
-        Assert.Equal(initialStateRevision + 1, runtime.StateRevision);
+        // Run-only changes do not advance state_revision.
+        Assert.Equal(initialStateRevision, runtime.StateRevision);
 
         var afterChange = Handle(runtime, new Request { RequestId = 2, GetRun = new GetRunRequest() });
         Assert.Equal(2UL, afterChange.GetRun.Run.RunRevision);
-
-        state.CallRunManuallyModified();
-        state.CallRunManuallyModified();
-
-        Assert.Equal(4UL, runtime.RunRevision);
-        Assert.Equal(initialStateRevision + 3, runtime.StateRevision);
-
-        var latest = Handle(runtime, new Request { RequestId = 3, GetRun = new GetRunRequest() });
-        Assert.Equal(4UL, latest.GetRun.Run.RunRevision);
-        Assert.Equal("One", latest.GetRun.Run.Segments[0].Name);
-        Assert.Equal("Two", latest.GetRun.Run.Segments[1].Name);
+        Assert.Equal("Changed Game", afterChange.GetRun.Run.GameName);
     }
 
     [Fact]
@@ -75,7 +73,83 @@ public class RunRevisionTests
     }
 
     [Fact]
-    public async Task RunChangePublishesRunChangedEventWithUpdatedRevision()
+    public void SegmentNameChangeAdvancesRunRevision()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        run[0].Name = "Renamed";
+        state.CallRunManuallyModified();
+
+        Assert.Equal(2UL, runtime.RunRevision);
+        var response = Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() });
+        Assert.Equal("Renamed", response.GetRun.Run.Segments[0].Name);
+    }
+
+    [Fact]
+    public void ResetWithPersonalBestUpdateAdvancesRunRevision()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        run.Add(new Segment("Two"));
+        var state = TestLiveSplitState.Create(run);
+        var timerModel = new TimerModel { CurrentState = state };
+        state.RegisterTimerModel(timerModel);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        var originalRunRevision = runtime.RunRevision;
+
+        // Complete a run so that Reset's FixSplits records a Personal Best.
+        timerModel.Start();
+        timerModel.Split();
+        timerModel.Split();
+        runtime.ObserveExternalState();
+
+        timerModel.Reset();
+        runtime.ObserveExternalState();
+
+        Assert.True(runtime.RunRevision > originalRunRevision);
+    }
+
+    [Fact]
+    public void ResetWithoutRunContentChangeKeepsRunRevision()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        var timerModel = new TimerModel { CurrentState = state };
+        state.RegisterTimerModel(timerModel);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        // Start but never split: Reset has no split times to fold into the run.
+        timerModel.Start();
+        runtime.ObserveExternalState();
+        var beforeReset = runtime.RunRevision;
+
+        timerModel.Reset();
+        runtime.ObserveExternalState();
+
+        Assert.Equal(beforeReset, runtime.RunRevision);
+    }
+
+    [Fact]
+    public void RunChangePublishesRunChangedEventWithUpdatedRevision()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        run.GameName = "Updated Game";
+        state.CallRunManuallyModified();
+
+        Assert.Equal(2UL, runtime.RunRevision);
+    }
+
+    [Fact]
+    public async Task RunChangePublishesRunChangedEventCarryingUpdatedRevision()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -86,6 +160,7 @@ public class RunRevisionTests
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
+        run.GameName = "Updated Game";
         state.CallRunManuallyModified();
 
         var runChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRunChanged);

@@ -192,6 +192,136 @@ namespace LiveSplit.Bridge
             });
         }
 
+        public RunRevisionState CaptureRunRevisionState()
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var run = state.Run;
+                if (run == null)
+                {
+                    return new RunRevisionState(
+                        string.Empty,
+                        string.Empty,
+                        0,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        string.Empty,
+                        false,
+                        Array.Empty<KeyValuePair<string, string>>(),
+                        Array.Empty<string>(),
+                        Array.Empty<SegmentSnapshot>(),
+                        null);
+                }
+
+                var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
+                    .Distinct()
+                    .ToList();
+
+                var variables = RevisionSnapshotFactory.OrderMap(
+                    run.Metadata?.VariableValueNames
+                        ?.Select(pair => new KeyValuePair<string, string>(pair.Key, pair.Value)));
+
+                var segments = new List<SegmentSnapshot>(run.Count);
+                for (var index = 0; index < run.Count; index++)
+                {
+                    var segment = run[index];
+                    var comparisonTimes = comparisons
+                        .Select(comparison => new KeyValuePair<string, TimeSnapshot>(
+                            comparison,
+                            MapTimeSnapshot(segment.Comparisons, comparison)))
+                        .ToList();
+
+                    segments.Add(new SegmentSnapshot(
+                        (uint)index,
+                        segment.Name ?? string.Empty,
+                        MapTimeSnapshot(segment.BestSegmentTime),
+                        comparisonTimes,
+                        RevisionSnapshotFactory.Identity(segment.Icon)));
+                }
+
+                return new RunRevisionState(
+                    run.GameName ?? string.Empty,
+                    run.CategoryName ?? string.Empty,
+                    run.Offset.Ticks,
+                    run.FilePath ?? string.Empty,
+                    run.LayoutPath ?? string.Empty,
+                    run.Metadata?.RunID ?? string.Empty,
+                    run.Metadata?.PlatformName ?? string.Empty,
+                    run.Metadata?.RegionName ?? string.Empty,
+                    run.Metadata?.UsesEmulator ?? false,
+                    variables,
+                    comparisons,
+                    segments,
+                    RevisionSnapshotFactory.Identity(run.GameIcon));
+            });
+        }
+
+        public AttemptRevisionState CaptureAttemptRevisionState()
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var run = state.Run;
+                if (run == null)
+                {
+                    return new AttemptRevisionState(0, 0, Array.Empty<AttemptSegmentSnapshot>());
+                }
+
+                var attemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
+                var completedCount = run.AttemptHistory == null
+                    ? 0U
+                    : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
+
+                var segments = new List<AttemptSegmentSnapshot>(run.Count);
+                for (var index = 0; index < run.Count; index++)
+                {
+                    var segment = run[index];
+                    segments.Add(new AttemptSegmentSnapshot(
+                        (uint)index,
+                        MapTimeSnapshot(segment.SplitTime),
+                        RevisionSnapshotFactory.OrderMap(segment.CustomVariableValues)));
+                }
+
+                return new AttemptRevisionState(attemptCount, completedCount, segments);
+            });
+        }
+
+        public RuntimeRevisionState CaptureRuntimeRevisionState()
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var run = state.Run;
+                var customVariables = RevisionSnapshotFactory.OrderMap(
+                    run?.Metadata?.CustomVariables
+                        ?.Select(pair => new KeyValuePair<string, string>(
+                            pair.Key,
+                            pair.Value?.Value)));
+
+                return new RuntimeRevisionState(
+                    (int)state.CurrentTimingMethod,
+                    state.CurrentComparison ?? string.Empty,
+                    state.CurrentHotkeyProfile ?? string.Empty,
+                    ReadGlobalHotkeysEnabled(state),
+                    customVariables);
+            });
+        }
+
+        private static TimeSnapshot MapTimeSnapshot(Time time)
+        {
+            return new TimeSnapshot(time.RealTime?.Ticks, time.GameTime?.Ticks);
+        }
+
+        private static TimeSnapshot MapTimeSnapshot(IComparisons comparisons, string name)
+        {
+            if (comparisons != null && comparisons.TryGetValue(name, out var time))
+            {
+                return MapTimeSnapshot(time);
+            }
+
+            return new TimeSnapshot(null, null);
+        }
+
         private static bool ReadGlobalHotkeysEnabled(LiveSplitState state)
         {
             var settings = state.Settings;

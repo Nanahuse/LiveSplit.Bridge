@@ -23,6 +23,9 @@ internal sealed class BridgeRuntime : IDisposable
     private long attemptRevision;
     private long runtimeRevision;
     private GameTimeRevisionState observedGameTimeState;
+    private RunRevisionState observedRunState;
+    private AttemptRevisionState observedAttemptState;
+    private RuntimeRevisionState observedRuntimeState;
     private int disposed;
 
     public BridgeRuntime(LiveSplitState state, int webSocketPort)
@@ -30,6 +33,9 @@ internal sealed class BridgeRuntime : IDisposable
         this.state = state ?? throw new ArgumentNullException(nameof(state));
         adapter = new LiveSplitAdapter(state);
         observedGameTimeState = adapter.CaptureGameTimeRevisionState();
+        observedRunState = adapter.CaptureRunRevisionState();
+        observedAttemptState = adapter.CaptureAttemptRevisionState();
+        observedRuntimeState = adapter.CaptureRuntimeRevisionState();
 
         var port = GetPort("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", webSocketPort);
         sessionId = GenerateSessionId();
@@ -70,6 +76,7 @@ internal sealed class BridgeRuntime : IDisposable
         state.OnPause += StateOnPause;
         state.OnResume += StateOnResume;
         state.RunManuallyModified += StateRunManuallyModified;
+        state.ComparisonRenamed += StateComparisonRenamed;
         adapter.GameTimeChanged += AdapterGameTimeChanged;
     }
 
@@ -83,6 +90,7 @@ internal sealed class BridgeRuntime : IDisposable
         state.OnPause -= StateOnPause;
         state.OnResume -= StateOnResume;
         state.RunManuallyModified -= StateRunManuallyModified;
+        state.ComparisonRenamed -= StateComparisonRenamed;
         adapter.GameTimeChanged -= AdapterGameTimeChanged;
     }
 
@@ -166,6 +174,10 @@ internal sealed class BridgeRuntime : IDisposable
                 var result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
                 if (result.Success)
                 {
+                    // Run content can change after the operation's own event has been raised
+                    // (for example Reset updates PB / Best Segments in FixSplits afterwards).
+                    DetectAndPublishContentChanges();
+
                     result.TimerState = BuildCurrentTimerState();
                 }
 
@@ -185,6 +197,8 @@ internal sealed class BridgeRuntime : IDisposable
 
                 if (execution.Response.Success)
                 {
+                    DetectAndPublishContentChanges();
+
                     execution.Response.TimerState = BuildCurrentTimerState();
                 }
 
@@ -253,6 +267,12 @@ internal sealed class BridgeRuntime : IDisposable
 
     internal void ObserveExternalState()
     {
+        DetectGameTimeChange();
+        DetectAndPublishContentChanges();
+    }
+
+    private void DetectGameTimeChange()
+    {
         var current = adapter.CaptureGameTimeRevisionState();
         GameTimeRevisionState previous;
 
@@ -267,25 +287,17 @@ internal sealed class BridgeRuntime : IDisposable
             observedGameTimeState = current;
         }
 
-        if (previous.IsInitialized != current.IsInitialized)
-        {
-            PublishStateChangeEvent(
-                current.IsInitialized
-                    ? BridgeEventType.EventGameTimeInitialized
-                    : BridgeEventType.EventGameTimeSet);
-            return;
-        }
-
-        if (previous.IsPaused != current.IsPaused)
-        {
-            PublishStateChangeEvent(
-                current.IsPaused
+        var eventType = current.IsInitialized != previous.IsInitialized
+            ? (current.IsInitialized
+                ? BridgeEventType.EventGameTimeInitialized
+                : BridgeEventType.EventGameTimeSet)
+            : current.IsPaused != previous.IsPaused
+                ? (current.IsPaused
                     ? BridgeEventType.EventGameTimePaused
-                    : BridgeEventType.EventGameTimeResumed);
-            return;
-        }
+                    : BridgeEventType.EventGameTimeResumed)
+                : BridgeEventType.EventGameTimeSet;
 
-        PublishStateChangeEvent(BridgeEventType.EventGameTimeSet);
+        PublishStateChangeEvent(eventType);
     }
 
     private void RecordCurrentGameTimeState()
@@ -297,10 +309,95 @@ internal sealed class BridgeRuntime : IDisposable
         }
     }
 
+    private readonly struct ContentChanges
+    {
+        public ContentChanges(bool run, bool attempt, bool runtime)
+        {
+            Run = run;
+            Attempt = attempt;
+            Runtime = runtime;
+        }
+
+        public bool Run { get; }
+        public bool Attempt { get; }
+        public bool Runtime { get; }
+    }
+
+    private ContentChanges ApplyContentRevisionChanges()
+    {
+        var run = adapter.CaptureRunRevisionState();
+        var attempt = adapter.CaptureAttemptRevisionState();
+        var runtime = adapter.CaptureRuntimeRevisionState();
+
+        bool runChanged;
+        bool attemptChanged;
+        bool runtimeChanged;
+
+        lock (observedStateLock)
+        {
+            runChanged = !observedRunState.Equals(run);
+            attemptChanged = !observedAttemptState.Equals(attempt);
+            runtimeChanged = !observedRuntimeState.Equals(runtime);
+
+            observedRunState = run;
+            observedAttemptState = attempt;
+            observedRuntimeState = runtime;
+        }
+
+        if (attemptChanged)
+        {
+            IncrementAttemptRevision();
+        }
+
+        if (runChanged)
+        {
+            IncrementRunRevision();
+        }
+
+        if (runtimeChanged)
+        {
+            IncrementRuntimeRevision();
+        }
+
+        return new ContentChanges(runChanged, attemptChanged, runtimeChanged);
+    }
+
+    private void DetectAndPublishContentChanges()
+    {
+        var changes = ApplyContentRevisionChanges();
+
+        if (changes.Run)
+        {
+            PublishEvent(BridgeEventType.EventRunChanged);
+        }
+
+        if (changes.Runtime)
+        {
+            PublishEvent(BridgeEventType.EventRuntimeChanged);
+        }
+    }
+
     private void PublishStateChangeEvent(BridgeEventType type)
     {
+        RecordCurrentGameTimeState();
+
+        // Refresh attempt / run / runtime revisions before publishing so the event's
+        // TimerState carries the updated revision values. Run / runtime changes are
+        // published as their own events after the primary (timer / game time) event.
+        var changes = ApplyContentRevisionChanges();
+
         IncrementStateRevision();
         PublishEvent(type);
+
+        if (changes.Run)
+        {
+            PublishEvent(BridgeEventType.EventRunChanged);
+        }
+
+        if (changes.Runtime)
+        {
+            PublishEvent(BridgeEventType.EventRuntimeChanged);
+        }
     }
 
     private void PublishEvent(BridgeEventType type)
@@ -386,57 +483,56 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void StateOnStart(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-        IncrementAttemptRevision();
         PublishStateChangeEvent(BridgeEventType.EventTimerStarted);
     }
 
     private void StateOnSplit(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-        IncrementAttemptRevision();
         PublishStateChangeEvent(BridgeEventType.EventTimerSplit);
     }
 
     private void StateOnSkipSplit(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-        IncrementAttemptRevision();
         PublishStateChangeEvent(BridgeEventType.EventTimerSkipped);
     }
 
     private void StateOnUndoSplit(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-        IncrementAttemptRevision();
         PublishStateChangeEvent(BridgeEventType.EventTimerUndo);
     }
 
     private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
     {
-        RecordCurrentGameTimeState();
-        IncrementAttemptRevision();
+        // ResetSplits has already cleared split times at this point, but LiveSplit runs
+        // FixSplits (which can rewrite PB / Best Segments) after this event. The run
+        // change is picked up by the post-operation detection in HandleRequest or by
+        // ObserveExternalState.
         PublishStateChangeEvent(BridgeEventType.EventTimerReset);
     }
 
     private void StateOnPause(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
         PublishStateChangeEvent(BridgeEventType.EventTimerPaused);
     }
 
     private void StateOnResume(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
         PublishStateChangeEvent(BridgeEventType.EventTimerResumed);
     }
 
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
         RecordCurrentGameTimeState();
-        IncrementRunRevision();
-        IncrementRuntimeRevision();
-        PublishStateChangeEvent(BridgeEventType.EventRunChanged);
+
+        // Run content (and possibly runtime custom variables) determine the revision;
+        // no state_revision is bumped for run / runtime only changes.
+        DetectAndPublishContentChanges();
+    }
+
+    private void StateComparisonRenamed(object sender, EventArgs args)
+    {
+        RecordCurrentGameTimeState();
+        DetectAndPublishContentChanges();
     }
 
     private static Response MakeErrorResponse(Request request, int code, string message)
