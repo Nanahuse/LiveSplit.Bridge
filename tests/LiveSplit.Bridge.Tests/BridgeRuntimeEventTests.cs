@@ -1,4 +1,4 @@
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
 
@@ -19,8 +19,7 @@ public class BridgeRuntimeEventTests
 
         var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventTimerStarted);
 
-        Assert.NotNull(bridgeEvent.Snapshot);
-        Assert.Equal("Timer started", bridgeEvent.Description);
+        Assert.NotNull(bridgeEvent.TimerState);
         Assert.Equal(1UL, bridgeEvent.EventSequence);
         Assert.NotEqual(0UL, bridgeEvent.SessionId);
     }
@@ -33,7 +32,7 @@ public class BridgeRuntimeEventTests
 
         var response = await harness.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
             RequestId = 1,
             GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Initialize },
         });
@@ -42,7 +41,7 @@ public class BridgeRuntimeEventTests
 
         var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventGameTimeInitialized);
 
-        Assert.NotNull(bridgeEvent.Snapshot);
+        Assert.NotNull(bridgeEvent.TimerState);
         Assert.Equal(1UL, bridgeEvent.EventSequence);
     }
 
@@ -59,36 +58,21 @@ public class BridgeRuntimeEventTests
 
         Assert.Equal(1UL, first.EventSequence);
         Assert.Equal(2UL, second.EventSequence);
-        Assert.NotNull(first.Snapshot);
-        Assert.Equal(2UL, first.Snapshot.RunRevision);
-        Assert.Equal(3UL, second.Snapshot.RunRevision);
+        Assert.NotNull(first.TimerState);
+        Assert.Equal(2UL, first.TimerState.RunRevision);
+        Assert.Equal(3UL, second.TimerState.RunRevision);
     }
 
     [Fact]
-    public async Task PeriodicSnapshotPublishesStateSnapshotEvent()
-    {
-        using var harness = await EventHarness.CreateAsync();
-        await harness.WaitForHeartbeatAsync();
-
-        harness.Runtime.PublishPeriodicSnapshot();
-
-        var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventStateSnapshot);
-
-        Assert.NotNull(bridgeEvent.Snapshot);
-        Assert.Equal("Periodic snapshot", bridgeEvent.Description);
-        Assert.Equal(1UL, bridgeEvent.EventSequence);
-    }
-
-    [Fact]
-    public async Task HeartbeatHasNoSnapshotAndDoesNotAdvanceSequence()
+    public async Task HeartbeatHasNoTimerStateAndDoesNotAdvanceSequence()
     {
         using var harness = await EventHarness.CreateAsync();
 
         var first = await harness.ReceiveUntilAsync(BridgeEventType.EventHeartbeat);
         var second = await harness.ReceiveUntilAsync(BridgeEventType.EventHeartbeat);
 
-        Assert.Null(first.Snapshot);
-        Assert.Null(second.Snapshot);
+        Assert.Null(first.TimerState);
+        Assert.Null(second.TimerState);
         Assert.Equal(0UL, first.EventSequence);
         Assert.Equal(0UL, second.EventSequence);
     }
@@ -101,7 +85,7 @@ public class BridgeRuntimeEventTests
 
         var attach = await harness.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
             RequestId = 1,
             Attach = new AttachRequest(),
         });
@@ -150,7 +134,7 @@ public class BridgeRuntimeEventTests
         {
             if (request.ProtocolVersion == 0)
             {
-                request.ProtocolVersion = 1;
+                request.ProtocolVersion = 2;
             }
 
             return rpc.SendRequestAsync(request, TimeSpan.FromSeconds(5));

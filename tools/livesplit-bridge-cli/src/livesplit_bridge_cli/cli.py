@@ -8,7 +8,7 @@ import sys
 import websocket
 from google.protobuf.json_format import MessageToDict
 
-from livesplit.bridge.v1 import common_pb2, run_pb2
+from livesplit.bridge.v2 import common_pb2, run_pb2
 
 from .client import (
     GAME_TIME_OPERATIONS,
@@ -18,8 +18,8 @@ from .client import (
 )
 
 DEFAULT_PORT = 54000
-RPC_PATH = "/bridge/v1/rpc"
-EVENTS_PATH = "/bridge/v1/events"
+RPC_PATH = "/bridge/v2/rpc"
+EVENTS_PATH = "/bridge/v2/events"
 TICKS_PER_SECOND = 10_000_000
 
 
@@ -52,9 +52,13 @@ def parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Print protobuf messages as JSON"
     )
     commands = result.add_subparsers(dest="command", required=True)
-    commands.add_parser("attach", help="Attach and show session plus initial snapshot")
-    commands.add_parser("snapshot", help="Get the current timer snapshot")
-    commands.add_parser("run", help="Get the currently loaded run snapshot")
+    commands.add_parser(
+        "attach", help="Attach and show session plus initial timer state"
+    )
+    commands.add_parser("timer-state", help="Get the current timer state")
+    commands.add_parser("run", help="Get the currently loaded run state")
+    commands.add_parser("attempt", help="Get the current attempt state")
+    commands.add_parser("runtime", help="Get the current runtime state")
 
     timer = commands.add_parser("timer", help="Execute a timer operation")
     timer.add_argument("operation", choices=TIMER_OPERATIONS)
@@ -88,46 +92,67 @@ def format_ticks(ticks: int) -> str:
     return f"{prefix}{hours}:{minutes:02d}:{seconds:06.3f}"
 
 
-def snapshot_lines(snapshot: common_pb2.TimerSnapshot) -> list[str]:
-    phase = common_pb2.TimerPhase.Name(snapshot.phase)
+def timer_state_lines(state: common_pb2.TimerState) -> list[str]:
+    phase = common_pb2.TimerPhase.Name(state.phase)
     real_time = (
-        format_ticks(snapshot.real_time_ticks)
-        if snapshot.HasField("real_time_ticks")
+        format_ticks(state.real_time_ticks)
+        if state.HasField("real_time_ticks")
         else "-"
     )
     game_time = (
-        format_ticks(snapshot.game_time_ticks)
-        if snapshot.HasField("game_time_ticks")
+        format_ticks(state.game_time_ticks)
+        if state.HasField("game_time_ticks")
         else "-"
     )
     return [
-        f"session={snapshot.session_id} sequence={snapshot.event_sequence} "
-        f"revision={snapshot.state_revision}",
-        f"phase={phase} split={snapshot.split_index}/{snapshot.split_count} "
-        f"paused={snapshot.is_paused}",
+        f"session={state.session_id} revision={state.state_revision} "
+        f"run_revision={state.run_revision} attempt_revision={state.attempt_revision} "
+        f"runtime_revision={state.runtime_revision}",
+        f"phase={phase} split_index={state.split_index}",
         f"real_time={real_time} game_time={game_time} "
-        f"game_time_initialized={snapshot.is_game_time_initialized}",
+        f"game_time_initialized={state.is_game_time_initialized} "
+        f"game_time_paused={state.is_game_time_paused}",
     ]
 
 
-def run_lines(run: run_pb2.RunSnapshot) -> list[str]:
+def run_lines(run: run_pb2.RunState) -> list[str]:
     lines = [
-        f"session={run.session_id} run_revision={run.run_revision} "
-        f"state_revision={run.captured_state_revision}",
+        f"session={run.session_id} run_revision={run.run_revision}",
         f"game={run.game_name or '-'} category={run.category_name or '-'} "
-        f"attempts={run.attempt_count} comparisons={list(run.comparisons)}",
+        f"comparisons={list(run.comparisons)}",
     ]
     lines.extend(f"  [{segment.index}] {segment.name}" for segment in run.segments)
     return lines
+
+
+def attempt_lines(attempt: common_pb2.AttemptState) -> list[str]:
+    return [
+        f"session={attempt.session_id} attempt_revision={attempt.attempt_revision} "
+        f"attempt_count={attempt.attempt_count} completed={attempt.completed_count}",
+        *(f"  [{segment.index}] split_time" for segment in attempt.segments),
+    ]
+
+
+def runtime_state_lines(runtime: common_pb2.RuntimeState) -> list[str]:
+    return [
+        f"session={runtime.session_id} runtime_revision={runtime.runtime_revision}",
+        f"timing_method={common_pb2.TimingMethod.Name(runtime.current_timing_method)} "
+        f"comparison={runtime.current_comparison or '-'} "
+        f"global_hotkeys={runtime.global_hotkeys_enabled}",
+    ]
 
 
 def print_message(message: object, as_json: bool) -> None:
     if as_json:
         print(json.dumps(message_dict(message), ensure_ascii=False, indent=2))
         return
-    if isinstance(message, common_pb2.TimerSnapshot):
-        print("\n".join(snapshot_lines(message)))
-    elif isinstance(message, run_pb2.RunSnapshot):
+    if isinstance(message, common_pb2.TimerState):
+        print("\n".join(timer_state_lines(message)))
+    elif isinstance(message, common_pb2.AttemptState):
+        print("\n".join(attempt_lines(message)))
+    elif isinstance(message, common_pb2.RuntimeState):
+        print("\n".join(runtime_state_lines(message)))
+    elif isinstance(message, run_pb2.RunState):
         print("\n".join(run_lines(message)))
     else:
         print(message)
@@ -147,9 +172,9 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
                 print_message(event, True)
             else:
                 event_type = common_pb2.BridgeEventType.Name(event.type)
-                print(f"[{event.event_sequence}] {event_type}: {event.description}")
-                if event.HasField("snapshot"):
-                    print("  " + "\n  ".join(snapshot_lines(event.snapshot)))
+                print(f"[{event.event_sequence}] {event_type}")
+                if event.HasField("timer_state"):
+                    print("  " + "\n  ".join(timer_state_lines(event.timer_state)))
             received += 1
     except KeyboardInterrupt:
         return 0
@@ -175,18 +200,33 @@ def main(argv: list[str] | None = None) -> int:
                 case "attach":
                     response = client.attach()
                     print_message(
-                        response if args.json else response.attach.snapshot, args.json
+                        response if args.json else response.attach.timer_state,
+                        args.json,
                     )
-                case "snapshot":
-                    response = client.snapshot()
+                case "timer-state":
+                    response = client.timer_state()
                     print_message(
-                        response if args.json else response.get_snapshot.snapshot,
+                        response if args.json else response.get_timer_state.timer_state,
                         args.json,
                     )
                 case "run":
                     response = client.run()
                     print_message(
                         response if args.json else response.get_run.run,
+                        args.json,
+                    )
+                case "attempt":
+                    response = client.attempt()
+                    print_message(
+                        response if args.json else response.get_attempt.attempt,
+                        args.json,
+                    )
+                case "runtime":
+                    response = client.runtime_state()
+                    print_message(
+                        response
+                        if args.json
+                        else response.get_runtime_state.runtime_state,
                         args.json,
                     )
                 case "timer":
