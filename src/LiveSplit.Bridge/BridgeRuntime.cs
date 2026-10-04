@@ -11,13 +11,6 @@ internal sealed class BridgeRuntime : IDisposable
     private const uint ProtocolVersion = 2;
     internal static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(1);
 
-    // Run / Attempt content is comparatively expensive to capture, so it is checked on
-    // their dedicated events and by a low frequency fallback rather than every frame.
-    internal static readonly TimeSpan ContentFallbackInterval = TimeSpan.FromMilliseconds(500);
-
-    private static readonly long ContentFallbackIntervalTicks =
-        ContentFallbackInterval.Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond;
-
     private readonly LiveSplitAdapter adapter;
     private readonly WebSocketTransport transport;
     private readonly EventSequence eventSequence = new();
@@ -30,10 +23,7 @@ internal sealed class BridgeRuntime : IDisposable
     private long attemptRevision;
     private long runtimeRevision;
     private GameTimeRevisionState observedGameTimeState;
-    private RunRevisionState observedRunState;
-    private AttemptRevisionState observedAttemptState;
     private RuntimeRevisionState observedRuntimeState;
-    private long lastContentFallbackTimestamp;
     private int disposed;
 
     public BridgeRuntime(LiveSplitState state, int webSocketPort)
@@ -41,8 +31,6 @@ internal sealed class BridgeRuntime : IDisposable
         this.state = state ?? throw new ArgumentNullException(nameof(state));
         adapter = new LiveSplitAdapter(state);
         observedGameTimeState = adapter.CaptureGameTimeRevisionState();
-        observedRunState = adapter.CaptureRunRevisionState();
-        observedAttemptState = adapter.CaptureAttemptRevisionState();
         observedRuntimeState = adapter.CaptureRuntimeRevisionState();
 
         var port = GetPort("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", webSocketPort);
@@ -51,8 +39,6 @@ internal sealed class BridgeRuntime : IDisposable
         runRevision = 1;
         attemptRevision = 1;
         runtimeRevision = 1;
-        // Allow the first fallback check immediately; subsequent checks are throttled.
-        lastContentFallbackTimestamp = 0;
 
         transport = new WebSocketTransport(
             port,
@@ -87,6 +73,8 @@ internal sealed class BridgeRuntime : IDisposable
         state.OnResume += StateOnResume;
         state.RunManuallyModified += StateRunManuallyModified;
         state.ComparisonRenamed += StateComparisonRenamed;
+        state.OnSwitchComparisonNext += StateComparisonSwitched;
+        state.OnSwitchComparisonPrevious += StateComparisonSwitched;
         adapter.GameTimeChanged += AdapterGameTimeChanged;
     }
 
@@ -101,6 +89,8 @@ internal sealed class BridgeRuntime : IDisposable
         state.OnResume -= StateOnResume;
         state.RunManuallyModified -= StateRunManuallyModified;
         state.ComparisonRenamed -= StateComparisonRenamed;
+        state.OnSwitchComparisonNext -= StateComparisonSwitched;
+        state.OnSwitchComparisonPrevious -= StateComparisonSwitched;
         adapter.GameTimeChanged -= AdapterGameTimeChanged;
     }
 
@@ -113,129 +103,118 @@ internal sealed class BridgeRuntime : IDisposable
 
         try
         {
-            if (request.Attach != null)
-            {
-                // Attach is the client's initial sync point: bring every revision up to
-                // date so the returned TimerState matches the detailed RPCs that follow.
-                SyncRunStateAndPublish();
-                SyncAttemptState();
-                SyncRuntimeStateAndPublish();
-
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    Attach = new AttachResponse
-                    {
-                        SessionId = sessionId,
-                        TimerState = BuildCurrentTimerState()
-                    }
-                };
-            }
-
-            if (request.GetTimerState != null)
-            {
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    GetTimerState = new GetTimerStateResponse
-                    {
-                        TimerState = BuildCurrentTimerState()
-                    }
-                };
-            }
-
-            if (request.GetRun != null)
-            {
-                // Capture revision data and the response State from the same UI-thread
-                // read so run_revision and RunState always describe the same content.
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    GetRun = new GetRunResponse
-                    {
-                        Run = BuildSyncedRunState()
-                    }
-                };
-            }
-
-            if (request.GetAttempt != null)
-            {
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    GetAttempt = new GetAttemptResponse
-                    {
-                        Attempt = BuildSyncedAttemptState()
-                    }
-                };
-            }
-
-            if (request.GetRuntimeState != null)
-            {
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    GetRuntimeState = new GetRuntimeStateResponse
-                    {
-                        RuntimeState = BuildSyncedRuntimeState()
-                    }
-                };
-            }
-
-            if (request.TimerOperation != null)
-            {
-                var result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
-                if (result.Success)
-                {
-                    // Run content can change after the operation's own event has been raised
-                    // (for example Reset updates PB / Best Segments in FixSplits afterwards).
-                    DetectRunAndAttemptChanges();
-                    DetectRuntimeChange();
-
-                    result.TimerState = BuildCurrentTimerState();
-                }
-
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    Operation = result
-                };
-            }
-
-            if (request.GameTimeOperation != null)
-            {
-                var execution = adapter.ExecuteGameTimeOperation(
-                    request.GameTimeOperation.Operation,
-                    request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
-
-                if (execution.Response.Success)
-                {
-                    DetectRunAndAttemptChanges();
-                    DetectRuntimeChange();
-
-                    execution.Response.TimerState = BuildCurrentTimerState();
-                }
-
-                return new Response
-                {
-                    ProtocolVersion = ProtocolVersion,
-                    RequestId = request.RequestId,
-                    Operation = execution.Response
-                };
-            }
-
-            return MakeErrorResponse(request, 101, "Unknown request type.");
+            return adapter.InvokeOnUiThread(() => HandleRequestOnUiThread(request));
         }
         catch (Exception exception)
         {
             return MakeErrorResponse(request, 102, exception.Message);
         }
+    }
+
+    private Response HandleRequestOnUiThread(Request request)
+    {
+        if (request.Attach != null)
+        {
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                Attach = new AttachResponse
+                {
+                    SessionId = sessionId,
+                    TimerState = BuildCurrentTimerState()
+                }
+            };
+        }
+
+        if (request.GetTimerState != null)
+        {
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                GetTimerState = new GetTimerStateResponse
+                {
+                    TimerState = BuildCurrentTimerState()
+                }
+            };
+        }
+
+        if (request.GetRun != null)
+        {
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                GetRun = new GetRunResponse
+                {
+                    Run = adapter.BuildRunState(ReadRunRevision(), sessionId)
+                }
+            };
+        }
+
+        if (request.GetAttempt != null)
+        {
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                GetAttempt = new GetAttemptResponse
+                {
+                    Attempt = adapter.BuildAttemptState(ReadAttemptRevision(), sessionId)
+                }
+            };
+        }
+
+        if (request.GetRuntimeState != null)
+        {
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                GetRuntimeState = new GetRuntimeStateResponse
+                {
+                    RuntimeState = adapter.BuildRuntimeState(ReadRuntimeRevision(), sessionId)
+                }
+            };
+        }
+
+        if (request.TimerOperation != null)
+        {
+            var result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
+            if (result.Success)
+            {
+                result.TimerState = BuildCurrentTimerState();
+            }
+
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                Operation = result
+            };
+        }
+
+        if (request.GameTimeOperation != null)
+        {
+            var execution = adapter.ExecuteGameTimeOperation(
+                request.GameTimeOperation.Operation,
+                request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
+
+            if (execution.Response.Success)
+            {
+                execution.Response.TimerState = BuildCurrentTimerState();
+            }
+
+            return new Response
+            {
+                ProtocolVersion = ProtocolVersion,
+                RequestId = request.RequestId,
+                Operation = execution.Response
+            };
+        }
+
+        return MakeErrorResponse(request, 101, "Unknown request type.");
     }
 
     private TimerState BuildCurrentTimerState()
@@ -246,78 +225,6 @@ internal sealed class BridgeRuntime : IDisposable
             ReadRunRevision(),
             ReadAttemptRevision(),
             ReadRuntimeRevision());
-    }
-
-    private RunState BuildSyncedRunState()
-    {
-        var captured = adapter.CaptureRunForResponse(sessionId);
-
-        var changed = UpdateObservedRunState(captured.Revision, out var revision);
-        captured.State.RunRevision = revision;
-
-        if (changed)
-        {
-            PublishEvent(BridgeEventType.EventRunChanged);
-        }
-
-        return captured.State;
-    }
-
-    private AttemptState BuildSyncedAttemptState()
-    {
-        var captured = adapter.CaptureAttemptForResponse(sessionId);
-
-        UpdateObservedAttemptState(captured.Revision, out var revision);
-        captured.State.AttemptRevision = revision;
-
-        return captured.State;
-    }
-
-    private RuntimeState BuildSyncedRuntimeState()
-    {
-        var captured = adapter.CaptureRuntimeForResponse(sessionId);
-
-        var changed = UpdateObservedRuntimeState(captured.Revision, out var revision);
-        captured.State.RuntimeRevision = revision;
-
-        if (changed)
-        {
-            PublishEvent(BridgeEventType.EventRuntimeChanged);
-        }
-
-        return captured.State;
-    }
-
-    private bool UpdateObservedRunState(RunRevisionState captured, out ulong revision)
-    {
-        lock (observedStateLock)
-        {
-            if (observedRunState.Equals(captured))
-            {
-                revision = ReadRunRevision();
-                return false;
-            }
-
-            observedRunState = captured;
-            revision = unchecked((ulong)Interlocked.Increment(ref runRevision));
-            return true;
-        }
-    }
-
-    private bool UpdateObservedAttemptState(AttemptRevisionState captured, out ulong revision)
-    {
-        lock (observedStateLock)
-        {
-            if (observedAttemptState.Equals(captured))
-            {
-                revision = ReadAttemptRevision();
-                return false;
-            }
-
-            observedAttemptState = captured;
-            revision = unchecked((ulong)Interlocked.Increment(ref attemptRevision));
-            return true;
-        }
     }
 
     private bool UpdateObservedRuntimeState(RuntimeRevisionState captured, out ulong revision)
@@ -360,52 +267,11 @@ internal sealed class BridgeRuntime : IDisposable
         PublishStateChangeEvent(eventType);
     }
 
-    /// <summary>
-    /// High frequency observation invoked on every LiveSplit update. Only lightweight
-    /// state (Game Time and RuntimeState) is captured here. Run / Attempt content is
-    /// handled by <see cref="ObserveContentState"/> on a low frequency fallback.
-    /// </summary>
+    // Only fields without comprehensive LiveSplit events need lightweight observation.
     internal void ObserveExternalState()
     {
         DetectGameTimeChange();
-        DetectRuntimeChange();
-    }
-
-    /// <summary>
-    /// Low frequency fallback that catches Run / Attempt changes which did not flow
-    /// through a dedicated LiveSplit event.
-    /// </summary>
-    internal void ObserveContentState()
-    {
-        if (!TryEnterContentFallbackWindow())
-        {
-            return;
-        }
-
-        DetectRunAndAttemptChanges();
-    }
-
-    private void DetectRuntimeChange()
-    {
         SyncRuntimeStateAndPublish();
-    }
-
-    private void DetectRunAndAttemptChanges()
-    {
-        SyncRunStateAndPublish();
-        SyncAttemptState();
-    }
-
-    private bool TryEnterContentFallbackWindow()
-    {
-        var now = System.Diagnostics.Stopwatch.GetTimestamp();
-        var previous = Interlocked.Read(ref lastContentFallbackTimestamp);
-        if (now - previous < ContentFallbackIntervalTicks)
-        {
-            return false;
-        }
-
-        return Interlocked.CompareExchange(ref lastContentFallbackTimestamp, now, previous) == previous;
     }
 
     private void DetectGameTimeChange()
@@ -446,27 +312,9 @@ internal sealed class BridgeRuntime : IDisposable
         }
     }
 
-    private bool SyncRunState()
-    {
-        return UpdateObservedRunState(adapter.CaptureRunRevisionState(), out _);
-    }
-
-    private bool SyncAttemptState()
-    {
-        return UpdateObservedAttemptState(adapter.CaptureAttemptRevisionState(), out _);
-    }
-
     private bool SyncRuntimeState()
     {
         return UpdateObservedRuntimeState(adapter.CaptureRuntimeRevisionState(), out _);
-    }
-
-    private void SyncRunStateAndPublish()
-    {
-        if (SyncRunState())
-        {
-            PublishEvent(BridgeEventType.EventRunChanged);
-        }
     }
 
     private void SyncRuntimeStateAndPublish()
@@ -481,25 +329,14 @@ internal sealed class BridgeRuntime : IDisposable
     {
         RecordCurrentGameTimeState();
 
-        // Refresh attempt / run / runtime revisions before publishing so the event's
-        // TimerState carries the updated revision values. Run / runtime changes are
-        // published as their own events after the primary (timer / game time) event.
-        var runChanged = SyncRunState();
-        var runtimeChanged = SyncRuntimeState();
-        SyncAttemptState();
-
         IncrementStateRevision();
         PublishEvent(type);
+    }
 
-        if (runChanged)
-        {
-            PublishEvent(BridgeEventType.EventRunChanged);
-        }
-
-        if (runtimeChanged)
-        {
-            PublishEvent(BridgeEventType.EventRuntimeChanged);
-        }
+    private void PublishAttemptEvent(BridgeEventType type)
+    {
+        Interlocked.Increment(ref attemptRevision);
+        PublishStateChangeEvent(type);
     }
 
     private void PublishEvent(BridgeEventType type)
@@ -564,37 +401,41 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void AdapterGameTimeChanged(GameTimeOperationType operation)
     {
-        RecordCurrentGameTimeState();
         PublishGameTimeEvent(operation);
     }
 
     private void StateOnStart(object sender, EventArgs args)
     {
-        PublishStateChangeEvent(BridgeEventType.EventTimerStarted);
+        PublishAttemptEvent(BridgeEventType.EventTimerStarted);
     }
 
     private void StateOnSplit(object sender, EventArgs args)
     {
-        PublishStateChangeEvent(BridgeEventType.EventTimerSplit);
+        PublishAttemptEvent(BridgeEventType.EventTimerSplit);
     }
 
     private void StateOnSkipSplit(object sender, EventArgs args)
     {
-        PublishStateChangeEvent(BridgeEventType.EventTimerSkipped);
+        PublishAttemptEvent(BridgeEventType.EventTimerSkipped);
     }
 
     private void StateOnUndoSplit(object sender, EventArgs args)
     {
-        PublishStateChangeEvent(BridgeEventType.EventTimerUndo);
+        PublishAttemptEvent(BridgeEventType.EventTimerUndo);
     }
 
     private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
     {
-        // ResetSplits has already cleared split times at this point, but LiveSplit runs
-        // FixSplits (which can rewrite PB / Best Segments) after this event. The run
-        // change is picked up by the post-operation detection in HandleRequest or by
-        // ObserveExternalState.
-        PublishStateChangeEvent(BridgeEventType.EventTimerReset);
+        PublishAttemptEvent(BridgeEventType.EventTimerReset);
+        // OnReset precedes FixSplits. Always publish the run generation on the next
+        // UI turn, for both RPC resets and resets initiated by LiveSplit itself.
+        state.Form.BeginInvoke((Action)(() =>
+        {
+            if (Volatile.Read(ref disposed) == 0)
+            {
+                PublishRunChange();
+            }
+        }));
     }
 
     private void StateOnPause(object sender, EventArgs args)
@@ -607,20 +448,33 @@ internal sealed class BridgeRuntime : IDisposable
         PublishStateChangeEvent(BridgeEventType.EventTimerResumed);
     }
 
+    private void PublishRunChange()
+    {
+        Interlocked.Increment(ref runRevision);
+        PublishEvent(BridgeEventType.EventRunChanged);
+    }
+
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-
-        // Run content determines run_revision; runtime custom variables are handled by
-        // the high frequency runtime observation. No state_revision is bumped for run
-        // only changes.
-        DetectRunAndAttemptChanges();
+        PublishRunChange();
     }
 
     private void StateComparisonRenamed(object sender, EventArgs args)
     {
-        RecordCurrentGameTimeState();
-        DetectRunAndAttemptChanges();
+        // RunEdited raises RunManuallyModified after ComparisonRenamed. Defer the
+        // runtime check to preserve RUN_CHANGED, RUNTIME_CHANGED ordering.
+        state.Form.BeginInvoke((Action)(() =>
+        {
+            if (Volatile.Read(ref disposed) == 0)
+            {
+                SyncRuntimeStateAndPublish();
+            }
+        }));
+    }
+
+    private void StateComparisonSwitched(object sender, EventArgs args)
+    {
+        SyncRuntimeStateAndPublish();
     }
 
     private static Response MakeErrorResponse(Request request, int code, string message)

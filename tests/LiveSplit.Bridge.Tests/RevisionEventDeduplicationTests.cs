@@ -114,11 +114,12 @@ public class RevisionEventDeduplicationTests
 
         public async Task<BridgeEvent?> TryReceiveNonHeartbeatAsync(TimeSpan timeout)
         {
+            var deadline = DateTime.UtcNow + timeout;
             try
             {
-                while (true)
+                while (DateTime.UtcNow < deadline)
                 {
-                    var data = await events.ReceiveBinaryAsync(timeout);
+                    var data = await events.ReceiveBinaryAsync(deadline - DateTime.UtcNow);
                     var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
                     if (bridgeEvent.Type != BridgeEventType.EventHeartbeat)
                     {
@@ -128,8 +129,8 @@ public class RevisionEventDeduplicationTests
             }
             catch (OperationCanceledException)
             {
-                return null;
             }
+            return null;
         }
 
         public void Dispose()

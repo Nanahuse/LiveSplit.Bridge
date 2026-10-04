@@ -219,11 +219,12 @@ public class RuntimeRevisionTests
         WebSocketTestClient client,
         TimeSpan timeout)
     {
+        var deadline = DateTime.UtcNow + timeout;
         try
         {
-            while (true)
+            while (DateTime.UtcNow < deadline)
             {
-                var data = await client.ReceiveBinaryAsync(timeout);
+                var data = await client.ReceiveBinaryAsync(deadline - DateTime.UtcNow);
                 var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
                 if (bridgeEvent.Type != BridgeEventType.EventHeartbeat)
                 {
@@ -233,7 +234,7 @@ public class RuntimeRevisionTests
         }
         catch (OperationCanceledException)
         {
-            return null;
         }
+        return null;
     }
 }

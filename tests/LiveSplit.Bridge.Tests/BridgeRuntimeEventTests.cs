@@ -14,7 +14,6 @@ public class BridgeRuntimeEventTests
         await harness.WaitForHeartbeatAsync();
 
         var timerModel = new TimerModel { CurrentState = harness.State };
-        harness.State.RegisterTimerModel(timerModel);
         timerModel.Start();
 
         var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventTimerStarted);

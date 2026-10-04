@@ -9,7 +9,7 @@ namespace LiveSplit.Bridge.Tests;
 public class IconRevisionTests
 {
     [Fact]
-    public void DifferentImageInstanceWithSameContentDoesNotAdvanceRunRevision()
+    public void DifferentImageInstanceWithSameContentStillAdvancesRunGeneration()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -23,9 +23,8 @@ public class IconRevisionTests
         using var second = CreateBitmap(Color.Red);
         run.GameIcon = second;
         state.CallRunManuallyModified();
-        runtime.ObserveContentState();
 
-        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
@@ -46,13 +45,12 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
-        runtime.ObserveContentState();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
-    public void DifferentSegmentImageInstanceWithSameContentDoesNotAdvanceRunRevision()
+    public void DifferentSegmentImageInstanceWithSameContentStillAdvancesRunGeneration()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -65,9 +63,8 @@ public class IconRevisionTests
         using var second = CreateBitmap(Color.Green);
         run[0].Icon = second;
         state.CallRunManuallyModified();
-        runtime.ObserveContentState();
 
-        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
@@ -87,13 +84,12 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
-        runtime.ObserveContentState();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
-    public void RunStateIconReflectsFingerprintChange()
+    public void RunStateIconReflectsEdit()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -112,7 +108,6 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
-        runtime.ObserveContentState();
 
         var second = GetRun(runtime);
         Assert.NotEqual(first.GameIcon.Data, second.GameIcon.Data);

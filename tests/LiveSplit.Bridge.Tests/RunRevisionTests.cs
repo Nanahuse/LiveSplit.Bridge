@@ -8,7 +8,7 @@ namespace LiveSplit.Bridge.Tests;
 public class RunRevisionTests
 {
     [Fact]
-    public void RunRevisionAdvancesOnlyWhenRunContentChanges()
+    public void RunRevisionAdvancesForEveryRunModifiedEvent()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -23,21 +23,21 @@ public class RunRevisionTests
         Assert.Equal(1UL, attached.Attach.TimerState.RunRevision);
         Assert.Equal(initialStateRevision, attached.Attach.TimerState.StateRevision);
 
-        // RunManuallyModified without any content change must not advance anything.
+        // RunManuallyModified advances the generation even with identical content.
         state.CallRunManuallyModified();
         runtime.ObserveExternalState();
-        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(initialStateRevision, runtime.StateRevision);
 
         run.GameName = "Changed Game";
         state.CallRunManuallyModified();
 
-        Assert.Equal(2UL, runtime.RunRevision);
+        Assert.Equal(3UL, runtime.RunRevision);
         // Run-only changes do not advance state_revision.
         Assert.Equal(initialStateRevision, runtime.StateRevision);
 
         var afterChange = Handle(runtime, new Request { RequestId = 2, GetRun = new GetRunRequest() });
-        Assert.Equal(2UL, afterChange.GetRun.Run.RunRevision);
+        Assert.Equal(3UL, afterChange.GetRun.Run.RunRevision);
         Assert.Equal("Changed Game", afterChange.GetRun.Run.GameName);
     }
 
@@ -96,7 +96,6 @@ public class RunRevisionTests
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        state.RegisterTimerModel(timerModel);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var originalRunRevision = runtime.RunRevision;
@@ -107,20 +106,21 @@ public class RunRevisionTests
         timerModel.Split();
         runtime.ObserveExternalState();
 
+        _ = state.Form.Handle;
         timerModel.Reset();
+        System.Windows.Forms.Application.DoEvents();
         runtime.ObserveExternalState();
 
         Assert.True(runtime.RunRevision > originalRunRevision);
     }
 
     [Fact]
-    public void ResetWithoutRunContentChangeKeepsRunRevision()
+    public void ResetWithoutRunContentChangeStillAdvancesRunGeneration()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        state.RegisterTimerModel(timerModel);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Start but never split: Reset has no split times to fold into the run.
@@ -128,10 +128,12 @@ public class RunRevisionTests
         runtime.ObserveExternalState();
         var beforeReset = runtime.RunRevision;
 
+        _ = state.Form.Handle;
         timerModel.Reset();
+        System.Windows.Forms.Application.DoEvents();
         runtime.ObserveExternalState();
 
-        Assert.Equal(beforeReset, runtime.RunRevision);
+        Assert.Equal(beforeReset + 1, runtime.RunRevision);
     }
 
     [Fact]

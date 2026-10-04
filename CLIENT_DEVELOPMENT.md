@@ -200,38 +200,24 @@ state_revisionが同じ
 
 ### `run_revision`
 
-`get_run`の返却内容が変更されたことを表します。Run定義やRunに属する時間情報など、
-`RunState`の内容が実際に変化した時だけ増加します。Run編集操作だけでなく、Resetによって
-Personal Best / Best Segment / 生成Comparisonが更新された場合も増加します。想定例は
-次のとおりです。
+Runを再取得すべき変更世代です。LiveSplitの`RunManuallyModified`を受信すると増加し、
+`EVENT_RUN_CHANGED`を発行します。Run EditorによるGame / Category、Segment名、Metadata、
+Comparison、PB / Best Segment、アイコン等の編集をこのイベントで扱います。
+内容の比較は行わないため、結果的に同じ内容でも世代が進むことがあります。
+Comparison renameでは`ComparisonRenamed`と`RunManuallyModified`の両方が届きますが、
+Runの世代更新は後者で一度だけ行います。Current Comparisonも変わった場合は、続いて
+`EVENT_RUNTIME_CHANGED`を発行します。
 
-- Game / Category変更
-- Segment構成変更 / Segment name変更
-- Metadata変更
-- Comparison一覧変更 / Comparison Time変更
-- PB更新 / Best Segment更新 / 生成Comparison更新
-- Game icon / Segment icon変更
-- file path / layout path変更
-- ResetによるPB / Best Segment / 生成Comparison更新
-
-Run内容が変化していない操作では`run_revision`は増加しません。`run_revision`が増加した
-場合は`EVENT_RUN_CHANGED`が発行され、そのイベントの`TimerState`には更新後の
-`run_revision`が入ります。Run Metadata Custom Variableの現在値は`RunState`に含まれない
-ため、その変更だけでは`run_revision`は増加しません。
+Resetでは`EVENT_TIMER_RESET`を先に発行し、LiveSplitのReset処理（`FixSplits`を含む）が
+完了した後のUI処理で`run_revision`を増加させ、`EVENT_RUN_CHANGED`を発行します。
+PB等が結果的に変わらないResetでも増加します。
 
 ### `attempt_revision`
 
-`get_attempt`の返却内容が変更されたことを表します。`attempt_count`、`completed_count`、
-Segmentごとの`split_time`、Segmentごとの`custom_variables`のいずれかが変化した時だけ
-増加します。想定例は次のとおりです。
-
-- Start
-- Split
-- Skip
-- Undo
-- Reset
-
-Timer操作後に`get_attempt`の内容が変化していない場合は、`attempt_revision`は増加しません。
+Attemptを再取得すべき変更世代です。Start / Split / Skip / Undo / Resetの各LiveSplit
+イベントで増加します。Segment全体の比較は行いません。SkipやUndoによって返却内容が
+結果的に同じでも世代は進みます。Pause / ResumeおよびGame Time操作では増加しません。
+イベントが発生しない無効な操作では増加しません。
 
 ### `runtime_revision`
 
@@ -251,23 +237,23 @@ Timer操作後に`get_attempt`の内容が変化していない場合は、`atte
 `runtime_revision`が増加した場合は`EVENT_RUNTIME_CHANGED`が発行され、そのイベントの
 `TimerState`には更新後の`runtime_revision`が入ります。
 
-クライアントは`TimerState`に含まれる`run_revision` / `attempt_revision` /
-`runtime_revision`を監視し、キャッシュ済みの値から変化した場合だけ対応するRPCを
-呼び出してください。変化していなければ再取得は不要です。各revisionは対応する
-`get_run` / `get_attempt` / `get_runtime_state`の返却内容と一致するため、revisionだけを
-監視すれば必要なStateを過不足なく再取得できます。
+クライアントは`TimerState`内の各revisionがキャッシュ済みの値から変化した場合、対応する
+Stateを再取得してください。revisionは内容のfingerprintではなく変更世代です。
+「世代が変わったなら再取得が必要」を表し、「返却内容が必ず異なる」ことは保証しません。
 
-`get_run` / `get_attempt` / `get_runtime_state`は、返却するStateの内容とrevisionを
-同一のcapture（同じLiveSplit状態の読み取り）から生成します。Bridgeの監視がまだ変更を
-検出していない場合でも、返却されるStateの内容と対応するrevisionは常に一致し、内容を
-読んだ後にrevision用の状態を読み直す競合窓はありません。`attach`も返却前にすべての
-revisionを同期するため、`attach`の`TimerState`と直後の詳細RPCのrevisionが整合します。
-同期によってrevisionが更新された場合は、対応する`EVENT_RUN_CHANGED` /
-`EVENT_RUNTIME_CHANGED`が発行されます。
+`attach`、`get_timer_state`、`get_run`、`get_attempt`、`get_runtime_state`は現在の
+Stateと現在のrevisionを同じUI呼び出し内で読み取るだけです。読み取りを契機にrevisionを
+更新したり、変更イベントを発行したりしません。Run / Attemptの定期fallback監視もありません。
+LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、世代更新の対象になりません。
+RunのSegment、Comparison一覧、Metadata、PNGアイコン等は`get_run`時だけ構築します。
+RuntimeはComparison切替イベント等を使用し、専用イベントで網羅できない項目については
+軽量監視を継続します。監視がまだ検出していない変更を読み取っても、その読み取り自体は
+世代を進めません。
 
-`get_timer_state`は高頻度利用のためこの同期を行いません。Run / Attemptなどの詳細な
-変更検出は、専用イベント、低頻度のフォールバック監視、および詳細RPC取得時の同期で
-行います。
+Timer操作の`OperationResponse.timer_state`は操作完了直後に同じUI呼び出し内で取得します。
+Run / Attempt全体の走査やRuntime同期は行いません。Reset応答後には遅延した
+`EVENT_RUN_CHANGED`によって`run_revision`がさらに進むため、クライアントは応答に加えて
+Events側のrevision更新も継続して処理してください。
 
 ## クライアント利用モデル
 

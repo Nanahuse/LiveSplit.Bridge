@@ -82,7 +82,9 @@ public class AttemptRevisionTests
         timerModel.Split();
         var before = GetAttempt(runtime);
 
+        _ = state.Form.Handle;
         timerModel.Reset();
+        System.Windows.Forms.Application.DoEvents();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -110,7 +112,6 @@ public class AttemptRevisionTests
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        state.RegisterTimerModel(timerModel);
         var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         return (runtime, state, timerModel, run);
     }
