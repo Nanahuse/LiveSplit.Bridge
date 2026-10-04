@@ -23,6 +23,18 @@ public class BridgeTransportLifecycleTests
     }
 
     [Fact]
+    public void StartDisablesInactiveSessionCleanup()
+    {
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var transport = CreateTransport(port);
+
+        transport.Start();
+
+        Assert.True(transport.IsListening);
+        Assert.False(transport.IsInactiveSessionCleanupEnabled);
+    }
+
+    [Fact]
     public void StartOnUsedPortReportsWebSocketEndpoint()
     {
         var port = BridgeTestEndpoints.GetFreePort();
