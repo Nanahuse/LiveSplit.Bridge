@@ -148,47 +148,41 @@ internal sealed class BridgeRuntime : IDisposable
 
             if (request.GetRun != null)
             {
-                // Sync only the Run revision so the returned RunState and run_revision
-                // always describe the same content.
-                SyncRunStateAndPublish();
-
+                // Capture revision data and the response State from the same UI-thread
+                // read so run_revision and RunState always describe the same content.
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
                     RequestId = request.RequestId,
                     GetRun = new GetRunResponse
                     {
-                        Run = BuildCurrentRunState()
+                        Run = BuildSyncedRunState()
                     }
                 };
             }
 
             if (request.GetAttempt != null)
             {
-                SyncAttemptState();
-
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
                     RequestId = request.RequestId,
                     GetAttempt = new GetAttemptResponse
                     {
-                        Attempt = BuildCurrentAttemptState()
+                        Attempt = BuildSyncedAttemptState()
                     }
                 };
             }
 
             if (request.GetRuntimeState != null)
             {
-                SyncRuntimeStateAndPublish();
-
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
                     RequestId = request.RequestId,
                     GetRuntimeState = new GetRuntimeStateResponse
                     {
-                        RuntimeState = BuildCurrentRuntimeState()
+                        RuntimeState = BuildSyncedRuntimeState()
                     }
                 };
             }
@@ -254,20 +248,95 @@ internal sealed class BridgeRuntime : IDisposable
             ReadRuntimeRevision());
     }
 
-    private RunState BuildCurrentRunState()
+    private RunState BuildSyncedRunState()
     {
-        return adapter.BuildRunState(ReadRunRevision(), sessionId);
+        var captured = adapter.CaptureRunForResponse(sessionId);
+
+        var changed = UpdateObservedRunState(captured.Revision, out var revision);
+        captured.State.RunRevision = revision;
+
+        if (changed)
+        {
+            PublishEvent(BridgeEventType.EventRunChanged);
+        }
+
+        return captured.State;
     }
 
-    private AttemptState BuildCurrentAttemptState()
+    private AttemptState BuildSyncedAttemptState()
     {
-        return adapter.BuildAttemptState(ReadAttemptRevision(), sessionId);
+        var captured = adapter.CaptureAttemptForResponse(sessionId);
+
+        UpdateObservedAttemptState(captured.Revision, out var revision);
+        captured.State.AttemptRevision = revision;
+
+        return captured.State;
     }
 
-    private RuntimeState BuildCurrentRuntimeState()
+    private RuntimeState BuildSyncedRuntimeState()
     {
-        return adapter.BuildRuntimeState(ReadRuntimeRevision(), sessionId);
+        var captured = adapter.CaptureRuntimeForResponse(sessionId);
+
+        var changed = UpdateObservedRuntimeState(captured.Revision, out var revision);
+        captured.State.RuntimeRevision = revision;
+
+        if (changed)
+        {
+            PublishEvent(BridgeEventType.EventRuntimeChanged);
+        }
+
+        return captured.State;
     }
+
+    private bool UpdateObservedRunState(RunRevisionState captured, out ulong revision)
+    {
+        lock (observedStateLock)
+        {
+            if (observedRunState.Equals(captured))
+            {
+                revision = ReadRunRevision();
+                return false;
+            }
+
+            observedRunState = captured;
+            revision = unchecked((ulong)Interlocked.Increment(ref runRevision));
+            return true;
+        }
+    }
+
+    private bool UpdateObservedAttemptState(AttemptRevisionState captured, out ulong revision)
+    {
+        lock (observedStateLock)
+        {
+            if (observedAttemptState.Equals(captured))
+            {
+                revision = ReadAttemptRevision();
+                return false;
+            }
+
+            observedAttemptState = captured;
+            revision = unchecked((ulong)Interlocked.Increment(ref attemptRevision));
+            return true;
+        }
+    }
+
+    private bool UpdateObservedRuntimeState(RuntimeRevisionState captured, out ulong revision)
+    {
+        lock (observedStateLock)
+        {
+            if (observedRuntimeState.Equals(captured))
+            {
+                revision = ReadRuntimeRevision();
+                return false;
+            }
+
+            observedRuntimeState = captured;
+            revision = unchecked((ulong)Interlocked.Increment(ref runtimeRevision));
+            return true;
+        }
+    }
+
+    internal LiveSplitAdapter Adapter => adapter;
 
     internal ulong StateRevision => ReadStateRevision();
 
@@ -379,56 +448,17 @@ internal sealed class BridgeRuntime : IDisposable
 
     private bool SyncRunState()
     {
-        var run = adapter.CaptureRunRevisionState();
-
-        lock (observedStateLock)
-        {
-            if (observedRunState.Equals(run))
-            {
-                return false;
-            }
-
-            observedRunState = run;
-        }
-
-        IncrementRunRevision();
-        return true;
+        return UpdateObservedRunState(adapter.CaptureRunRevisionState(), out _);
     }
 
     private bool SyncAttemptState()
     {
-        var attempt = adapter.CaptureAttemptRevisionState();
-
-        lock (observedStateLock)
-        {
-            if (observedAttemptState.Equals(attempt))
-            {
-                return false;
-            }
-
-            observedAttemptState = attempt;
-        }
-
-        IncrementAttemptRevision();
-        return true;
+        return UpdateObservedAttemptState(adapter.CaptureAttemptRevisionState(), out _);
     }
 
     private bool SyncRuntimeState()
     {
-        var runtime = adapter.CaptureRuntimeRevisionState();
-
-        lock (observedStateLock)
-        {
-            if (observedRuntimeState.Equals(runtime))
-            {
-                return false;
-            }
-
-            observedRuntimeState = runtime;
-        }
-
-        IncrementRuntimeRevision();
-        return true;
+        return UpdateObservedRuntimeState(adapter.CaptureRuntimeRevisionState(), out _);
     }
 
     private void SyncRunStateAndPublish()
@@ -522,29 +552,14 @@ internal sealed class BridgeRuntime : IDisposable
         return unchecked((ulong)Interlocked.Read(ref runRevision));
     }
 
-    private void IncrementRunRevision()
-    {
-        Interlocked.Increment(ref runRevision);
-    }
-
     private ulong ReadAttemptRevision()
     {
         return unchecked((ulong)Interlocked.Read(ref attemptRevision));
     }
 
-    private void IncrementAttemptRevision()
-    {
-        Interlocked.Increment(ref attemptRevision);
-    }
-
     private ulong ReadRuntimeRevision()
     {
         return unchecked((ulong)Interlocked.Read(ref runtimeRevision));
-    }
-
-    private void IncrementRuntimeRevision()
-    {
-        Interlocked.Increment(ref runtimeRevision);
     }
 
     private void AdapterGameTimeChanged(GameTimeOperationType operation)

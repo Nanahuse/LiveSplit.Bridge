@@ -155,6 +155,65 @@ public class DetailedRpcSyncTests
         Assert.Equal(1UL, timerState.RuntimeRevision);
     }
 
+    [Fact]
+    public void GetRunCapturesStateInSingleUiThreadRead()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        // An unchanged get_run must read LiveSplit state exactly once: revision data and
+        // the response State come from the same capture. A regression that re-reads the
+        // state after comparing would increase this count.
+        var before = runtime.Adapter.UiThreadDispatchCount;
+        GetRun(runtime);
+        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+    }
+
+    [Fact]
+    public void GetAttemptCapturesStateInSingleUiThreadRead()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        var before = runtime.Adapter.UiThreadDispatchCount;
+        GetAttempt(runtime);
+        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+    }
+
+    [Fact]
+    public void GetRuntimeStateCapturesStateInSingleUiThreadRead()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        var before = runtime.Adapter.UiThreadDispatchCount;
+        GetRuntimeState(runtime);
+        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+    }
+
+    [Fact]
+    public void RepeatedDetailedQueriesDoNotAdvanceRevisions()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        GetRun(runtime);
+        GetAttempt(runtime);
+        GetRuntimeState(runtime);
+
+        var runRevision = runtime.RunRevision;
+        var attemptRevision = runtime.AttemptRevision;
+        var runtimeRevision = runtime.RuntimeRevision;
+
+        GetRun(runtime);
+        GetAttempt(runtime);
+        GetRuntimeState(runtime);
+
+        Assert.Equal(runRevision, runtime.RunRevision);
+        Assert.Equal(attemptRevision, runtime.AttemptRevision);
+        Assert.Equal(runtimeRevision, runtime.RuntimeRevision);
+    }
+
     private static LiveSplitState CreateState(out Run run)
     {
         run = new Run(new StandardComparisonGeneratorsFactory());

@@ -4,8 +4,52 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using ProtoAttemptState = LiveSplit.Bridge.Protocol.V2.AttemptState;
+using ProtoRunState = LiveSplit.Bridge.Protocol.V2.RunState;
+using ProtoRuntimeState = LiveSplit.Bridge.Protocol.V2.RuntimeState;
 
 namespace LiveSplit.Bridge;
+
+/// <summary>
+/// Result of a single UI-thread capture. <see cref="Revision"/> and
+/// <see cref="State"/> are always produced from the same LiveSplit state read so the
+/// returned State and its revision describe the same point in time.
+/// </summary>
+internal readonly struct CapturedRunState
+{
+    public CapturedRunState(RunRevisionState revision, ProtoRunState state)
+    {
+        Revision = revision;
+        State = state;
+    }
+
+    public RunRevisionState Revision { get; }
+    public ProtoRunState State { get; }
+}
+
+internal readonly struct CapturedAttemptState
+{
+    public CapturedAttemptState(AttemptRevisionState revision, ProtoAttemptState state)
+    {
+        Revision = revision;
+        State = state;
+    }
+
+    public AttemptRevisionState Revision { get; }
+    public ProtoAttemptState State { get; }
+}
+
+internal readonly struct CapturedRuntimeState
+{
+    public CapturedRuntimeState(RuntimeRevisionState revision, ProtoRuntimeState state)
+    {
+        Revision = revision;
+        State = state;
+    }
+
+    public RuntimeRevisionState Revision { get; }
+    public ProtoRuntimeState State { get; }
+}
 
 /// <summary>
 /// Content based fingerprint of an icon so that different <see cref="Image"/> instances
