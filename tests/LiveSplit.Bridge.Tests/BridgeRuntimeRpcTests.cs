@@ -1,4 +1,4 @@
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
 
@@ -8,13 +8,13 @@ namespace LiveSplit.Bridge.Tests;
 public class BridgeRuntimeRpcTests
 {
     [Fact]
-    public async Task AttachReturnsSessionIdSnapshotAndPreservesRequestId()
+    public async Task AttachReturnsSessionIdTimerStateAndPreservesRequestId()
     {
         using var fixture = await RpcFixture.CreateAsync();
 
         var response = await fixture.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
             RequestId = 42,
             Attach = new AttachRequest(),
         });
@@ -22,10 +22,10 @@ public class BridgeRuntimeRpcTests
         Assert.NotNull(response.Attach);
         Assert.Equal(42UL, response.RequestId);
         Assert.NotEqual(0UL, response.Attach.SessionId);
-        Assert.NotNull(response.Attach.Snapshot);
-        Assert.Equal(1UL, response.Attach.Snapshot.StateRevision);
-        Assert.Equal(1UL, response.Attach.Snapshot.RunRevision);
-        Assert.Equal(response.Attach.SessionId, response.Attach.Snapshot.SessionId);
+        Assert.NotNull(response.Attach.TimerState);
+        Assert.Equal(1UL, response.Attach.TimerState.StateRevision);
+        Assert.Equal(1UL, response.Attach.TimerState.RunRevision);
+        Assert.Equal(response.Attach.SessionId, response.Attach.TimerState.SessionId);
     }
 
     [Fact]
@@ -37,7 +37,7 @@ public class BridgeRuntimeRpcTests
         {
             ProtocolVersion = 99,
             RequestId = 7,
-            GetSnapshot = new GetSnapshotRequest(),
+            GetTimerState = new GetTimerStateRequest(),
         });
 
         Assert.NotNull(response.Error);
@@ -46,21 +46,40 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public async Task GetSnapshotReturnsCurrentSnapshot()
+    public async Task ProtocolVersionOneIsRejected()
     {
         using var fixture = await RpcFixture.CreateAsync();
 
         var response = await fixture.SendAsync(new Request
         {
             ProtocolVersion = 1,
+            RequestId = 6,
+            GetTimerState = new GetTimerStateRequest(),
+        });
+
+        Assert.NotNull(response.Error);
+        Assert.Equal(100, response.Error.Code);
+        Assert.Equal(6UL, response.RequestId);
+    }
+
+    [Fact]
+    public async Task GetTimerStateReturnsCurrentTimerState()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+
+        var response = await fixture.SendAsync(new Request
+        {
+            ProtocolVersion = 2,
             RequestId = 8,
-            GetSnapshot = new GetSnapshotRequest(),
+            GetTimerState = new GetTimerStateRequest(),
         });
 
         Assert.Equal(8UL, response.RequestId);
-        Assert.NotNull(response.GetSnapshot);
-        Assert.NotNull(response.GetSnapshot.Snapshot);
-        Assert.Equal(1UL, response.GetSnapshot.Snapshot.StateRevision);
+        Assert.NotNull(response.GetTimerState);
+        Assert.NotNull(response.GetTimerState.TimerState);
+        Assert.Equal(1UL, response.GetTimerState.TimerState.StateRevision);
+        Assert.Equal(1UL, response.GetTimerState.TimerState.AttemptRevision);
+        Assert.Equal(1UL, response.GetTimerState.TimerState.RuntimeRevision);
     }
 
     [Fact]
@@ -70,7 +89,7 @@ public class BridgeRuntimeRpcTests
 
         var response = await fixture.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
             RequestId = 9,
             GetRun = new GetRunRequest(),
         });
@@ -82,38 +101,74 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
-    public async Task TimerOperationStartSucceedsAndReturnsSnapshot()
+    public async Task GetAttemptReturnsCurrentAttempt()
     {
         using var fixture = await RpcFixture.CreateAsync();
 
         var response = await fixture.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
+            RequestId = 12,
+            GetAttempt = new GetAttemptRequest(),
+        });
+
+        Assert.NotNull(response.GetAttempt);
+        Assert.Equal(1UL, response.GetAttempt.Attempt.AttemptRevision);
+        var segment = Assert.Single(response.GetAttempt.Attempt.Segments);
+        Assert.Equal(0U, segment.Index);
+        Assert.NotNull(segment.SplitTime);
+    }
+
+    [Fact]
+    public async Task GetRuntimeStateReturnsCurrentRuntimeState()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+
+        var response = await fixture.SendAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 13,
+            GetRuntimeState = new GetRuntimeStateRequest(),
+        });
+
+        Assert.NotNull(response.GetRuntimeState);
+        Assert.Equal(1UL, response.GetRuntimeState.RuntimeState.RuntimeRevision);
+    }
+
+    [Fact]
+    public async Task TimerOperationStartSucceedsAndReturnsTimerState()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+
+        var response = await fixture.SendAsync(new Request
+        {
+            ProtocolVersion = 2,
             RequestId = 10,
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
         });
 
         Assert.NotNull(response.Operation);
         Assert.True(response.Operation.Success);
-        Assert.NotNull(response.Operation.Snapshot);
+        Assert.NotNull(response.Operation.TimerState);
+        Assert.Equal(2UL, response.Operation.TimerState.AttemptRevision);
     }
 
     [Fact]
-    public async Task GameTimeOperationInitializeSucceedsAndReturnsSnapshot()
+    public async Task GameTimeOperationInitializeSucceedsAndReturnsTimerState()
     {
         using var fixture = await RpcFixture.CreateAsync();
 
         var response = await fixture.SendAsync(new Request
         {
-            ProtocolVersion = 1,
+            ProtocolVersion = 2,
             RequestId = 11,
             GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Initialize },
         });
 
         Assert.NotNull(response.Operation);
         Assert.True(response.Operation.Success);
-        Assert.NotNull(response.Operation.Snapshot);
-        Assert.True(response.Operation.Snapshot.IsGameTimeInitialized);
+        Assert.NotNull(response.Operation.TimerState);
+        Assert.True(response.Operation.TimerState.IsGameTimeInitialized);
     }
 
     private sealed class RpcFixture : IDisposable
@@ -147,7 +202,7 @@ public class BridgeRuntimeRpcTests
         {
             if (request.ProtocolVersion == 0)
             {
-                request.ProtocolVersion = 1;
+                request.ProtocolVersion = 2;
             }
 
             return client.SendRequestAsync(request, TimeSpan.FromSeconds(5));

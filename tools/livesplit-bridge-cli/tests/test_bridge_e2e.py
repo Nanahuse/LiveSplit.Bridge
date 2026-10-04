@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import websocket
 
-from livesplit.bridge.v1 import common_pb2
+from livesplit.bridge.v2 import common_pb2
 
 REPOSITORY_ROOT = Path(__file__).parents[3]
 TEST_HOST_PROJECT = (
@@ -41,7 +41,7 @@ def unused_tcp_port() -> int:
 
 
 def events_endpoint(port: int) -> str:
-    return f"ws://127.0.0.1:{port}/bridge/v1/events"
+    return f"ws://127.0.0.1:{port}/bridge/v2/events"
 
 
 @pytest.fixture(scope="session")
@@ -102,27 +102,26 @@ def receive_heartbeat(subscriber: websocket.WebSocket) -> common_pb2.BridgeEvent
 
 
 def test_cli_controls_bridge_timer(bridge_port: int) -> None:
-    initial = run_cli(bridge_port, "--json", "snapshot")
+    initial = run_cli(bridge_port, "--json", "timer-state")
     no_op = run_cli(bridge_port, "--json", "timer", "pause")
     started = run_cli(bridge_port, "--json", "timer", "start")
-    snapshot = run_cli(bridge_port, "--json", "snapshot")
+    state = run_cli(bridge_port, "--json", "timer-state")
 
     assert initial.returncode == 0, initial.stderr
-    initial_snapshot = json.loads(initial.stdout)["get_snapshot"]["snapshot"]
-    assert initial_snapshot["phase"] == "NOT_RUNNING"
+    initial_state = json.loads(initial.stdout)["get_timer_state"]["timer_state"]
+    assert initial_state["phase"] == "NOT_RUNNING"
     assert no_op.returncode == 0, no_op.stderr
-    no_op_snapshot = json.loads(no_op.stdout)["operation"]["snapshot"]
-    assert no_op_snapshot["state_revision"] == initial_snapshot["state_revision"]
+    no_op_state = json.loads(no_op.stdout)["operation"]["timer_state"]
+    assert no_op_state["state_revision"] == initial_state["state_revision"]
     assert started.returncode == 0, started.stderr
-    started_snapshot = json.loads(started.stdout)["operation"]["snapshot"]
-    assert int(started_snapshot["state_revision"]) == (
-        int(initial_snapshot["state_revision"]) + 1
+    started_state = json.loads(started.stdout)["operation"]["timer_state"]
+    assert int(started_state["state_revision"]) == (
+        int(initial_state["state_revision"]) + 1
     )
-    assert snapshot.returncode == 0, snapshot.stderr
-    running = json.loads(snapshot.stdout)["get_snapshot"]["snapshot"]
+    assert state.returncode == 0, state.stderr
+    running = json.loads(state.stdout)["get_timer_state"]["timer_state"]
     assert running["phase"] == "RUNNING"
     assert "split_index" not in running  # proto3 omits the default value (zero).
-    assert running["split_count"] == 2
 
 
 def test_cli_gets_current_run(bridge_port: int) -> None:
@@ -138,14 +137,40 @@ def test_cli_gets_current_run(bridge_port: int) -> None:
         "Best Segments",
         "Average Segments",
     ]
+    # Run metadata no longer carries the current custom variable values.
+    assert "custom_variables" not in run.get("metadata", {})
 
 
-def test_cli_gets_run_revision_from_timer_snapshot(bridge_port: int) -> None:
-    result = run_cli(bridge_port, "--json", "snapshot")
+def test_cli_gets_runtime_custom_variables(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "runtime")
 
     assert result.returncode == 0, result.stderr
-    snapshot = json.loads(result.stdout)["get_snapshot"]["snapshot"]
-    assert snapshot["run_revision"] == "1"
+    runtime_state = json.loads(result.stdout)["get_runtime_state"]["runtime_state"]
+    assert runtime_state["custom_variables"] == {"host_var": "host-value"}
+
+
+def test_cli_gets_attempt_and_runtime_state(bridge_port: int) -> None:
+    attempt = run_cli(bridge_port, "--json", "attempt")
+    runtime = run_cli(bridge_port, "--json", "runtime")
+
+    assert attempt.returncode == 0, attempt.stderr
+    attempt_state = json.loads(attempt.stdout)["get_attempt"]["attempt"]
+    assert attempt_state["attempt_revision"] == "1"
+    assert [segment.get("index", 0) for segment in attempt_state["segments"]] == [0, 1]
+
+    assert runtime.returncode == 0, runtime.stderr
+    runtime_state = json.loads(runtime.stdout)["get_runtime_state"]["runtime_state"]
+    assert runtime_state["runtime_revision"] == "1"
+
+
+def test_cli_gets_run_revision_from_timer_state(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "timer-state")
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads(result.stdout)["get_timer_state"]["timer_state"]
+    assert state["run_revision"] == "1"
+    assert state["attempt_revision"] == "1"
+    assert state["runtime_revision"] == "1"
 
 
 def test_cli_sets_bridge_game_time(bridge_port: int) -> None:
@@ -157,11 +182,11 @@ def test_cli_sets_bridge_game_time(bridge_port: int) -> None:
     assert no_op.returncode == 0, no_op.stderr
     no_op_operation = json.loads(no_op.stdout)["operation"]
     assert operation["success"] is True
-    assert operation["snapshot"]["game_time_ticks"] == "123450000"
-    assert operation["snapshot"]["is_game_time_initialized"] is True
+    assert operation["timer_state"]["game_time_ticks"] == "123450000"
+    assert operation["timer_state"]["is_game_time_initialized"] is True
     assert (
-        no_op_operation["snapshot"]["state_revision"]
-        == operation["snapshot"]["state_revision"]
+        no_op_operation["timer_state"]["state_revision"]
+        == operation["timer_state"]["state_revision"]
     )
 
 
@@ -187,14 +212,14 @@ def test_bridge_publishes_heartbeat_without_advancing_sequence(
 
         assert initial_heartbeat.session_id != 0
         assert initial_heartbeat.event_sequence == 0
-        assert not initial_heartbeat.HasField("snapshot")
+        assert not initial_heartbeat.HasField("timer_state")
         assert repeated_heartbeat.session_id == initial_heartbeat.session_id
         assert repeated_heartbeat.event_sequence == initial_heartbeat.event_sequence
-        assert not repeated_heartbeat.HasField("snapshot")
+        assert not repeated_heartbeat.HasField("timer_state")
         assert timer_event.event_sequence == 1
-        assert timer_event.HasField("snapshot")
+        assert timer_event.HasField("timer_state")
         assert next_heartbeat.session_id == initial_heartbeat.session_id
         assert next_heartbeat.event_sequence == timer_event.event_sequence
-        assert not next_heartbeat.HasField("snapshot")
+        assert not next_heartbeat.HasField("timer_state")
     finally:
         subscriber.close()

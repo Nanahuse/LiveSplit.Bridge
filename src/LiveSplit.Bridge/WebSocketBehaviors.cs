@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 using Google.Protobuf;
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 using WebSocketSharp;
 using WebSocketSharp.Server;
 

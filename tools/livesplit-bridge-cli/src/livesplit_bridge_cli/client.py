@@ -5,9 +5,9 @@ from typing import Self
 
 import websocket
 
-from livesplit.bridge.v1 import bridge_pb2
+from livesplit.bridge.v2 import bridge_pb2
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 class BridgeClientError(RuntimeError):
@@ -70,13 +70,23 @@ class BridgeClient:
     def attach(self) -> bridge_pb2.Response:
         return self.request(bridge_pb2.Request(attach=bridge_pb2.AttachRequest()))
 
-    def snapshot(self) -> bridge_pb2.Response:
+    def timer_state(self) -> bridge_pb2.Response:
         return self.request(
-            bridge_pb2.Request(get_snapshot=bridge_pb2.GetSnapshotRequest())
+            bridge_pb2.Request(get_timer_state=bridge_pb2.GetTimerStateRequest())
         )
 
     def run(self) -> bridge_pb2.Response:
         return self.request(bridge_pb2.Request(get_run=bridge_pb2.GetRunRequest()))
+
+    def attempt(self) -> bridge_pb2.Response:
+        return self.request(
+            bridge_pb2.Request(get_attempt=bridge_pb2.GetAttemptRequest())
+        )
+
+    def runtime_state(self) -> bridge_pb2.Response:
+        return self.request(
+            bridge_pb2.Request(get_runtime_state=bridge_pb2.GetRuntimeStateRequest())
+        )
 
     def timer(self, operation: str) -> bridge_pb2.Response:
         return self.request(

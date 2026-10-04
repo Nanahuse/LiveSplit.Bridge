@@ -4,15 +4,15 @@ using System.Diagnostics;
 using System.Net;
 using System.Threading;
 using Google.Protobuf;
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 using WebSocketSharp.Server;
 
 namespace LiveSplit.Bridge;
 
 internal sealed class WebSocketTransport : IDisposable
 {
-    internal const string RpcPath = "/bridge/v1/rpc";
-    internal const string EventPath = "/bridge/v1/events";
+    internal const string RpcPath = "/bridge/v2/rpc";
+    internal const string EventPath = "/bridge/v2/events";
 
     private readonly int port;
     private readonly TimeSpan heartbeatInterval;

@@ -34,7 +34,7 @@ def main() -> int:
     for directory in [
         OUTPUT / "livesplit",
         OUTPUT / "livesplit/bridge",
-        OUTPUT / "livesplit/bridge/v1",
+        OUTPUT / "livesplit/bridge/v2",
     ]:
         (directory / "__init__.py").touch()
     print(f"Generated {len(proto_files)} protobuf modules in {OUTPUT}")

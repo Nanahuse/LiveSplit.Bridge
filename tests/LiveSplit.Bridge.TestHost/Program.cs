@@ -16,6 +16,7 @@ internal static class Program
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("First"));
         run.Add(new Segment("Second"));
+        run.Metadata.GetOrAddCustomVariable("host_var").Value = "host-value";
 
         using var form = new Form();
         var layoutSettings = new BridgeLayoutSettings();

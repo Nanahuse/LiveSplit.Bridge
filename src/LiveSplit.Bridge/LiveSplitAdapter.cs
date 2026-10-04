@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-using LiveSplit.Bridge.Protocol.V1;
+using Google.Protobuf;
+using LiveSplit.Bridge.Protocol.V2;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
-using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V1.TimerPhase;
+using ModelTimingMethod = LiveSplit.Model.TimingMethod;
+using ProtocolTimingMethod = LiveSplit.Bridge.Protocol.V2.TimingMethod;
+using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V2.TimerPhase;
 using ModelTimerPhase = LiveSplit.Model.TimerPhase;
 using ModelRunMetadata = LiveSplit.Model.RunMetadata;
-using ProtoCustomVariable = LiveSplit.Bridge.Protocol.V1.CustomVariable;
-using ProtoRunMetadata = LiveSplit.Bridge.Protocol.V1.RunMetadata;
+using ProtoImage = LiveSplit.Bridge.Protocol.V2.Image;
+using ProtoRunMetadata = LiveSplit.Bridge.Protocol.V2.RunMetadata;
 
 namespace LiveSplit.Bridge
 {
@@ -27,85 +32,183 @@ namespace LiveSplit.Bridge
             this.timerModel = new TimerModel { CurrentState = state };
         }
 
-        public TimerSnapshot BuildSnapshot(ulong stateRevision, ulong sessionId, ulong eventSequence, ulong runRevision)
+        public TimerState BuildTimerState(
+            ulong stateRevision,
+            ulong sessionId,
+            ulong runRevision,
+            ulong attemptRevision,
+            ulong runtimeRevision)
         {
             return InvokeOnUiThread(() =>
             {
                 var currentTime = state.CurrentTime;
-                var snapshot = new TimerSnapshot
+                var timerState = new TimerState
                 {
                     StateRevision = stateRevision,
-                    RunRevision = runRevision,
                     SessionId = sessionId,
-                    EventSequence = eventSequence,
                     Phase = MapTimerPhase(state.CurrentPhase),
                     SplitIndex = state.CurrentSplitIndex,
-                    SplitCount = state.Run?.Count ?? 0,
-                    IsPaused = state.CurrentPhase == ModelTimerPhase.Paused,
                     IsGameTimeInitialized = state.IsGameTimeInitialized,
+                    IsGameTimePaused = state.IsGameTimePaused,
+                    RunRevision = runRevision,
+                    AttemptRevision = attemptRevision,
+                    RuntimeRevision = runtimeRevision,
                 };
 
                 if (currentTime.RealTime.HasValue)
                 {
-                    snapshot.RealTimeTicks = currentTime.RealTime.Value.Ticks;
+                    timerState.RealTimeTicks = currentTime.RealTime.Value.Ticks;
                 }
 
                 if (currentTime.GameTime.HasValue)
                 {
-                    snapshot.GameTimeTicks = currentTime.GameTime.Value.Ticks;
+                    timerState.GameTimeTicks = currentTime.GameTime.Value.Ticks;
                 }
 
-                return snapshot;
+                return timerState;
             });
         }
 
-        public RunSnapshot BuildRunSnapshot(ulong runRevision, ulong stateRevision, ulong sessionId)
+        public RunState BuildRunState(ulong runRevision, ulong sessionId)
         {
             return InvokeOnUiThread(() =>
             {
-                var snapshot = new RunSnapshot
+                var runState = new RunState
                 {
                     SessionId = sessionId,
                     RunRevision = runRevision,
-                    CapturedStateRevision = stateRevision,
                 };
 
                 var run = state.Run;
                 if (run == null)
                 {
-                    return snapshot;
+                    return runState;
                 }
 
-                snapshot.GameName = run.GameName ?? string.Empty;
-                snapshot.CategoryName = run.CategoryName ?? string.Empty;
-                snapshot.OffsetTicks = run.Offset.Ticks;
+                runState.GameName = run.GameName ?? string.Empty;
+                runState.CategoryName = run.CategoryName ?? string.Empty;
+                runState.OffsetTicks = run.Offset.Ticks;
 
                 if (!string.IsNullOrEmpty(run.FilePath))
                 {
-                    snapshot.FilePath = run.FilePath;
+                    runState.FilePath = run.FilePath;
                 }
 
                 if (!string.IsNullOrEmpty(run.LayoutPath))
                 {
-                    snapshot.LayoutPath = run.LayoutPath;
+                    runState.LayoutPath = run.LayoutPath;
                 }
 
-                snapshot.Metadata = BuildRunMetadata(run.Metadata);
+                runState.Metadata = BuildRunMetadata(run.Metadata);
+
+                var gameIcon = MapImage(run.GameIcon);
+                if (gameIcon != null)
+                {
+                    runState.GameIcon = gameIcon;
+                }
 
                 var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
                     .Distinct()
                     .ToList();
-                snapshot.Comparisons.Add(comparisons);
+                runState.Comparisons.Add(comparisons);
 
                 for (var index = 0; index < run.Count; index++)
                 {
-                    snapshot.Segments.Add(BuildSegmentInfo(run[index], index, comparisons));
+                    runState.Segments.Add(BuildSegmentInfo(run[index], index, comparisons));
                 }
 
-                snapshot.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
-
-                return snapshot;
+                return runState;
             });
+        }
+
+        public AttemptState BuildAttemptState(ulong attemptRevision, ulong sessionId)
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var attemptState = new AttemptState
+                {
+                    SessionId = sessionId,
+                    AttemptRevision = attemptRevision,
+                };
+
+                var run = state.Run;
+                if (run == null)
+                {
+                    return attemptState;
+                }
+
+                attemptState.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
+                attemptState.CompletedCount = run.AttemptHistory == null
+                    ? 0U
+                    : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
+
+                for (var index = 0; index < run.Count; index++)
+                {
+                    var segment = run[index];
+                    var attemptSegment = new AttemptSegment
+                    {
+                        Index = (uint)index,
+                        SplitTime = MapTime(segment.SplitTime),
+                    };
+
+                    if (segment.CustomVariableValues != null)
+                    {
+                        foreach (var pair in segment.CustomVariableValues)
+                        {
+                            attemptSegment.CustomVariables[pair.Key] = pair.Value ?? string.Empty;
+                        }
+                    }
+
+                    attemptState.Segments.Add(attemptSegment);
+                }
+
+                return attemptState;
+            });
+        }
+
+        public RuntimeState BuildRuntimeState(ulong runtimeRevision, ulong sessionId)
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var runtimeState = new RuntimeState
+                {
+                    SessionId = sessionId,
+                    RuntimeRevision = runtimeRevision,
+                    CurrentTimingMethod = MapTimingMethod(state.CurrentTimingMethod),
+                    CurrentComparison = state.CurrentComparison ?? string.Empty,
+                    GlobalHotkeysEnabled = ReadGlobalHotkeysEnabled(state),
+                };
+
+                var run = state.Run;
+                if (run?.Metadata?.CustomVariables != null)
+                {
+                    foreach (var pair in run.Metadata.CustomVariables)
+                    {
+                        runtimeState.CustomVariables[pair.Key] = pair.Value?.Value ?? string.Empty;
+                    }
+                }
+
+                return runtimeState;
+            });
+        }
+
+        private static bool ReadGlobalHotkeysEnabled(LiveSplitState state)
+        {
+            var settings = state.Settings;
+            if (settings?.HotkeyProfiles == null || settings.HotkeyProfiles.Count == 0)
+            {
+                return false;
+            }
+
+            var profileName = state.CurrentHotkeyProfile;
+            if (string.IsNullOrEmpty(profileName)
+                || !settings.HotkeyProfiles.TryGetValue(profileName, out var profile)
+                || profile == null)
+            {
+                return false;
+            }
+
+            return profile.GlobalHotkeysEnabled;
         }
 
         private static ProtoRunMetadata BuildRunMetadata(ModelRunMetadata metadata)
@@ -141,19 +244,6 @@ namespace LiveSplit.Bridge
                 }
             }
 
-            if (metadata.CustomVariables != null)
-            {
-                foreach (var pair in metadata.CustomVariables)
-                {
-                    result.CustomVariables.Add(new ProtoCustomVariable
-                    {
-                        Name = pair.Key,
-                        Value = pair.Value?.Value ?? string.Empty,
-                        IsPermanent = pair.Value?.IsPermanent ?? false,
-                    });
-                }
-            }
-
             return result;
         }
 
@@ -175,15 +265,31 @@ namespace LiveSplit.Bridge
                 });
             }
 
-            if (segment.CustomVariableValues != null)
+            var icon = MapImage(segment.Icon);
+            if (icon != null)
             {
-                foreach (var pair in segment.CustomVariableValues)
-                {
-                    info.CustomVariables[pair.Key] = pair.Value ?? string.Empty;
-                }
+                info.Icon = icon;
             }
 
             return info;
+        }
+
+        private static ProtoImage MapImage(System.Drawing.Image image)
+        {
+            if (image == null)
+            {
+                return null;
+            }
+
+            using var stream = new MemoryStream();
+            image.Save(stream, ImageFormat.Png);
+            return new ProtoImage
+            {
+                MimeType = "image/png",
+                Data = ByteString.CopyFrom(stream.ToArray()),
+                Width = (uint)image.Width,
+                Height = (uint)image.Height,
+            };
         }
 
         private static TimeValue MapTime(Time time)
@@ -246,13 +352,13 @@ namespace LiveSplit.Bridge
                             timerModel.Reset();
                             break;
                         case TimerOperationType.TimerPause:
-                            if (state.CurrentPhase == LiveSplit.Model.TimerPhase.Running)
+                            if (state.CurrentPhase == ModelTimerPhase.Running)
                             {
                                 timerModel.Pause();
                             }
                             break;
                         case TimerOperationType.TimerResume:
-                            if (state.CurrentPhase == LiveSplit.Model.TimerPhase.Paused)
+                            if (state.CurrentPhase == ModelTimerPhase.Paused)
                             {
                                 timerModel.Pause();
                             }
@@ -354,15 +460,25 @@ namespace LiveSplit.Bridge
             return callback();
         }
 
-        private static ProtocolTimerPhase MapTimerPhase(LiveSplit.Model.TimerPhase phase)
+        private static ProtocolTimerPhase MapTimerPhase(ModelTimerPhase phase)
         {
             return phase switch
             {
-                LiveSplit.Model.TimerPhase.NotRunning => ProtocolTimerPhase.NotRunning,
-                LiveSplit.Model.TimerPhase.Running => ProtocolTimerPhase.Running,
-                LiveSplit.Model.TimerPhase.Paused => ProtocolTimerPhase.Paused,
-                LiveSplit.Model.TimerPhase.Ended => ProtocolTimerPhase.Ended,
+                ModelTimerPhase.NotRunning => ProtocolTimerPhase.NotRunning,
+                ModelTimerPhase.Running => ProtocolTimerPhase.Running,
+                ModelTimerPhase.Paused => ProtocolTimerPhase.Paused,
+                ModelTimerPhase.Ended => ProtocolTimerPhase.Ended,
                 _ => ProtocolTimerPhase.Unspecified,
+            };
+        }
+
+        private static ProtocolTimingMethod MapTimingMethod(ModelTimingMethod method)
+        {
+            return method switch
+            {
+                ModelTimingMethod.RealTime => ProtocolTimingMethod.RealTime,
+                ModelTimingMethod.GameTime => ProtocolTimingMethod.GameTime,
+                _ => ProtocolTimingMethod.Unspecified,
             };
         }
     }

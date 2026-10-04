@@ -1,4 +1,4 @@
-using LiveSplit.Bridge.Protocol.V1;
+using LiveSplit.Bridge.Protocol.V2;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
 
@@ -20,8 +20,8 @@ public class RunRevisionTests
         Assert.Equal(1UL, runtime.RunRevision);
 
         var attached = Handle(runtime, new Request { RequestId = 1, Attach = new AttachRequest() });
-        Assert.Equal(1UL, attached.Attach.Snapshot.RunRevision);
-        Assert.Equal(initialStateRevision, attached.Attach.Snapshot.StateRevision);
+        Assert.Equal(1UL, attached.Attach.TimerState.RunRevision);
+        Assert.Equal(initialStateRevision, attached.Attach.TimerState.StateRevision);
 
         state.CallRunManuallyModified();
 
@@ -30,7 +30,6 @@ public class RunRevisionTests
 
         var afterChange = Handle(runtime, new Request { RequestId = 2, GetRun = new GetRunRequest() });
         Assert.Equal(2UL, afterChange.GetRun.Run.RunRevision);
-        Assert.Equal(runtime.StateRevision, afterChange.GetRun.Run.CapturedStateRevision);
 
         state.CallRunManuallyModified();
         state.CallRunManuallyModified();
@@ -90,8 +89,8 @@ public class RunRevisionTests
         state.CallRunManuallyModified();
 
         var runChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRunChanged);
-        Assert.NotNull(runChanged.Snapshot);
-        Assert.Equal(2UL, runChanged.Snapshot.RunRevision);
+        Assert.NotNull(runChanged.TimerState);
+        Assert.Equal(2UL, runChanged.TimerState.RunRevision);
     }
 
     private static async Task<BridgeEvent> ReceiveUntilAsync(WebSocketTestClient client, BridgeEventType type)
@@ -112,7 +111,7 @@ public class RunRevisionTests
 
     private static Response Handle(BridgeRuntime runtime, Request request)
     {
-        request.ProtocolVersion = 1;
+        request.ProtocolVersion = 2;
         return runtime.HandleRequest(request);
     }
 }

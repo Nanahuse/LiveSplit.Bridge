@@ -1,13 +1,14 @@
 syntax = "proto3";
 
-package livesplit.bridge.v1;
+package livesplit.bridge.v2;
 
-option csharp_namespace = "LiveSplit.Bridge.Protocol.V1";
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V2";
 
-message RunSnapshot {
+import "livesplit/bridge/v2/common.proto";
+
+message RunState {
   uint64 session_id = 1;
   uint64 run_revision = 2;
-  uint64 captured_state_revision = 3;
 
   string game_name = 10;
   string category_name = 11;
@@ -21,7 +22,7 @@ message RunSnapshot {
   repeated string comparisons = 30;
   repeated SegmentInfo segments = 31;
 
-  uint32 attempt_count = 40;
+  Image game_icon = 40;
 }
 
 message SegmentInfo {
@@ -31,12 +32,7 @@ message SegmentInfo {
   repeated ComparisonTime comparisons = 10;
   TimeValue best_segment_time = 11;
 
-  map<string, string> custom_variables = 20;
-}
-
-message TimeValue {
-  optional sint64 real_time_ticks = 1;
-  optional sint64 game_time_ticks = 2;
+  Image icon = 12;
 }
 
 message ComparisonTime {
@@ -52,11 +48,11 @@ message RunMetadata {
   bool uses_emulator = 4;
 
   map<string, string> variables = 10;
-  repeated CustomVariable custom_variables = 11;
 }
 
-message CustomVariable {
-  string name = 1;
-  string value = 2;
-  bool is_permanent = 3;
+message Image {
+  string mime_type = 1;
+  bytes data = 2;
+  uint32 width = 3;
+  uint32 height = 4;
 }
