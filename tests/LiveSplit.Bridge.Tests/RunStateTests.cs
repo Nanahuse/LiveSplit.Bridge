@@ -58,10 +58,6 @@ public class RunStateTests
         Assert.Equal("USA", runState.Metadata.RegionName);
         Assert.True(runState.Metadata.UsesEmulator);
         Assert.Equal("hard", runState.Metadata.Variables["difficulty"]);
-        var custom = Assert.Single(runState.Metadata.CustomVariables);
-        Assert.Equal("custom", custom.Name);
-        Assert.Equal("custom-value", custom.Value);
-        Assert.False(custom.IsPermanent);
 
         Assert.Equal(
             new[] { "Personal Best", "Best Segments", "Average Segments" },
@@ -118,7 +114,6 @@ public class RunStateTests
         Assert.False(runState.Metadata.HasRegionName);
         Assert.False(runState.Metadata.UsesEmulator);
         Assert.Empty(runState.Metadata.Variables);
-        Assert.Empty(runState.Metadata.CustomVariables);
 
         var segment = Assert.Single(runState.Segments);
         Assert.Null(segment.Icon);

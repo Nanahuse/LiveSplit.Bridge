@@ -137,6 +137,16 @@ def test_cli_gets_current_run(bridge_port: int) -> None:
         "Best Segments",
         "Average Segments",
     ]
+    # Run metadata no longer carries the current custom variable values.
+    assert "custom_variables" not in run.get("metadata", {})
+
+
+def test_cli_gets_runtime_custom_variables(bridge_port: int) -> None:
+    result = run_cli(bridge_port, "--json", "runtime")
+
+    assert result.returncode == 0, result.stderr
+    runtime_state = json.loads(result.stdout)["get_runtime_state"]["runtime_state"]
+    assert runtime_state["custom_variables"] == {"host_var": "host-value"}
 
 
 def test_cli_gets_attempt_and_runtime_state(bridge_port: int) -> None:

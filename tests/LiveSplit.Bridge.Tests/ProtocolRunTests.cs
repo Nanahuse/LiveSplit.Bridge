@@ -118,12 +118,6 @@ public class ProtocolRunTests
             Time = new TimeValue { GameTimeTicks = 20 },
         });
         run.Metadata.Variables["variable"] = "value";
-        run.Metadata.CustomVariables.Add(new CustomVariable
-        {
-            Name = "custom",
-            Value = "custom-value",
-            IsPermanent = true,
-        });
 
         var parsed = Response.Parser.ParseFrom(response.ToByteArray());
 
@@ -147,10 +141,6 @@ public class ProtocolRunTests
         Assert.Equal("USA", parsedRun.Metadata.RegionName);
         Assert.True(parsedRun.Metadata.UsesEmulator);
         Assert.Equal("value", parsedRun.Metadata.Variables["variable"]);
-        var custom = Assert.Single(parsedRun.Metadata.CustomVariables);
-        Assert.Equal("custom", custom.Name);
-        Assert.Equal("custom-value", custom.Value);
-        Assert.True(custom.IsPermanent);
         Assert.Equal(new[] { "Personal Best" }, parsedRun.Comparisons);
         var segment = Assert.Single(parsedRun.Segments);
         Assert.Equal(0U, segment.Index);
@@ -282,6 +272,17 @@ public class ProtocolRunTests
         Assert.Null(typeof(RunState).GetProperty("AttemptCount"));
         Assert.Null(typeof(RunState).GetProperty("CapturedStateRevision"));
         Assert.Null(typeof(SegmentInfo).GetProperty("CustomVariables"));
+    }
+
+    [Fact]
+    public void RunMetadataHasNoCustomVariableValues()
+    {
+        Assert.DoesNotContain(
+            typeof(RunMetadata).GetProperties(),
+            property => property.Name.Contains("CustomVariable", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            typeof(RunMetadata).GetProperties(),
+            property => property.Name.Contains("CustomVariables", StringComparison.Ordinal));
     }
 
     [Fact]

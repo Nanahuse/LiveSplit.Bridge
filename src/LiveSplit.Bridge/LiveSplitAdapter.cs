@@ -14,7 +14,6 @@ using ProtocolTimingMethod = LiveSplit.Bridge.Protocol.V2.TimingMethod;
 using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V2.TimerPhase;
 using ModelTimerPhase = LiveSplit.Model.TimerPhase;
 using ModelRunMetadata = LiveSplit.Model.RunMetadata;
-using ProtoCustomVariable = LiveSplit.Bridge.Protocol.V2.CustomVariable;
 using ProtoImage = LiveSplit.Bridge.Protocol.V2.Image;
 using ProtoRunMetadata = LiveSplit.Bridge.Protocol.V2.RunMetadata;
 
@@ -141,7 +140,7 @@ namespace LiveSplit.Bridge
                 attemptState.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
                 attemptState.CompletedCount = run.AttemptHistory == null
                     ? 0U
-                    : (uint)run.AttemptHistory.Count(attempt => attempt.Ended.HasValue);
+                    : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
 
                 for (var index = 0; index < run.Count; index++)
                 {
@@ -201,7 +200,15 @@ namespace LiveSplit.Bridge
                 return false;
             }
 
-            return settings.GlobalHotkeysEnabled;
+            var profileName = state.CurrentHotkeyProfile;
+            if (string.IsNullOrEmpty(profileName)
+                || !settings.HotkeyProfiles.TryGetValue(profileName, out var profile)
+                || profile == null)
+            {
+                return false;
+            }
+
+            return profile.GlobalHotkeysEnabled;
         }
 
         private static ProtoRunMetadata BuildRunMetadata(ModelRunMetadata metadata)
@@ -234,19 +241,6 @@ namespace LiveSplit.Bridge
                 foreach (var pair in metadata.VariableValueNames)
                 {
                     result.Variables[pair.Key] = pair.Value ?? string.Empty;
-                }
-            }
-
-            if (metadata.CustomVariables != null)
-            {
-                foreach (var pair in metadata.CustomVariables)
-                {
-                    result.CustomVariables.Add(new ProtoCustomVariable
-                    {
-                        Name = pair.Key,
-                        Value = pair.Value?.Value ?? string.Empty,
-                        IsPermanent = pair.Value?.IsPermanent ?? false,
-                    });
                 }
             }
 

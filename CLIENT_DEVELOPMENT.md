@@ -77,7 +77,7 @@ Runに属する比較的静的な情報を保持します。
 | `game_name` / `category_name` | `IRun`由来のゲーム名・カテゴリ名 |
 | `offset_ticks` | Runの開始オフセット。100ナノ秒単位 |
 | `file_path` / `layout_path` | 保存済みRun/Layoutのパス。存在しない場合はunset |
-| `metadata` | Run Metadata。`run_id`、platform、region、emulator使用、変数、custom variable |
+| `metadata` | Run Metadata。`run_id`、platform、region、emulator使用、変数 |
 | `comparisons` | Run全体で利用可能なComparison名の一覧 |
 | `segments` | Segment一覧 |
 | `game_icon` | Game icon |
@@ -87,8 +87,9 @@ Runに属する比較的静的な情報を保持します。
 各Segmentには同じ名前の`ComparisonTime`が入ります。値が存在しないComparisonも一覧には
 残り、対応する時間値が無い場合は`TimeValue`のreal time / game timeがunsetになります。
 
-`RunState`はAttempt依存の情報を持ちません。`attempt_count`は`AttemptState`で、
-Segmentのcustom variableは`AttemptState`で取得します。
+`RunState`はAttempt依存の情報と動的なCustom Variableの現在値を持ちません。
+`attempt_count`は`AttemptState`で、Segmentのcustom variableは`AttemptState`で取得します。
+Run Metadata Custom Variableの現在値は`RuntimeState.custom_variables`が唯一の取得元です。
 
 ### `AttemptState`
 
@@ -98,7 +99,7 @@ Segmentのcustom variableは`AttemptState`で取得します。
 |---|---|
 | `session_id` / `attempt_revision` | セッションとAttemptのrevision |
 | `attempt_count` | 現在のRunのAttempt数 |
-| `completed_count` | 完了済みAttempt数 |
+| `completed_count` | 完走したAttempt数。LiveSplit標準のFinished Runsと同じく`attempt.Time.RealTime != null`で判定 |
 | `segments` | 現在AttemptのSegment情報 |
 
 `segments`の各`AttemptSegment`は`index`、`split_time`（`TimeValue`）、
@@ -114,8 +115,8 @@ LiveSplitの現在設定・UI状態を保持します。
 | `session_id` / `runtime_revision` | セッションとRuntimeのrevision |
 | `current_timing_method` | 現在のTiming Method |
 | `current_comparison` | 現在のComparison名 |
-| `global_hotkeys_enabled` | Global Hotkeysが有効か |
-| `custom_variables` | 現在の`Run.Metadata.CustomVariables`の値 |
+| `global_hotkeys_enabled` | 現在選択中のHotkey ProfileでGlobal Hotkeysが有効か |
+| `custom_variables` | 現在の`Run.Metadata.CustomVariables`の値。この現在値の唯一の取得元 |
 
 画像は`Image`（`mime_type`、`data`、`width`、`height`）で表現します。
 
@@ -175,8 +176,27 @@ Game Timeの`ticks`は100ナノ秒単位です。
 
 ### `state_revision`
 
-Timerの現在状態に対するrevisionです。Timer操作やGame Time操作、Timer状態の変化で
-増加します。同じ`session_id`の中では単調増加します。
+Timerの離散的な状態変更に対するrevisionです。Timer操作やGame Time操作、Timer状態の
+変化で増加します。同じ`session_id`の中では単調増加します。
+
+`state_revision`は`TimerState`の全フィールドの変更を表すものではありません。特に、
+Running中に時間が自然経過して
+
+```text
+real_time_ticks
+game_time_ticks
+```
+
+が変化しても`state_revision`は増加しません。したがって、
+
+```text
+state_revisionが同じ
+→ TimerState全体が同一
+```
+
+と判断することはできません。時間値の更新が必要な場合は、`state_revision`にかかわらず
+高頻度に`get_timer_state`を取得してください。`state_revision`はTimer操作などの
+離散的な状態変更を検出するために使用します。
 
 ### `run_revision`
 

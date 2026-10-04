@@ -134,12 +134,17 @@ def attempt_lines(attempt: common_pb2.AttemptState) -> list[str]:
 
 
 def runtime_state_lines(runtime: common_pb2.RuntimeState) -> list[str]:
-    return [
+    lines = [
         f"session={runtime.session_id} runtime_revision={runtime.runtime_revision}",
         f"timing_method={common_pb2.TimingMethod.Name(runtime.current_timing_method)} "
         f"comparison={runtime.current_comparison or '-'} "
         f"global_hotkeys={runtime.global_hotkeys_enabled}",
     ]
+    lines.extend(
+        f"  custom_variable {name}={value}"
+        for name, value in runtime.custom_variables.items()
+    )
+    return lines
 
 
 def print_message(message: object, as_json: bool) -> None:
