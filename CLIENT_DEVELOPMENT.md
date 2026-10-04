@@ -251,6 +251,16 @@ Timer操作後に`get_attempt`の内容が変化していない場合は、`atte
 `get_run` / `get_attempt` / `get_runtime_state`の返却内容と一致するため、revisionだけを
 監視すれば必要なStateを過不足なく再取得できます。
 
+`get_run` / `get_attempt` / `get_runtime_state`は、返却直前に現在の内容とrevisionを
+同期します。Bridgeの監視がまだ変更を検出していない場合でも、返却されるStateの内容と
+対応するrevisionは常に一致します。`attach`も返却前にすべてのrevisionを同期するため、
+`attach`の`TimerState`と直後の詳細RPCのrevisionが整合します。同期によってrevisionが
+更新された場合は、対応する`EVENT_RUN_CHANGED` / `EVENT_RUNTIME_CHANGED`が発行されます。
+
+`get_timer_state`は高頻度利用のためこの同期を行いません。Run / Attemptなどの詳細な
+変更検出は、専用イベント、低頻度のフォールバック監視、および詳細RPC取得時の同期で
+行います。
+
 ## クライアント利用モデル
 
 ### Web UI

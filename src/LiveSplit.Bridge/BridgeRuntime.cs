@@ -115,6 +115,12 @@ internal sealed class BridgeRuntime : IDisposable
         {
             if (request.Attach != null)
             {
+                // Attach is the client's initial sync point: bring every revision up to
+                // date so the returned TimerState matches the detailed RPCs that follow.
+                SyncRunStateAndPublish();
+                SyncAttemptState();
+                SyncRuntimeStateAndPublish();
+
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
@@ -142,6 +148,10 @@ internal sealed class BridgeRuntime : IDisposable
 
             if (request.GetRun != null)
             {
+                // Sync only the Run revision so the returned RunState and run_revision
+                // always describe the same content.
+                SyncRunStateAndPublish();
+
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
@@ -155,6 +165,8 @@ internal sealed class BridgeRuntime : IDisposable
 
             if (request.GetAttempt != null)
             {
+                SyncAttemptState();
+
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
@@ -168,6 +180,8 @@ internal sealed class BridgeRuntime : IDisposable
 
             if (request.GetRuntimeState != null)
             {
+                SyncRuntimeStateAndPublish();
+
                 return new Response
                 {
                     ProtocolVersion = ProtocolVersion,
@@ -304,20 +318,13 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void DetectRuntimeChange()
     {
-        if (DetectRuntimeChangeAndReport())
-        {
-            PublishEvent(BridgeEventType.EventRuntimeChanged);
-        }
+        SyncRuntimeStateAndPublish();
     }
 
     private void DetectRunAndAttemptChanges()
     {
-        var changes = ApplyRunAndAttemptRevisionChanges();
-
-        if (changes.Run)
-        {
-            PublishEvent(BridgeEventType.EventRunChanged);
-        }
+        SyncRunStateAndPublish();
+        SyncAttemptState();
     }
 
     private bool TryEnterContentFallbackWindow()
@@ -370,48 +377,74 @@ internal sealed class BridgeRuntime : IDisposable
         }
     }
 
-    private readonly struct ContentChanges
-    {
-        public ContentChanges(bool run, bool attempt, bool runtime)
-        {
-            Run = run;
-            Attempt = attempt;
-            Runtime = runtime;
-        }
-
-        public bool Run { get; }
-        public bool Attempt { get; }
-        public bool Runtime { get; }
-    }
-
-    private ContentChanges ApplyRunAndAttemptRevisionChanges()
+    private bool SyncRunState()
     {
         var run = adapter.CaptureRunRevisionState();
-        var attempt = adapter.CaptureAttemptRevisionState();
-
-        bool runChanged;
-        bool attemptChanged;
 
         lock (observedStateLock)
         {
-            runChanged = !observedRunState.Equals(run);
-            attemptChanged = !observedAttemptState.Equals(attempt);
+            if (observedRunState.Equals(run))
+            {
+                return false;
+            }
 
             observedRunState = run;
+        }
+
+        IncrementRunRevision();
+        return true;
+    }
+
+    private bool SyncAttemptState()
+    {
+        var attempt = adapter.CaptureAttemptRevisionState();
+
+        lock (observedStateLock)
+        {
+            if (observedAttemptState.Equals(attempt))
+            {
+                return false;
+            }
+
             observedAttemptState = attempt;
         }
 
-        if (attemptChanged)
+        IncrementAttemptRevision();
+        return true;
+    }
+
+    private bool SyncRuntimeState()
+    {
+        var runtime = adapter.CaptureRuntimeRevisionState();
+
+        lock (observedStateLock)
         {
-            IncrementAttemptRevision();
+            if (observedRuntimeState.Equals(runtime))
+            {
+                return false;
+            }
+
+            observedRuntimeState = runtime;
         }
 
-        if (runChanged)
-        {
-            IncrementRunRevision();
-        }
+        IncrementRuntimeRevision();
+        return true;
+    }
 
-        return new ContentChanges(runChanged, attemptChanged, false);
+    private void SyncRunStateAndPublish()
+    {
+        if (SyncRunState())
+        {
+            PublishEvent(BridgeEventType.EventRunChanged);
+        }
+    }
+
+    private void SyncRuntimeStateAndPublish()
+    {
+        if (SyncRuntimeState())
+        {
+            PublishEvent(BridgeEventType.EventRuntimeChanged);
+        }
     }
 
     private void PublishStateChangeEvent(BridgeEventType type)
@@ -421,13 +454,14 @@ internal sealed class BridgeRuntime : IDisposable
         // Refresh attempt / run / runtime revisions before publishing so the event's
         // TimerState carries the updated revision values. Run / runtime changes are
         // published as their own events after the primary (timer / game time) event.
-        var contentChanges = ApplyRunAndAttemptRevisionChanges();
-        var runtimeChanged = DetectRuntimeChangeAndReport();
+        var runChanged = SyncRunState();
+        var runtimeChanged = SyncRuntimeState();
+        SyncAttemptState();
 
         IncrementStateRevision();
         PublishEvent(type);
 
-        if (contentChanges.Run)
+        if (runChanged)
         {
             PublishEvent(BridgeEventType.EventRunChanged);
         }
@@ -436,24 +470,6 @@ internal sealed class BridgeRuntime : IDisposable
         {
             PublishEvent(BridgeEventType.EventRuntimeChanged);
         }
-    }
-
-    private bool DetectRuntimeChangeAndReport()
-    {
-        var current = adapter.CaptureRuntimeRevisionState();
-
-        lock (observedStateLock)
-        {
-            if (observedRuntimeState.Equals(current))
-            {
-                return false;
-            }
-
-            observedRuntimeState = current;
-        }
-
-        IncrementRuntimeRevision();
-        return true;
     }
 
     private void PublishEvent(BridgeEventType type)
