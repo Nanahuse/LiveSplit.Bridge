@@ -39,7 +39,9 @@ public sealed class Component : IComponent
         {
             if (status == BridgeRuntimeStatus.Stopped) return;
             if (runtime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
-            runtime?.ObserveExternalState(); UpdateControl();
+            runtime?.ObserveExternalState();
+            runtime?.ObserveContentState();
+            UpdateControl();
         }
     }
     public void Dispose() { lock (runtimeLock) { runtime?.Dispose(); runtime = null; status = BridgeRuntimeStatus.Stopped; lastError = null; retryAt = 0; } }

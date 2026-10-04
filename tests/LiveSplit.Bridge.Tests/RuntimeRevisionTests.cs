@@ -57,6 +57,56 @@ public class RuntimeRevisionTests
     }
 
     [Fact]
+    public void ProfileSwitchWithSameGlobalHotkeysDoesNotAdvanceRuntimeRevision()
+    {
+        var state = CreateState(
+            ("Default", true),
+            ("Secondary", true));
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        state.CurrentHotkeyProfile = "Secondary";
+        runtime.ObserveExternalState();
+
+        // The profile name is not part of RuntimeState, so switching between profiles
+        // with the same Global Hotkeys value must not change runtime_revision.
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+    }
+
+    [Fact]
+    public async Task ProfileSwitchWithSameGlobalHotkeysDoesNotPublishRuntimeChangedEvent()
+    {
+        var state = CreateState(
+            ("Default", true),
+            ("Secondary", true));
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(state, port);
+
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
+
+        state.CurrentHotkeyProfile = "Secondary";
+        runtime.ObserveExternalState();
+
+        var duplicate = await TryReceiveNonHeartbeatAsync(events, TimeSpan.FromSeconds(1));
+        Assert.Null(duplicate);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
+    }
+
+    [Fact]
+    public void ProfileSwitchWithDifferentGlobalHotkeysAdvancesRuntimeRevision()
+    {
+        var state = CreateState(
+            ("Default", true),
+            ("Secondary", false));
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        state.CurrentHotkeyProfile = "Secondary";
+        runtime.ObserveExternalState();
+
+        Assert.Equal(2UL, runtime.RuntimeRevision);
+    }
+
+    [Fact]
     public void MetadataCustomVariableChangeAdvancesRuntimeRevisionOnly()
     {
         var state = CreateState(out var run);
@@ -120,20 +170,31 @@ public class RuntimeRevisionTests
 
     private static LiveSplitState CreateState(out Run run)
     {
+        return CreateState(out run, ("Default", true), ("Secondary", false));
+    }
+
+    private static LiveSplitState CreateState(params (string Name, bool Enabled)[] profiles)
+    {
+        return CreateState(out _, profiles);
+    }
+
+    private static LiveSplitState CreateState(
+        out Run run,
+        params (string Name, bool Enabled)[] profiles)
+    {
         run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
 
-        var settings = new Settings
+        var hotkeyProfiles = new Dictionary<string, HotkeyProfile>();
+        foreach (var (name, enabled) in profiles)
         {
-            HotkeyProfiles = new Dictionary<string, HotkeyProfile>
-            {
-                ["Default"] = new HotkeyProfile { GlobalHotkeysEnabled = true },
-                ["Secondary"] = new HotkeyProfile { GlobalHotkeysEnabled = false },
-            },
-        };
+            hotkeyProfiles[name] = new HotkeyProfile { GlobalHotkeysEnabled = enabled };
+        }
+
+        var settings = new Settings { HotkeyProfiles = hotkeyProfiles };
 
         var state = TestLiveSplitState.Create(run, settings);
-        state.CurrentHotkeyProfile = "Default";
+        state.CurrentHotkeyProfile = profiles.Length > 0 ? profiles[0].Name : "Default";
         state.CurrentComparison = "Personal Best";
         return state;
     }
@@ -152,5 +213,27 @@ public class RuntimeRevisionTests
         }
 
         throw new TimeoutException($"Did not receive {type}.");
+    }
+
+    private static async Task<BridgeEvent?> TryReceiveNonHeartbeatAsync(
+        WebSocketTestClient client,
+        TimeSpan timeout)
+    {
+        try
+        {
+            while (true)
+            {
+                var data = await client.ReceiveBinaryAsync(timeout);
+                var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
+                if (bridgeEvent.Type != BridgeEventType.EventHeartbeat)
+                {
+                    return bridgeEvent;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
     }
 }

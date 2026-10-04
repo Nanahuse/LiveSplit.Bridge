@@ -209,10 +209,10 @@ namespace LiveSplit.Bridge
                         string.Empty,
                         string.Empty,
                         false,
-                        Array.Empty<KeyValuePair<string, string>>(),
+                        RevisionSnapshotFactory.EmptyMap,
                         Array.Empty<string>(),
                         Array.Empty<SegmentSnapshot>(),
-                        null);
+                        ImageFingerprint.None);
                 }
 
                 var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
@@ -238,7 +238,7 @@ namespace LiveSplit.Bridge
                         segment.Name ?? string.Empty,
                         MapTimeSnapshot(segment.BestSegmentTime),
                         comparisonTimes,
-                        RevisionSnapshotFactory.Identity(segment.Icon)));
+                        ImageFingerprint.FromImage(segment.Icon)));
                 }
 
                 return new RunRevisionState(
@@ -254,7 +254,7 @@ namespace LiveSplit.Bridge
                     variables,
                     comparisons,
                     segments,
-                    RevisionSnapshotFactory.Identity(run.GameIcon));
+                    ImageFingerprint.FromImage(run.GameIcon));
             });
         }
 
@@ -291,19 +291,19 @@ namespace LiveSplit.Bridge
         {
             return InvokeOnUiThread(() =>
             {
-                var run = state.Run;
-                var customVariables = RevisionSnapshotFactory.OrderMap(
-                    run?.Metadata?.CustomVariables
-                        ?.Select(pair => new KeyValuePair<string, string>(
+                var customVariables = state.Run?.Metadata?.CustomVariables;
+                var variables = customVariables == null || customVariables.Count == 0
+                    ? RevisionSnapshotFactory.EmptyMap
+                    : RevisionSnapshotFactory.OrderMap(
+                        customVariables.Select(pair => new KeyValuePair<string, string>(
                             pair.Key,
                             pair.Value?.Value)));
 
                 return new RuntimeRevisionState(
                     (int)state.CurrentTimingMethod,
                     state.CurrentComparison ?? string.Empty,
-                    state.CurrentHotkeyProfile ?? string.Empty,
                     ReadGlobalHotkeysEnabled(state),
-                    customVariables);
+                    variables);
             });
         }
 

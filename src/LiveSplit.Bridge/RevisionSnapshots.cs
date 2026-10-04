@@ -1,9 +1,74 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 
 namespace LiveSplit.Bridge;
+
+/// <summary>
+/// Content based fingerprint of an icon so that different <see cref="Image"/> instances
+/// with identical data compare equal, while a mutated image is detected as a change.
+/// </summary>
+internal readonly struct ImageFingerprint : IEquatable<ImageFingerprint>
+{
+    public static readonly ImageFingerprint None = default;
+
+    private ImageFingerprint(bool hasValue, ulong hash)
+    {
+        HasValue = hasValue;
+        Hash = hash;
+    }
+
+    public bool HasValue { get; }
+    public ulong Hash { get; }
+
+    public bool Equals(ImageFingerprint other)
+    {
+        return HasValue == other.HasValue && (!HasValue || Hash == other.Hash);
+    }
+
+    public override bool Equals(object obj)
+    {
+        return obj is ImageFingerprint other && Equals(other);
+    }
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            return (HasValue.GetHashCode() * 397) ^ Hash.GetHashCode();
+        }
+    }
+
+    public static ImageFingerprint FromImage(Image image)
+    {
+        if (image == null)
+        {
+            return None;
+        }
+
+        using var stream = new MemoryStream();
+        image.Save(stream, ImageFormat.Png);
+        return new ImageFingerprint(true, Fnv1a(stream.GetBuffer(), (int)stream.Length));
+    }
+
+    private static ulong Fnv1a(byte[] buffer, int length)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+
+        var hash = offsetBasis;
+        for (var index = 0; index < length; index++)
+        {
+            hash ^= buffer[index];
+            hash *= prime;
+        }
+
+        return hash;
+    }
+}
 
 internal readonly struct TimeSnapshot : IEquatable<TimeSnapshot>
 {
@@ -43,27 +108,27 @@ internal readonly struct SegmentSnapshot : IEquatable<SegmentSnapshot>
         string name,
         TimeSnapshot bestSegmentTime,
         IReadOnlyList<KeyValuePair<string, TimeSnapshot>> comparisons,
-        int? iconIdentity)
+        ImageFingerprint icon)
     {
         Index = index;
         Name = name;
         BestSegmentTime = bestSegmentTime;
         Comparisons = comparisons;
-        IconIdentity = iconIdentity;
+        Icon = icon;
     }
 
     public uint Index { get; }
     public string Name { get; }
     public TimeSnapshot BestSegmentTime { get; }
     public IReadOnlyList<KeyValuePair<string, TimeSnapshot>> Comparisons { get; }
-    public int? IconIdentity { get; }
+    public ImageFingerprint Icon { get; }
 
     public bool Equals(SegmentSnapshot other)
     {
         return Index == other.Index
             && string.Equals(Name, other.Name, StringComparison.Ordinal)
             && BestSegmentTime.Equals(other.BestSegmentTime)
-            && IconIdentity == other.IconIdentity
+            && Icon.Equals(other.Icon)
             && ComparisonsEqual(Comparisons, other.Comparisons);
     }
 
@@ -79,7 +144,7 @@ internal readonly struct SegmentSnapshot : IEquatable<SegmentSnapshot>
             var hashCode = Index.GetHashCode();
             hashCode = (hashCode * 397) ^ Name.GetHashCode();
             hashCode = (hashCode * 397) ^ BestSegmentTime.GetHashCode();
-            hashCode = (hashCode * 397) ^ IconIdentity.GetHashCode();
+            hashCode = (hashCode * 397) ^ Icon.GetHashCode();
             return hashCode;
         }
     }
@@ -126,7 +191,7 @@ internal readonly struct RunRevisionState : IEquatable<RunRevisionState>
         IReadOnlyList<KeyValuePair<string, string>> variables,
         IReadOnlyList<string> comparisons,
         IReadOnlyList<SegmentSnapshot> segments,
-        int? gameIconIdentity)
+        ImageFingerprint gameIcon)
     {
         GameName = gameName;
         CategoryName = categoryName;
@@ -140,7 +205,7 @@ internal readonly struct RunRevisionState : IEquatable<RunRevisionState>
         Variables = variables;
         Comparisons = comparisons;
         Segments = segments;
-        GameIconIdentity = gameIconIdentity;
+        GameIcon = gameIcon;
     }
 
     public string GameName { get; }
@@ -155,7 +220,7 @@ internal readonly struct RunRevisionState : IEquatable<RunRevisionState>
     public IReadOnlyList<KeyValuePair<string, string>> Variables { get; }
     public IReadOnlyList<string> Comparisons { get; }
     public IReadOnlyList<SegmentSnapshot> Segments { get; }
-    public int? GameIconIdentity { get; }
+    public ImageFingerprint GameIcon { get; }
 
     public bool Equals(RunRevisionState other)
     {
@@ -168,7 +233,7 @@ internal readonly struct RunRevisionState : IEquatable<RunRevisionState>
             && string.Equals(PlatformName, other.PlatformName, StringComparison.Ordinal)
             && string.Equals(RegionName, other.RegionName, StringComparison.Ordinal)
             && UsesEmulator == other.UsesEmulator
-            && GameIconIdentity == other.GameIconIdentity
+            && GameIcon.Equals(other.GameIcon)
             && MapEqual(Variables, other.Variables)
             && ListEqual(Comparisons, other.Comparisons)
             && ListEqual(Segments, other.Segments);
@@ -192,7 +257,7 @@ internal readonly struct RunRevisionState : IEquatable<RunRevisionState>
             hashCode = (hashCode * 397) ^ (PlatformName?.GetHashCode() ?? 0);
             hashCode = (hashCode * 397) ^ (RegionName?.GetHashCode() ?? 0);
             hashCode = (hashCode * 397) ^ UsesEmulator.GetHashCode();
-            hashCode = (hashCode * 397) ^ (GameIconIdentity?.GetHashCode() ?? 0);
+            hashCode = (hashCode * 397) ^ GameIcon.GetHashCode();
             hashCode = (hashCode * 397) ^ Segments.Count;
             return hashCode;
         }
@@ -366,23 +431,23 @@ internal readonly struct AttemptRevisionState : IEquatable<AttemptRevisionState>
 
 internal readonly struct RuntimeRevisionState : IEquatable<RuntimeRevisionState>
 {
+    private static readonly IReadOnlyList<KeyValuePair<string, string>> EmptyVariables =
+        Array.Empty<KeyValuePair<string, string>>();
+
     public RuntimeRevisionState(
         int timingMethod,
         string currentComparison,
-        string currentHotkeyProfile,
         bool globalHotkeysEnabled,
         IReadOnlyList<KeyValuePair<string, string>> customVariables)
     {
         TimingMethod = timingMethod;
         CurrentComparison = currentComparison;
-        CurrentHotkeyProfile = currentHotkeyProfile;
         GlobalHotkeysEnabled = globalHotkeysEnabled;
-        CustomVariables = customVariables;
+        CustomVariables = customVariables ?? EmptyVariables;
     }
 
     public int TimingMethod { get; }
     public string CurrentComparison { get; }
-    public string CurrentHotkeyProfile { get; }
     public bool GlobalHotkeysEnabled { get; }
     public IReadOnlyList<KeyValuePair<string, string>> CustomVariables { get; }
 
@@ -390,7 +455,6 @@ internal readonly struct RuntimeRevisionState : IEquatable<RuntimeRevisionState>
     {
         return TimingMethod == other.TimingMethod
             && string.Equals(CurrentComparison, other.CurrentComparison, StringComparison.Ordinal)
-            && string.Equals(CurrentHotkeyProfile, other.CurrentHotkeyProfile, StringComparison.Ordinal)
             && GlobalHotkeysEnabled == other.GlobalHotkeysEnabled
             && MapEqual(CustomVariables, other.CustomVariables);
     }
@@ -406,7 +470,6 @@ internal readonly struct RuntimeRevisionState : IEquatable<RuntimeRevisionState>
         {
             var hashCode = TimingMethod.GetHashCode();
             hashCode = (hashCode * 397) ^ (CurrentComparison?.GetHashCode() ?? 0);
-            hashCode = (hashCode * 397) ^ (CurrentHotkeyProfile?.GetHashCode() ?? 0);
             hashCode = (hashCode * 397) ^ GlobalHotkeysEnabled.GetHashCode();
             return hashCode;
         }
@@ -441,22 +504,20 @@ internal readonly struct RuntimeRevisionState : IEquatable<RuntimeRevisionState>
 
 internal static class RevisionSnapshotFactory
 {
+    public static IReadOnlyList<KeyValuePair<string, string>> EmptyMap { get; } =
+        Array.Empty<KeyValuePair<string, string>>();
+
     public static IReadOnlyList<KeyValuePair<string, string>> OrderMap(
         IEnumerable<KeyValuePair<string, string>> source)
     {
         if (source == null)
         {
-            return Array.Empty<KeyValuePair<string, string>>();
+            return EmptyMap;
         }
 
         return source
             .OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => new KeyValuePair<string, string>(pair.Key, pair.Value ?? string.Empty))
             .ToList();
-    }
-
-    public static int? Identity(Image image)
-    {
-        return image == null ? (int?)null : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(image);
     }
 }

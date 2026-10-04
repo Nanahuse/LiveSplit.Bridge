@@ -11,6 +11,13 @@ internal sealed class BridgeRuntime : IDisposable
     private const uint ProtocolVersion = 2;
     internal static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(1);
 
+    // Run / Attempt content is comparatively expensive to capture, so it is checked on
+    // their dedicated events and by a low frequency fallback rather than every frame.
+    internal static readonly TimeSpan ContentFallbackInterval = TimeSpan.FromMilliseconds(500);
+
+    private static readonly long ContentFallbackIntervalTicks =
+        ContentFallbackInterval.Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond;
+
     private readonly LiveSplitAdapter adapter;
     private readonly WebSocketTransport transport;
     private readonly EventSequence eventSequence = new();
@@ -26,6 +33,7 @@ internal sealed class BridgeRuntime : IDisposable
     private RunRevisionState observedRunState;
     private AttemptRevisionState observedAttemptState;
     private RuntimeRevisionState observedRuntimeState;
+    private long lastContentFallbackTimestamp;
     private int disposed;
 
     public BridgeRuntime(LiveSplitState state, int webSocketPort)
@@ -43,6 +51,8 @@ internal sealed class BridgeRuntime : IDisposable
         runRevision = 1;
         attemptRevision = 1;
         runtimeRevision = 1;
+        // Allow the first fallback check immediately; subsequent checks are throttled.
+        lastContentFallbackTimestamp = 0;
 
         transport = new WebSocketTransport(
             port,
@@ -176,7 +186,8 @@ internal sealed class BridgeRuntime : IDisposable
                 {
                     // Run content can change after the operation's own event has been raised
                     // (for example Reset updates PB / Best Segments in FixSplits afterwards).
-                    DetectAndPublishContentChanges();
+                    DetectRunAndAttemptChanges();
+                    DetectRuntimeChange();
 
                     result.TimerState = BuildCurrentTimerState();
                 }
@@ -197,7 +208,8 @@ internal sealed class BridgeRuntime : IDisposable
 
                 if (execution.Response.Success)
                 {
-                    DetectAndPublishContentChanges();
+                    DetectRunAndAttemptChanges();
+                    DetectRuntimeChange();
 
                     execution.Response.TimerState = BuildCurrentTimerState();
                 }
@@ -265,10 +277,59 @@ internal sealed class BridgeRuntime : IDisposable
         PublishStateChangeEvent(eventType);
     }
 
+    /// <summary>
+    /// High frequency observation invoked on every LiveSplit update. Only lightweight
+    /// state (Game Time and RuntimeState) is captured here. Run / Attempt content is
+    /// handled by <see cref="ObserveContentState"/> on a low frequency fallback.
+    /// </summary>
     internal void ObserveExternalState()
     {
         DetectGameTimeChange();
-        DetectAndPublishContentChanges();
+        DetectRuntimeChange();
+    }
+
+    /// <summary>
+    /// Low frequency fallback that catches Run / Attempt changes which did not flow
+    /// through a dedicated LiveSplit event.
+    /// </summary>
+    internal void ObserveContentState()
+    {
+        if (!TryEnterContentFallbackWindow())
+        {
+            return;
+        }
+
+        DetectRunAndAttemptChanges();
+    }
+
+    private void DetectRuntimeChange()
+    {
+        if (DetectRuntimeChangeAndReport())
+        {
+            PublishEvent(BridgeEventType.EventRuntimeChanged);
+        }
+    }
+
+    private void DetectRunAndAttemptChanges()
+    {
+        var changes = ApplyRunAndAttemptRevisionChanges();
+
+        if (changes.Run)
+        {
+            PublishEvent(BridgeEventType.EventRunChanged);
+        }
+    }
+
+    private bool TryEnterContentFallbackWindow()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var previous = Interlocked.Read(ref lastContentFallbackTimestamp);
+        if (now - previous < ContentFallbackIntervalTicks)
+        {
+            return false;
+        }
+
+        return Interlocked.CompareExchange(ref lastContentFallbackTimestamp, now, previous) == previous;
     }
 
     private void DetectGameTimeChange()
@@ -323,25 +384,21 @@ internal sealed class BridgeRuntime : IDisposable
         public bool Runtime { get; }
     }
 
-    private ContentChanges ApplyContentRevisionChanges()
+    private ContentChanges ApplyRunAndAttemptRevisionChanges()
     {
         var run = adapter.CaptureRunRevisionState();
         var attempt = adapter.CaptureAttemptRevisionState();
-        var runtime = adapter.CaptureRuntimeRevisionState();
 
         bool runChanged;
         bool attemptChanged;
-        bool runtimeChanged;
 
         lock (observedStateLock)
         {
             runChanged = !observedRunState.Equals(run);
             attemptChanged = !observedAttemptState.Equals(attempt);
-            runtimeChanged = !observedRuntimeState.Equals(runtime);
 
             observedRunState = run;
             observedAttemptState = attempt;
-            observedRuntimeState = runtime;
         }
 
         if (attemptChanged)
@@ -354,27 +411,7 @@ internal sealed class BridgeRuntime : IDisposable
             IncrementRunRevision();
         }
 
-        if (runtimeChanged)
-        {
-            IncrementRuntimeRevision();
-        }
-
-        return new ContentChanges(runChanged, attemptChanged, runtimeChanged);
-    }
-
-    private void DetectAndPublishContentChanges()
-    {
-        var changes = ApplyContentRevisionChanges();
-
-        if (changes.Run)
-        {
-            PublishEvent(BridgeEventType.EventRunChanged);
-        }
-
-        if (changes.Runtime)
-        {
-            PublishEvent(BridgeEventType.EventRuntimeChanged);
-        }
+        return new ContentChanges(runChanged, attemptChanged, false);
     }
 
     private void PublishStateChangeEvent(BridgeEventType type)
@@ -384,20 +421,39 @@ internal sealed class BridgeRuntime : IDisposable
         // Refresh attempt / run / runtime revisions before publishing so the event's
         // TimerState carries the updated revision values. Run / runtime changes are
         // published as their own events after the primary (timer / game time) event.
-        var changes = ApplyContentRevisionChanges();
+        var contentChanges = ApplyRunAndAttemptRevisionChanges();
+        var runtimeChanged = DetectRuntimeChangeAndReport();
 
         IncrementStateRevision();
         PublishEvent(type);
 
-        if (changes.Run)
+        if (contentChanges.Run)
         {
             PublishEvent(BridgeEventType.EventRunChanged);
         }
 
-        if (changes.Runtime)
+        if (runtimeChanged)
         {
             PublishEvent(BridgeEventType.EventRuntimeChanged);
         }
+    }
+
+    private bool DetectRuntimeChangeAndReport()
+    {
+        var current = adapter.CaptureRuntimeRevisionState();
+
+        lock (observedStateLock)
+        {
+            if (observedRuntimeState.Equals(current))
+            {
+                return false;
+            }
+
+            observedRuntimeState = current;
+        }
+
+        IncrementRuntimeRevision();
+        return true;
     }
 
     private void PublishEvent(BridgeEventType type)
@@ -524,15 +580,16 @@ internal sealed class BridgeRuntime : IDisposable
     {
         RecordCurrentGameTimeState();
 
-        // Run content (and possibly runtime custom variables) determine the revision;
-        // no state_revision is bumped for run / runtime only changes.
-        DetectAndPublishContentChanges();
+        // Run content determines run_revision; runtime custom variables are handled by
+        // the high frequency runtime observation. No state_revision is bumped for run
+        // only changes.
+        DetectRunAndAttemptChanges();
     }
 
     private void StateComparisonRenamed(object sender, EventArgs args)
     {
         RecordCurrentGameTimeState();
-        DetectAndPublishContentChanges();
+        DetectRunAndAttemptChanges();
     }
 
     private static Response MakeErrorResponse(Request request, int code, string message)

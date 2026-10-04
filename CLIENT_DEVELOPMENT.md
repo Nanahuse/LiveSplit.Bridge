@@ -343,6 +343,14 @@ EVENT_HEARTBEAT
 Runtime状態の変更は`EVENT_RUNTIME_CHANGED`で通知されます。詳細はRPCで再取得して
 ください。
 
+`EVENT_RUN_CHANGED` / `EVENT_RUNTIME_CHANGED`は、対応するStateの内容が実際に変化した
+ときだけ発行されます。LiveSplit側の操作イベントを伴わない変更（例: Auto Splitterによる
+Custom Variable変更、Run Editor以外の経路によるRun変更）は、Bridge内部の監視によって
+検出され、短い遅延の後に発行されることがあります。Run / Attemptの内容変更はLiveSplitの
+描画更新ごとではなく、専用イベントと低頻度のフォールバック監視で検出します。Iconの
+変更は、公開される`RunState`と同じPNGデータの内容で判定するため、同じ内容の別インスタンス
+では`EVENT_RUN_CHANGED`は発行されません。
+
 ### `event_sequence`
 
 `event_sequence`は、クライアントが受信すべきイベントの欠落を検出するための単調増加番号です。
