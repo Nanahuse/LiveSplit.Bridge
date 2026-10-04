@@ -200,19 +200,30 @@ state_revisionが同じ
 
 ### `run_revision`
 
-`get_run`の返却内容が変更されたことを表します。想定例は次のとおりです。
+`get_run`の返却内容が変更されたことを表します。Run定義やRunに属する時間情報など、
+`RunState`の内容が実際に変化した時だけ増加します。Run編集操作だけでなく、Resetによって
+Personal Best / Best Segment / 生成Comparisonが更新された場合も増加します。想定例は
+次のとおりです。
 
 - Game / Category変更
-- Segment構成変更
+- Segment構成変更 / Segment name変更
 - Metadata変更
-- PB更新
-- Best Segment更新
-- 生成Comparison更新
-- Icon変更
+- Comparison一覧変更 / Comparison Time変更
+- PB更新 / Best Segment更新 / 生成Comparison更新
+- Game icon / Segment icon変更
+- file path / layout path変更
+- ResetによるPB / Best Segment / 生成Comparison更新
+
+Run内容が変化していない操作では`run_revision`は増加しません。`run_revision`が増加した
+場合は`EVENT_RUN_CHANGED`が発行され、そのイベントの`TimerState`には更新後の
+`run_revision`が入ります。Run Metadata Custom Variableの現在値は`RunState`に含まれない
+ため、その変更だけでは`run_revision`は増加しません。
 
 ### `attempt_revision`
 
-`get_attempt`の返却内容が変更されたことを表します。想定例は次のとおりです。
+`get_attempt`の返却内容が変更されたことを表します。`attempt_count`、`completed_count`、
+Segmentごとの`split_time`、Segmentごとの`custom_variables`のいずれかが変化した時だけ
+増加します。想定例は次のとおりです。
 
 - Start
 - Split
@@ -220,18 +231,43 @@ state_revisionが同じ
 - Undo
 - Reset
 
+Timer操作後に`get_attempt`の内容が変化していない場合は、`attempt_revision`は増加しません。
+
 ### `runtime_revision`
 
 `get_runtime_state`の返却内容が変更されたことを表します。想定例は次のとおりです。
 
 - Current Comparison変更
 - Timing Method変更
+- Current Hotkey Profile変更によって`global_hotkeys_enabled`が変化した場合
 - Global Hotkeys状態変更
 - Metadata Custom Variable変更
 
+`Current Hotkey Profile`の名前そのものは`RuntimeState`に含まれません。そのため、同じ
+`global_hotkeys_enabled`を持つProfile間の切替では`RuntimeState`の内容は変化せず、
+`runtime_revision`も増加しません。Profile切替によって`global_hotkeys_enabled`が変化した
+場合だけ`runtime_revision`が増加します。
+
+`runtime_revision`が増加した場合は`EVENT_RUNTIME_CHANGED`が発行され、そのイベントの
+`TimerState`には更新後の`runtime_revision`が入ります。
+
 クライアントは`TimerState`に含まれる`run_revision` / `attempt_revision` /
 `runtime_revision`を監視し、キャッシュ済みの値から変化した場合だけ対応するRPCを
-呼び出してください。変化していなければ再取得は不要です。
+呼び出してください。変化していなければ再取得は不要です。各revisionは対応する
+`get_run` / `get_attempt` / `get_runtime_state`の返却内容と一致するため、revisionだけを
+監視すれば必要なStateを過不足なく再取得できます。
+
+`get_run` / `get_attempt` / `get_runtime_state`は、返却するStateの内容とrevisionを
+同一のcapture（同じLiveSplit状態の読み取り）から生成します。Bridgeの監視がまだ変更を
+検出していない場合でも、返却されるStateの内容と対応するrevisionは常に一致し、内容を
+読んだ後にrevision用の状態を読み直す競合窓はありません。`attach`も返却前にすべての
+revisionを同期するため、`attach`の`TimerState`と直後の詳細RPCのrevisionが整合します。
+同期によってrevisionが更新された場合は、対応する`EVENT_RUN_CHANGED` /
+`EVENT_RUNTIME_CHANGED`が発行されます。
+
+`get_timer_state`は高頻度利用のためこの同期を行いません。Run / Attemptなどの詳細な
+変更検出は、専用イベント、低頻度のフォールバック監視、および詳細RPC取得時の同期で
+行います。
 
 ## クライアント利用モデル
 
@@ -324,6 +360,14 @@ EVENT_HEARTBEAT
 `EVENT_STATE_SNAPSHOT`は削除しました。Runの変更は`EVENT_RUN_CHANGED`、
 Runtime状態の変更は`EVENT_RUNTIME_CHANGED`で通知されます。詳細はRPCで再取得して
 ください。
+
+`EVENT_RUN_CHANGED` / `EVENT_RUNTIME_CHANGED`は、対応するStateの内容が実際に変化した
+ときだけ発行されます。LiveSplit側の操作イベントを伴わない変更（例: Auto Splitterによる
+Custom Variable変更、Run Editor以外の経路によるRun変更）は、Bridge内部の監視によって
+検出され、短い遅延の後に発行されることがあります。Run / Attemptの内容変更はLiveSplitの
+描画更新ごとではなく、専用イベントと低頻度のフォールバック監視で検出します。Iconの
+変更は、公開される`RunState`と同じPNGデータの内容で判定するため、同じ内容の別インスタンス
+では`EVENT_RUN_CHANGED`は発行されません。
 
 ### `event_sequence`
 

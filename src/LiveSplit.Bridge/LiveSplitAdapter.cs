@@ -23,8 +23,15 @@ namespace LiveSplit.Bridge
     {
         private readonly LiveSplitState state;
         private readonly TimerModel timerModel;
+        private long uiThreadDispatchCount;
 
         public event Action<GameTimeOperationType> GameTimeChanged;
+
+        /// <summary>
+        /// Number of times LiveSplit state has been read on the UI thread. Used by tests
+        /// to prove detailed RPCs capture state in a single dispatch.
+        /// </summary>
+        internal long UiThreadDispatchCount => System.Threading.Interlocked.Read(ref uiThreadDispatchCount);
 
         public LiveSplitAdapter(LiveSplitState state)
         {
@@ -71,125 +78,301 @@ namespace LiveSplit.Bridge
 
         public RunState BuildRunState(ulong runRevision, ulong sessionId)
         {
-            return InvokeOnUiThread(() =>
-            {
-                var runState = new RunState
-                {
-                    SessionId = sessionId,
-                    RunRevision = runRevision,
-                };
-
-                var run = state.Run;
-                if (run == null)
-                {
-                    return runState;
-                }
-
-                runState.GameName = run.GameName ?? string.Empty;
-                runState.CategoryName = run.CategoryName ?? string.Empty;
-                runState.OffsetTicks = run.Offset.Ticks;
-
-                if (!string.IsNullOrEmpty(run.FilePath))
-                {
-                    runState.FilePath = run.FilePath;
-                }
-
-                if (!string.IsNullOrEmpty(run.LayoutPath))
-                {
-                    runState.LayoutPath = run.LayoutPath;
-                }
-
-                runState.Metadata = BuildRunMetadata(run.Metadata);
-
-                var gameIcon = MapImage(run.GameIcon);
-                if (gameIcon != null)
-                {
-                    runState.GameIcon = gameIcon;
-                }
-
-                var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
-                    .Distinct()
-                    .ToList();
-                runState.Comparisons.Add(comparisons);
-
-                for (var index = 0; index < run.Count; index++)
-                {
-                    runState.Segments.Add(BuildSegmentInfo(run[index], index, comparisons));
-                }
-
-                return runState;
-            });
+            return InvokeOnUiThread(() => BuildRunStateCore(state.Run, runRevision, sessionId));
         }
 
         public AttemptState BuildAttemptState(ulong attemptRevision, ulong sessionId)
         {
-            return InvokeOnUiThread(() =>
-            {
-                var attemptState = new AttemptState
-                {
-                    SessionId = sessionId,
-                    AttemptRevision = attemptRevision,
-                };
-
-                var run = state.Run;
-                if (run == null)
-                {
-                    return attemptState;
-                }
-
-                attemptState.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
-                attemptState.CompletedCount = run.AttemptHistory == null
-                    ? 0U
-                    : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
-
-                for (var index = 0; index < run.Count; index++)
-                {
-                    var segment = run[index];
-                    var attemptSegment = new AttemptSegment
-                    {
-                        Index = (uint)index,
-                        SplitTime = MapTime(segment.SplitTime),
-                    };
-
-                    if (segment.CustomVariableValues != null)
-                    {
-                        foreach (var pair in segment.CustomVariableValues)
-                        {
-                            attemptSegment.CustomVariables[pair.Key] = pair.Value ?? string.Empty;
-                        }
-                    }
-
-                    attemptState.Segments.Add(attemptSegment);
-                }
-
-                return attemptState;
-            });
+            return InvokeOnUiThread(() => BuildAttemptStateCore(state.Run, attemptRevision, sessionId));
         }
 
         public RuntimeState BuildRuntimeState(ulong runtimeRevision, ulong sessionId)
         {
+            return InvokeOnUiThread(() => BuildRuntimeStateCore(state.Run, runtimeRevision, sessionId));
+        }
+
+        public RunRevisionState CaptureRunRevisionState()
+        {
+            return InvokeOnUiThread(() => BuildRunRevisionStateCore(state.Run));
+        }
+
+        public AttemptRevisionState CaptureAttemptRevisionState()
+        {
+            return InvokeOnUiThread(() => BuildAttemptRevisionStateCore(state.Run));
+        }
+
+        public RuntimeRevisionState CaptureRuntimeRevisionState()
+        {
+            return InvokeOnUiThread(() => BuildRuntimeRevisionStateCore(state.Run));
+        }
+
+        /// <summary>
+        /// Captures the revision comparison data and the response State in a single
+        /// UI-thread read so both describe the same LiveSplit state.
+        /// </summary>
+        public CapturedRunState CaptureRunForResponse(ulong sessionId)
+        {
             return InvokeOnUiThread(() =>
             {
-                var runtimeState = new RuntimeState
+                // Read the run reference exactly once; both the revision comparison data
+                // and the response State are built from this single capture.
+                var run = state.Run;
+                return new CapturedRunState(
+                    BuildRunRevisionStateCore(run),
+                    BuildRunStateCore(run, 0, sessionId));
+            });
+        }
+
+        public CapturedAttemptState CaptureAttemptForResponse(ulong sessionId)
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var run = state.Run;
+                return new CapturedAttemptState(
+                    BuildAttemptRevisionStateCore(run),
+                    BuildAttemptStateCore(run, 0, sessionId));
+            });
+        }
+
+        public CapturedRuntimeState CaptureRuntimeForResponse(ulong sessionId)
+        {
+            return InvokeOnUiThread(() =>
+            {
+                var run = state.Run;
+                return new CapturedRuntimeState(
+                    BuildRuntimeRevisionStateCore(run),
+                    BuildRuntimeStateCore(run, 0, sessionId));
+            });
+        }
+
+        private RunState BuildRunStateCore(IRun run, ulong runRevision, ulong sessionId)
+        {
+            var runState = new RunState
+            {
+                SessionId = sessionId,
+                RunRevision = runRevision,
+            };
+
+            if (run == null)
+            {
+                return runState;
+            }
+
+            runState.GameName = run.GameName ?? string.Empty;
+            runState.CategoryName = run.CategoryName ?? string.Empty;
+            runState.OffsetTicks = run.Offset.Ticks;
+
+            if (!string.IsNullOrEmpty(run.FilePath))
+            {
+                runState.FilePath = run.FilePath;
+            }
+
+            if (!string.IsNullOrEmpty(run.LayoutPath))
+            {
+                runState.LayoutPath = run.LayoutPath;
+            }
+
+            runState.Metadata = BuildRunMetadata(run.Metadata);
+
+            var gameIcon = MapImage(run.GameIcon);
+            if (gameIcon != null)
+            {
+                runState.GameIcon = gameIcon;
+            }
+
+            var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
+                .Distinct()
+                .ToList();
+            runState.Comparisons.Add(comparisons);
+
+            for (var index = 0; index < run.Count; index++)
+            {
+                runState.Segments.Add(BuildSegmentInfo(run[index], index, comparisons));
+            }
+
+            return runState;
+        }
+
+        private AttemptState BuildAttemptStateCore(IRun run, ulong attemptRevision, ulong sessionId)
+        {
+            var attemptState = new AttemptState
+            {
+                SessionId = sessionId,
+                AttemptRevision = attemptRevision,
+            };
+
+            if (run == null)
+            {
+                return attemptState;
+            }
+
+            attemptState.AttemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
+            attemptState.CompletedCount = run.AttemptHistory == null
+                ? 0U
+                : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
+
+            for (var index = 0; index < run.Count; index++)
+            {
+                var segment = run[index];
+                var attemptSegment = new AttemptSegment
                 {
-                    SessionId = sessionId,
-                    RuntimeRevision = runtimeRevision,
-                    CurrentTimingMethod = MapTimingMethod(state.CurrentTimingMethod),
-                    CurrentComparison = state.CurrentComparison ?? string.Empty,
-                    GlobalHotkeysEnabled = ReadGlobalHotkeysEnabled(state),
+                    Index = (uint)index,
+                    SplitTime = MapTime(segment.SplitTime),
                 };
 
-                var run = state.Run;
-                if (run?.Metadata?.CustomVariables != null)
+                if (segment.CustomVariableValues != null)
                 {
-                    foreach (var pair in run.Metadata.CustomVariables)
+                    foreach (var pair in segment.CustomVariableValues)
                     {
-                        runtimeState.CustomVariables[pair.Key] = pair.Value?.Value ?? string.Empty;
+                        attemptSegment.CustomVariables[pair.Key] = pair.Value ?? string.Empty;
                     }
                 }
 
-                return runtimeState;
-            });
+                attemptState.Segments.Add(attemptSegment);
+            }
+
+            return attemptState;
+        }
+
+        private RuntimeState BuildRuntimeStateCore(IRun run, ulong runtimeRevision, ulong sessionId)
+        {
+            var runtimeState = new RuntimeState
+            {
+                SessionId = sessionId,
+                RuntimeRevision = runtimeRevision,
+                CurrentTimingMethod = MapTimingMethod(state.CurrentTimingMethod),
+                CurrentComparison = state.CurrentComparison ?? string.Empty,
+                GlobalHotkeysEnabled = ReadGlobalHotkeysEnabled(state),
+            };
+
+            if (run?.Metadata?.CustomVariables != null)
+            {
+                foreach (var pair in run.Metadata.CustomVariables)
+                {
+                    runtimeState.CustomVariables[pair.Key] = pair.Value?.Value ?? string.Empty;
+                }
+            }
+
+            return runtimeState;
+        }
+
+        private RunRevisionState BuildRunRevisionStateCore(IRun run)
+        {
+            if (run == null)
+            {
+                return new RunRevisionState(
+                    string.Empty,
+                    string.Empty,
+                    0,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    RevisionSnapshotFactory.EmptyMap,
+                    Array.Empty<string>(),
+                    Array.Empty<SegmentSnapshot>(),
+                    ImageFingerprint.None);
+            }
+
+            var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
+                .Distinct()
+                .ToList();
+
+            var variables = RevisionSnapshotFactory.OrderMap(
+                run.Metadata?.VariableValueNames
+                    ?.Select(pair => new KeyValuePair<string, string>(pair.Key, pair.Value)));
+
+            var segments = new List<SegmentSnapshot>(run.Count);
+            for (var index = 0; index < run.Count; index++)
+            {
+                var segment = run[index];
+                var comparisonTimes = comparisons
+                    .Select(comparison => new KeyValuePair<string, TimeSnapshot>(
+                        comparison,
+                        MapTimeSnapshot(segment.Comparisons, comparison)))
+                    .ToList();
+
+                segments.Add(new SegmentSnapshot(
+                    (uint)index,
+                    segment.Name ?? string.Empty,
+                    MapTimeSnapshot(segment.BestSegmentTime),
+                    comparisonTimes,
+                    ImageFingerprint.FromImage(segment.Icon)));
+            }
+
+            return new RunRevisionState(
+                run.GameName ?? string.Empty,
+                run.CategoryName ?? string.Empty,
+                run.Offset.Ticks,
+                run.FilePath ?? string.Empty,
+                run.LayoutPath ?? string.Empty,
+                run.Metadata?.RunID ?? string.Empty,
+                run.Metadata?.PlatformName ?? string.Empty,
+                run.Metadata?.RegionName ?? string.Empty,
+                run.Metadata?.UsesEmulator ?? false,
+                variables,
+                comparisons,
+                segments,
+                ImageFingerprint.FromImage(run.GameIcon));
+        }
+
+        private AttemptRevisionState BuildAttemptRevisionStateCore(IRun run)
+        {
+            if (run == null)
+            {
+                return new AttemptRevisionState(0, 0, Array.Empty<AttemptSegmentSnapshot>());
+            }
+
+            var attemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
+            var completedCount = run.AttemptHistory == null
+                ? 0U
+                : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
+
+            var segments = new List<AttemptSegmentSnapshot>(run.Count);
+            for (var index = 0; index < run.Count; index++)
+            {
+                var segment = run[index];
+                segments.Add(new AttemptSegmentSnapshot(
+                    (uint)index,
+                    MapTimeSnapshot(segment.SplitTime),
+                    RevisionSnapshotFactory.OrderMap(segment.CustomVariableValues)));
+            }
+
+            return new AttemptRevisionState(attemptCount, completedCount, segments);
+        }
+
+        private RuntimeRevisionState BuildRuntimeRevisionStateCore(IRun run)
+        {
+            var customVariables = run?.Metadata?.CustomVariables;
+            var variables = customVariables == null || customVariables.Count == 0
+                ? RevisionSnapshotFactory.EmptyMap
+                : RevisionSnapshotFactory.OrderMap(
+                    customVariables.Select(pair => new KeyValuePair<string, string>(
+                        pair.Key,
+                        pair.Value?.Value)));
+
+            return new RuntimeRevisionState(
+                (int)state.CurrentTimingMethod,
+                state.CurrentComparison ?? string.Empty,
+                ReadGlobalHotkeysEnabled(state),
+                variables);
+        }
+
+        private static TimeSnapshot MapTimeSnapshot(Time time)
+        {
+            return new TimeSnapshot(time.RealTime?.Ticks, time.GameTime?.Ticks);
+        }
+
+        private static TimeSnapshot MapTimeSnapshot(IComparisons comparisons, string name)
+        {
+            if (comparisons != null && comparisons.TryGetValue(name, out var time))
+            {
+                return MapTimeSnapshot(time);
+            }
+
+            return new TimeSnapshot(null, null);
         }
 
         private static bool ReadGlobalHotkeysEnabled(LiveSplitState state)
@@ -452,6 +635,8 @@ namespace LiveSplit.Bridge
 
         private T InvokeOnUiThread<T>(Func<T> callback)
         {
+            System.Threading.Interlocked.Increment(ref uiThreadDispatchCount);
+
             if (state.Form.InvokeRequired)
             {
                 return (T)state.Form.Invoke(callback);

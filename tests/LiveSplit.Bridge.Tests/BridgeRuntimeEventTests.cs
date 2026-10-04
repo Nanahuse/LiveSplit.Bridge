@@ -51,8 +51,10 @@ public class BridgeRuntimeEventTests
         using var harness = await EventHarness.CreateAsync();
         await harness.WaitForHeartbeatAsync();
 
+        harness.State.Run.GameName = "First Change";
         harness.State.CallRunManuallyModified();
         var first = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
+        harness.State.Run.GameName = "Second Change";
         harness.State.CallRunManuallyModified();
         var second = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
@@ -90,6 +92,7 @@ public class BridgeRuntimeEventTests
             Attach = new AttachRequest(),
         });
 
+        harness.State.Run.GameName = "Session Change";
         harness.State.CallRunManuallyModified();
         var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
