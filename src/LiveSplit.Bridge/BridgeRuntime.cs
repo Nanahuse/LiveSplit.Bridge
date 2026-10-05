@@ -445,7 +445,25 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void DetectGameTimeChange()
     {
+        // A Bridge control mutation reports its own GameTime changes through
+        // AdapterGameTimeChanged. Skip external monitoring while one is running so
+        // the same change is not published twice.
+        var generationBefore = ReadControlGeneration();
+        if ((generationBefore & 1) != 0)
+        {
+            return;
+        }
+
         var current = adapter.CaptureGameTimeRevisionState();
+
+        var generationAfter = ReadControlGeneration();
+        if (generationBefore != generationAfter || (generationAfter & 1) != 0)
+        {
+            // A control mutation overlapped the capture. Discard the observation and
+            // do not record it as observed, so a later stable Update still detects it.
+            return;
+        }
+
         GameTimeRevisionState previous;
 
         lock (observedStateLock)
@@ -549,6 +567,8 @@ internal sealed class BridgeRuntime : IDisposable
 
     internal Action? SplitBarrier { get; set; }
 
+    internal Action? GameTimeBarrier { get; set; }
+
     internal ulong StateRevision => ReadStateRevision();
 
     internal ulong RunRevision => projectionStore.Current.RunRevision;
@@ -559,6 +579,8 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void AdapterGameTimeChanged(GameTimeOperationType operation)
     {
+        GameTimeBarrier?.Invoke();
+
         var eventType = operation switch
         {
             GameTimeOperationType.Initialize => BridgeEventType.EventGameTimeInitialized,

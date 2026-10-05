@@ -21,6 +21,13 @@ public class EventConsistencyTests
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
+        // Start collecting concurrently, before the burst, so every published event
+        // is drained from the socket while it is produced. The receiver signals once
+        // it is about to read, so the burst never outruns the receiver.
+        using var receiverStarted = new ManualResetEventSlim(false);
+        var receiver = Task.Run(() => ReceiveRunChangedAsync(events, commits, receiverStarted));
+        Assert.True(receiverStarted.Wait(TimeSpan.FromSeconds(5)), "receiver did not start.");
+
         for (var iteration = 0; iteration < commits; iteration++)
         {
             run.GameName = $"Change {iteration}";
@@ -28,22 +35,12 @@ public class EventConsistencyTests
             runtime.Update();
         }
 
-        var received = new List<BridgeEvent>();
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (received.Count < commits && DateTime.UtcNow < deadline)
-        {
-            var data = await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(3));
-            var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
-            if (bridgeEvent.Type == BridgeEventType.EventRunChanged)
-            {
-                received.Add(bridgeEvent);
-            }
-        }
+        var received = await receiver;
 
         Assert.Equal(commits, received.Count);
 
         // event_sequence and the revision captured in its TimerState describe the
-        // same logical point, so both increase in lockstep without gaps.
+        // same logical point, so both increase in lockstep without gaps or duplicates.
         for (var index = 0; index < received.Count; index++)
         {
             Assert.Equal((ulong)(index + 1), received[index].EventSequence);
@@ -68,6 +65,27 @@ public class EventConsistencyTests
         runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
+    }
+
+    private static async Task<List<BridgeEvent>> ReceiveRunChangedAsync(
+        WebSocketTestClient client,
+        int count,
+        ManualResetEventSlim started)
+    {
+        var received = new List<BridgeEvent>(count);
+        started.Set();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        while (received.Count < count && DateTime.UtcNow < deadline)
+        {
+            var data = await client.ReceiveBinaryAsync(TimeSpan.FromSeconds(5));
+            var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
+            if (bridgeEvent.Type == BridgeEventType.EventRunChanged)
+            {
+                received.Add(bridgeEvent);
+            }
+        }
+
+        return received;
     }
 
     private static async Task<BridgeEvent> ReceiveUntilAsync(WebSocketTestClient client, BridgeEventType type)

@@ -452,6 +452,53 @@ public class UiOperationTests
     }
 
     [Fact]
+    public async Task GameTimeOperationOverlappingUpdateDoesNotPublishDuplicateEvent()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(ui.Port));
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.GameTimeBarrier = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        var stateRevisionBefore = ui.Runtime.StateRevision;
+
+        var operationTask = rpc.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Initialize },
+        }, TimeSpan.FromSeconds(15));
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "GameTime mutation did not reach the barrier.");
+
+        // The control mutation is in flight. A concurrent Update must treat the
+        // in-progress mutation as Bridge-owned and not as an external GameTime change.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        Assert.Equal(stateRevisionBefore, ui.Runtime.StateRevision);
+
+        release.Set();
+        var response = await operationTask;
+        Assert.True(response.Operation.Success, response.Operation.Message);
+        Assert.True(response.Operation.TimerState.IsGameTimeInitialized);
+
+        // Exactly one GameTime event is published for the change.
+        var initialized = await ReadEventAsync(events, BridgeEventType.EventGameTimeInitialized);
+        Assert.True(initialized.EventSequence > 0);
+        Assert.Equal(stateRevisionBefore + 1, ui.Runtime.StateRevision);
+
+        // The next stable Update must not publish the same change again.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+    }
+
+    [Fact]
     public async Task RenamePublishesRunThenRuntimeWithoutDuplicateRunEvent()
     {
         using var ui = await UiHost.CreateAsync();

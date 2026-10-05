@@ -319,12 +319,16 @@ Projectionのcommit完了後に発行されます。Resetの`FixSplits`途中な
 正常に返します。中間Stateや一時エラーは返しません。新しいProjectionがcommitされると、対応する
 Projection changed eventで通知されます。
 
-Bridge Control PlaneのTimer / GameTime operation中はProjectionをcommitしません。また、Projection
-構築の開始から完了までの間にControl mutationが開始または終了した場合、その構築結果は破棄され、
-次の`Component.Update()`が安定した状態から再構築します。破棄された更新はdirtyとして保持され、
-次回のUpdateで再試行されます。この競合検出はProjection producer側だけで完結し、Query側に
-generation確認やretryはありません。Control mutationと競合した中間Stateが完成済みProjectionと
-して公開されることはありません。
+Projection構築の開始から完了までの間にBridge Control mutationが開始または終了した場合、その
+Projectionはcommitされません。破棄された更新はdirtyとして保持され、次の`Component.Update()`が
+安定した状態から再構築します。
+
+Control mutation開始前に完成した安定Projectionは、mutation開始とcommitが近接した場合でも公開
+されることがあります。そのProjectionはmutation途中のStateではなく、直前の完成済みStateです。
+重要な保証は、Control mutationと競合した中間Stateを完成済みProjectionとして公開しないことです。
+
+この競合検出はProjection producer側だけで完結し、Query側にgeneration確認やretryはありません。
+Queryは常にProjectionStoreに公開済みの完成済みStateだけを返します。
 
 Timer操作はWebSocket受信threadから直接`TimerModel`へ実行し、Timer mutation専用のcontrol
 gateでStart / Split / Skip / Undo / Reset / Pause / Resume / GameTime操作だけを直列化
