@@ -24,12 +24,13 @@ namespace LiveSplit.Bridge
         private readonly LiveSplitState state;
         private readonly TimerModel timerModel;
         private long uiThreadDispatchCount;
+        private int uiInvocationDepth;
 
         public event Action<GameTimeOperationType> GameTimeChanged;
 
         /// <summary>
-        /// Number of times LiveSplit state has been read on the UI thread. Used by tests
-        /// to prove detailed RPCs capture state in a single dispatch.
+        /// Number of outer UI invocations, including direct calls on the UI thread.
+        /// Nested reads and event callbacks belong to the same invocation.
         /// </summary>
         internal long UiThreadDispatchCount => System.Threading.Interlocked.Read(ref uiThreadDispatchCount);
 
@@ -91,58 +92,9 @@ namespace LiveSplit.Bridge
             return InvokeOnUiThread(() => BuildRuntimeStateCore(state.Run, runtimeRevision, sessionId));
         }
 
-        public RunRevisionState CaptureRunRevisionState()
-        {
-            return InvokeOnUiThread(() => BuildRunRevisionStateCore(state.Run));
-        }
-
-        public AttemptRevisionState CaptureAttemptRevisionState()
-        {
-            return InvokeOnUiThread(() => BuildAttemptRevisionStateCore(state.Run));
-        }
-
         public RuntimeRevisionState CaptureRuntimeRevisionState()
         {
             return InvokeOnUiThread(() => BuildRuntimeRevisionStateCore(state.Run));
-        }
-
-        /// <summary>
-        /// Captures the revision comparison data and the response State in a single
-        /// UI-thread read so both describe the same LiveSplit state.
-        /// </summary>
-        public CapturedRunState CaptureRunForResponse(ulong sessionId)
-        {
-            return InvokeOnUiThread(() =>
-            {
-                // Read the run reference exactly once; both the revision comparison data
-                // and the response State are built from this single capture.
-                var run = state.Run;
-                return new CapturedRunState(
-                    BuildRunRevisionStateCore(run),
-                    BuildRunStateCore(run, 0, sessionId));
-            });
-        }
-
-        public CapturedAttemptState CaptureAttemptForResponse(ulong sessionId)
-        {
-            return InvokeOnUiThread(() =>
-            {
-                var run = state.Run;
-                return new CapturedAttemptState(
-                    BuildAttemptRevisionStateCore(run),
-                    BuildAttemptStateCore(run, 0, sessionId));
-            });
-        }
-
-        public CapturedRuntimeState CaptureRuntimeForResponse(ulong sessionId)
-        {
-            return InvokeOnUiThread(() =>
-            {
-                var run = state.Run;
-                return new CapturedRuntimeState(
-                    BuildRuntimeRevisionStateCore(run),
-                    BuildRuntimeStateCore(run, 0, sessionId));
-            });
         }
 
         private RunState BuildRunStateCore(IRun run, ulong runRevision, ulong sessionId)
@@ -256,93 +208,6 @@ namespace LiveSplit.Bridge
             return runtimeState;
         }
 
-        private RunRevisionState BuildRunRevisionStateCore(IRun run)
-        {
-            if (run == null)
-            {
-                return new RunRevisionState(
-                    string.Empty,
-                    string.Empty,
-                    0,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    string.Empty,
-                    false,
-                    RevisionSnapshotFactory.EmptyMap,
-                    Array.Empty<string>(),
-                    Array.Empty<SegmentSnapshot>(),
-                    ImageFingerprint.None);
-            }
-
-            var comparisons = (run.Comparisons ?? Enumerable.Empty<string>())
-                .Distinct()
-                .ToList();
-
-            var variables = RevisionSnapshotFactory.OrderMap(
-                run.Metadata?.VariableValueNames
-                    ?.Select(pair => new KeyValuePair<string, string>(pair.Key, pair.Value)));
-
-            var segments = new List<SegmentSnapshot>(run.Count);
-            for (var index = 0; index < run.Count; index++)
-            {
-                var segment = run[index];
-                var comparisonTimes = comparisons
-                    .Select(comparison => new KeyValuePair<string, TimeSnapshot>(
-                        comparison,
-                        MapTimeSnapshot(segment.Comparisons, comparison)))
-                    .ToList();
-
-                segments.Add(new SegmentSnapshot(
-                    (uint)index,
-                    segment.Name ?? string.Empty,
-                    MapTimeSnapshot(segment.BestSegmentTime),
-                    comparisonTimes,
-                    ImageFingerprint.FromImage(segment.Icon)));
-            }
-
-            return new RunRevisionState(
-                run.GameName ?? string.Empty,
-                run.CategoryName ?? string.Empty,
-                run.Offset.Ticks,
-                run.FilePath ?? string.Empty,
-                run.LayoutPath ?? string.Empty,
-                run.Metadata?.RunID ?? string.Empty,
-                run.Metadata?.PlatformName ?? string.Empty,
-                run.Metadata?.RegionName ?? string.Empty,
-                run.Metadata?.UsesEmulator ?? false,
-                variables,
-                comparisons,
-                segments,
-                ImageFingerprint.FromImage(run.GameIcon));
-        }
-
-        private AttemptRevisionState BuildAttemptRevisionStateCore(IRun run)
-        {
-            if (run == null)
-            {
-                return new AttemptRevisionState(0, 0, Array.Empty<AttemptSegmentSnapshot>());
-            }
-
-            var attemptCount = run.AttemptCount > 0 ? (uint)run.AttemptCount : 0U;
-            var completedCount = run.AttemptHistory == null
-                ? 0U
-                : (uint)run.AttemptHistory.Count(attempt => attempt.Time.RealTime != null);
-
-            var segments = new List<AttemptSegmentSnapshot>(run.Count);
-            for (var index = 0; index < run.Count; index++)
-            {
-                var segment = run[index];
-                segments.Add(new AttemptSegmentSnapshot(
-                    (uint)index,
-                    MapTimeSnapshot(segment.SplitTime),
-                    RevisionSnapshotFactory.OrderMap(segment.CustomVariableValues)));
-            }
-
-            return new AttemptRevisionState(attemptCount, completedCount, segments);
-        }
-
         private RuntimeRevisionState BuildRuntimeRevisionStateCore(IRun run)
         {
             var customVariables = run?.Metadata?.CustomVariables;
@@ -358,21 +223,6 @@ namespace LiveSplit.Bridge
                 state.CurrentComparison ?? string.Empty,
                 ReadGlobalHotkeysEnabled(state),
                 variables);
-        }
-
-        private static TimeSnapshot MapTimeSnapshot(Time time)
-        {
-            return new TimeSnapshot(time.RealTime?.Ticks, time.GameTime?.Ticks);
-        }
-
-        private static TimeSnapshot MapTimeSnapshot(IComparisons comparisons, string name)
-        {
-            if (comparisons != null && comparisons.TryGetValue(name, out var time))
-            {
-                return MapTimeSnapshot(time);
-            }
-
-            return new TimeSnapshot(null, null);
         }
 
         private static bool ReadGlobalHotkeysEnabled(LiveSplitState state)
@@ -633,16 +483,26 @@ namespace LiveSplit.Bridge
             });
         }
 
-        private T InvokeOnUiThread<T>(Func<T> callback)
+        internal T InvokeOnUiThread<T>(Func<T> callback)
         {
-            System.Threading.Interlocked.Increment(ref uiThreadDispatchCount);
-
             if (state.Form.InvokeRequired)
             {
-                return (T)state.Form.Invoke(callback);
+                return (T)state.Form.Invoke((Func<T>)(() => InvokeOnUiThread(callback)));
             }
 
-            return callback();
+            if (uiInvocationDepth++ == 0)
+            {
+                System.Threading.Interlocked.Increment(ref uiThreadDispatchCount);
+            }
+
+            try
+            {
+                return callback();
+            }
+            finally
+            {
+                uiInvocationDepth--;
+            }
         }
 
         private static ProtocolTimerPhase MapTimerPhase(ModelTimerPhase phase)

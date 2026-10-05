@@ -10,7 +10,7 @@ namespace LiveSplit.Bridge.Tests;
 public class DetailedRpcSyncTests
 {
     [Fact]
-    public void GetRunReturnsChangedContentWithUpdatedRevision()
+    public void GetRunReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -21,12 +21,12 @@ public class DetailedRpcSyncTests
         var runState = GetRun(runtime);
 
         Assert.Equal("Directly Changed", runState.GameName);
-        Assert.Equal(2UL, runState.RunRevision);
-        Assert.Equal(2UL, runtime.RunRevision);
+        Assert.Equal(1UL, runState.RunRevision);
+        Assert.Equal(1UL, runtime.RunRevision);
     }
 
     [Fact]
-    public async Task GetRunPublishesRunChangedEventOnce()
+    public async Task ReadRpcsDoNotPublishChangeEvents()
     {
         var state = CreateState(out var run);
         var port = BridgeTestEndpoints.GetFreePort();
@@ -38,17 +38,19 @@ public class DetailedRpcSyncTests
         run.GameName = "Directly Changed";
         GetRun(runtime);
 
-        var runChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRunChanged);
-        Assert.Equal(2UL, runChanged.TimerState.RunRevision);
-
-        // Re-querying must not republish the same change.
+        run[0].SplitTime = new Time(TimeSpan.FromSeconds(1), null);
+        state.CurrentComparison = "Best Segments";
+        GetAttempt(runtime);
+        GetRuntimeState(runtime);
+        GetTimerState(runtime);
+        Handle(runtime, new Request { Attach = new AttachRequest() });
         GetRun(runtime);
         var duplicate = await TryReceiveNonHeartbeatAsync(events, TimeSpan.FromSeconds(1));
         Assert.Null(duplicate);
     }
 
     [Fact]
-    public void GetAttemptReturnsChangedContentWithUpdatedRevision()
+    public void GetAttemptReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -61,12 +63,12 @@ public class DetailedRpcSyncTests
         var segment = Assert.Single(response.Segments);
         Assert.True(segment.SplitTime.HasRealTimeTicks);
         Assert.Equal(TimeSpan.FromSeconds(3).Ticks, segment.SplitTime.RealTimeTicks);
-        Assert.Equal(2UL, response.AttemptRevision);
-        Assert.Equal(2UL, runtime.AttemptRevision);
+        Assert.Equal(1UL, response.AttemptRevision);
+        Assert.Equal(1UL, runtime.AttemptRevision);
     }
 
     [Fact]
-    public void GetRuntimeStateReturnsChangedContentWithUpdatedRevision()
+    public void GetRuntimeStateReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -78,12 +80,12 @@ public class DetailedRpcSyncTests
 
         Assert.Equal("Best Segments", response.CurrentComparison);
         Assert.Equal(ProtocolTimingMethod.GameTime, response.CurrentTimingMethod);
-        Assert.Equal(2UL, response.RuntimeRevision);
-        Assert.Equal(2UL, runtime.RuntimeRevision);
+        Assert.Equal(1UL, response.RuntimeRevision);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
     }
 
     [Fact]
-    public void GetRuntimeStateSyncsMetadataCustomVariables()
+    public void GetRuntimeStateReadsMetadataCustomVariablesWithoutSync()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -93,11 +95,11 @@ public class DetailedRpcSyncTests
         var response = GetRuntimeState(runtime);
 
         Assert.Equal("changed", response.CustomVariables["custom"]);
-        Assert.Equal(2UL, response.RuntimeRevision);
+        Assert.Equal(1UL, response.RuntimeRevision);
     }
 
     [Fact]
-    public void AttachSynchronizesAllRevisionsBeforeDetailedQueries()
+    public void AttachReadsCurrentGenerationsWithoutSynchronization()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -121,7 +123,7 @@ public class DetailedRpcSyncTests
     }
 
     [Fact]
-    public void DetailedRpcSyncDoesNotRepublishAfterObservation()
+    public void ReadDoesNotConsumePendingRuntimeObservation()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -132,12 +134,11 @@ public class DetailedRpcSyncTests
         var runRevision = GetRun(runtime).RunRevision;
         var runtimeRevision = GetRuntimeState(runtime).RuntimeRevision;
 
-        // The detailed sync already refreshed the observed snapshots.
+        // Reads do not consume a pending change; only the lightweight monitor does.
         runtime.ObserveExternalState();
-        runtime.ObserveContentState();
 
         Assert.Equal(runRevision, runtime.RunRevision);
-        Assert.Equal(runtimeRevision, runtime.RuntimeRevision);
+        Assert.Equal(runtimeRevision + 1, runtime.RuntimeRevision);
     }
 
     [Fact]
@@ -161,9 +162,7 @@ public class DetailedRpcSyncTests
         var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        // An unchanged get_run must read LiveSplit state exactly once: revision data and
-        // the response State come from the same capture. A regression that re-reads the
-        // state after comparing would increase this count.
+        // State and its current generation are captured within one UI call.
         var before = runtime.Adapter.UiThreadDispatchCount;
         GetRun(runtime);
         Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
@@ -284,9 +283,10 @@ public class DetailedRpcSyncTests
     {
         try
         {
-            while (true)
+            var deadline = DateTime.UtcNow + timeout;
+            while (DateTime.UtcNow < deadline)
             {
-                var data = await client.ReceiveBinaryAsync(timeout);
+                var data = await client.ReceiveBinaryAsync(deadline - DateTime.UtcNow);
                 var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
                 if (bridgeEvent.Type != BridgeEventType.EventHeartbeat)
                 {
@@ -296,7 +296,7 @@ public class DetailedRpcSyncTests
         }
         catch (OperationCanceledException)
         {
-            return null;
         }
+        return null;
     }
 }
