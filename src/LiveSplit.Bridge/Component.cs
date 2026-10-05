@@ -43,9 +43,9 @@ public sealed class Component : IComponent
         {
             if (status == BridgeRuntimeStatus.Stopped) return;
             if (runtime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
-            if (runtime != null && ShouldObserveExternalState())
+            if (runtime != null && ShouldUpdateProjections())
             {
-                runtime.ObserveExternalState();
+                runtime.Update();
             }
             UpdateControl();
         }
@@ -61,7 +61,7 @@ public sealed class Component : IComponent
     private void SettingsControlOnPortChanged(object sender, EventArgs e) { if (settingsControl == null) return; settings.WebSocketPort = settingsControl.WebSocketPort; lock (runtimeLock) { runtime?.Dispose(); runtime = null; status = BridgeRuntimeStatus.Starting; lastError = null; retryAt = 0; TryStartRuntime(); } }
     private void UpdateControl() => settingsControl?.SetRuntimeStatus(status.ToString(), status == BridgeRuntimeStatus.Failed ? lastError : null);
 
-    private bool ShouldObserveExternalState()
+    private bool ShouldUpdateProjections()
     {
         var intervalTicks = (long)(ObservationInterval.TotalSeconds * Stopwatch.Frequency);
         var now = Stopwatch.GetTimestamp();

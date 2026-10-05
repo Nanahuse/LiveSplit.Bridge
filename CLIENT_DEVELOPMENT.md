@@ -200,29 +200,30 @@ state_revisionが同じ
 
 ### `run_revision`
 
-Runを再取得すべき変更世代です。LiveSplitの`RunManuallyModified`を受信すると増加し、
-`EVENT_RUN_CHANGED`を発行します。Run EditorによるGame / Category、Segment名、Metadata、
-Comparison、PB / Best Segment、アイコン等の編集をこのイベントで扱います。
-内容の比較は行わないため、結果的に同じ内容でも世代が進むことがあります。
+`RunState`としてBridge内に公開済みのProjectionのversionです。LiveSplitの
+`RunManuallyModified`（Run EditorによるGame / Category、Segment名、Metadata、Comparison、
+PB / Best Segment、アイコン等の編集）はRunProjectionをdirtyとして記録するだけで、
+`run_revision`は次のProjection commitまで増加しません。Projectionが構築・commitされた時点で
+revisionを増加させ、`EVENT_RUN_CHANGED`を発行します。内容の比較は行わないため、結果的に同じ
+内容でも世代が進むことがあります。
 
 Comparison renameでは`ComparisonRenamed`と`RunManuallyModified`の両方が届きますが、
-`run_revision`を増加させるのは後者だけで、Comparison rename単独では増加しません。
-RenameによってCurrent Comparisonも変わった場合は、`RunManuallyModified`の処理中に続けて
-`EVENT_RUNTIME_CHANGED`を発行します。そのためEventsチャネルでは同一の送信処理内で
+RunProjectionのcommitは1回だけで、`EVENT_RUN_CHANGED`も1回だけです。RenameによってCurrent
+Comparisonも変わった場合は同じcommitでRuntimeProjectionも更新され、Eventsチャネルでは
 
 ```text
 EVENT_RUN_CHANGED
 → EVENT_RUNTIME_CHANGED
 ```
 
-の順序になります。Current Comparisonが変わらなかったrenameでは`EVENT_RUN_CHANGED`だけが
-発行され、`runtime_revision`は増加しません。
+の順で発行されます。Current Comparisonが変わらなかったrenameでは`EVENT_RUNTIME_CHANGED`は
+発行されず、`runtime_revision`も増加しません。
 
-ResetではTimerのReset処理の中で`state_revision`、`attempt_revision`、`run_revision`を
-まとめて増加させ、`EVENT_TIMER_RESET`を1回だけ発行します。`EVENT_TIMER_RESET`の
-`TimerState`は更新後の`run_revision`と`attempt_revision`を持ちます。Resetに伴う別の
-`EVENT_RUN_CHANGED`は発行しません。Timer / Attempt / Runの変更を1つのイベントで表現します。
-PB等が結果的に変わらないResetでも`run_revision`は増加します。
+Resetでは`EVENT_TIMER_RESET`が操作の即時通知として先に発行されますが、この時点では
+`run_revision`は増加しません。`OnReset`は`FixSplits()`より前に発生するため、新しい
+RunProjectionはまだ完成していないからです。ResetによるRunProjectionの更新は、その後の
+Projection commitで`run_revision`を増加させ、`EVENT_RUN_CHANGED`で通知します。PB等が結果的に
+変わらないResetでも`run_revision`は増加します。
 
 ### RPCとEventsの順序
 
@@ -233,8 +234,14 @@ RPC WebSocket（`/bridge/v2/rpc`）とEvents WebSocket（`/bridge/v2/events`）�
 
 ただしEventsチャネル内では、LiveSplitのイベント配送に基づく順序を保証します。たとえば
 Comparison renameでCurrent Comparisonも変わる場合は`EVENT_RUN_CHANGED` →
-`EVENT_RUNTIME_CHANGED`の順になります。`event_sequence`は単調増加し、各イベントの
-`TimerState`はそのイベントで更新されたrevisionを保持します。
+`EVENT_RUNTIME_CHANGED`の順になります。`event_sequence`は単調増加します。
+
+Timer transition event（`EVENT_TIMER_*`、`EVENT_GAME_TIME_*`）は操作や状態遷移の即時通知です。
+Projectionの更新がまだ完了していない場合、`TimerState`の`run_revision` / `attempt_revision` /
+`runtime_revision`は以前の公開値のままです。Projection changed event（`EVENT_RUN_CHANGED` /
+`EVENT_ATTEMPT_CHANGED` / `EVENT_RUNTIME_CHANGED`）は、対応する新しいProjectionがcommit済みで
+あることを保証し、`TimerState`にはそのcommit済みrevisionが入ります。Projection changed eventの
+後に、より新しいTimer transition eventが続くことがあります。
 
 クライアントは次の使い分けを想定しています。
 
@@ -248,7 +255,8 @@ Events
 
 操作によって`run_revision`や`attempt_revision`が進む場合、RPC responseとEventsのどちらで
 先に新しいrevisionを観測してもかまいません。最終的なRun / Attempt / Runtime状態はEventsで
-届く更新を継続して処理し、必要になった時点で該当Stateを再取得してください。
+届くProjection changed eventを契機に、該当Stateを再取得してください。Projection changed eventを
+受信した時点で、そのrevisionのProjectionがQuery可能です。
 
 ### `attempt_revision`
 
@@ -276,31 +284,30 @@ Attemptを再取得すべき変更世代です。Start / Split / Skip / Undo / R
 `TimerState`には更新後の`runtime_revision`が入ります。
 
 クライアントは`TimerState`内の各revisionがキャッシュ済みの値から変化した場合、対応する
-Stateを再取得してください。revisionは内容のfingerprintではなく変更世代です。
-「世代が変わったなら再取得が必要」を表し、「返却内容が必ず異なる」ことは保証しません。
+Stateを再取得してください。revisionは内容のfingerprintではなく、ProjectionStoreに公開済みの
+Projectionのversionです。同じrevisionの間は対応するProjectionの内容は変化しません。
 
 `attach`、`get_timer_state`は現在の軽量`TimerState`とrevisionを直接読み取ります。
-`get_run`、`get_attempt`、`get_runtime_state`は重いStateを構築します。このとき
-`get_run`と`get_attempt`は、対応するrevisionが構築中に変化していないことに加え、
-Timer mutationと競合していないことを確認し、安定したsnapshotだけを返します。この競合検出は
-Bridge RPC経由のControl操作だけでなく、LiveSplit標準WebSocketなどBridge外のthreadから直接
-`TimerModel`を操作した場合のTimerイベントも対象にします。`get_runtime_state`は
-`runtime_revision`が変化していないことを確認します。いずれも上限付きで再取得します。
+`get_run`、`get_attempt`、`get_runtime_state`はProjectionStoreに公開済みのProjectionを返すだけで、
+UI threadへdispatchせず、LiveSplitのStateを走査しません。Queryがrevisionを更新したり、変更
+イベントを発行したりすることはありません。同じrevisionの間は何回QueryしてもProjectionの
+再構築は行われません。
 
-安定したsnapshotを取得できなかった場合は、未検証のStateを返さず、一時的なRPCエラー
-（`error.code = 103`）を返します。クライアントは同じ要求を再送することで再試行できます。
-読み取りを契機にrevisionを更新したり、変更イベントを発行したりしません。Run / Attemptの
-定期fallback監視もありません。LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、
-世代更新の対象になりません。RunのSegment、Comparison一覧、Metadata、PNGアイコン等は
-`get_run`時だけ構築します。RuntimeはComparison切替・renameイベントを使用し、専用
-イベントで網羅できない項目についてはTimer操作とは独立した軽量監視で検出します。
-監視がまだ検出していない変更を読み取っても、その読み取り自体は世代を進めません。
+Run / Attempt / RuntimeのProjectionは、Timer操作とは独立したタイミングで構築・commitされます。
+そのため重いProjection構築がTimer操作をブロックすることはありません。Projection changed event
+（`EVENT_RUN_CHANGED` / `EVENT_ATTEMPT_CHANGED` / `EVENT_RUNTIME_CHANGED`）は、対応する
+Projectionのcommit完了後に発行されます。Resetの`FixSplits`途中など、Projectionが未完成の間に
+`get_run` / `get_attempt` / `get_runtime_state`を実行した場合は、最後にcommit済みのProjectionを
+正常に返します。中間Stateや一時エラーは返しません。新しいProjectionがcommitされると、対応する
+Projection changed eventで通知されます。
 
 Timer操作はWebSocket受信threadから直接`TimerModel`へ実行し、Timer mutation専用のcontrol
 gateでStart / Split / Skip / Undo / Reset / Pause / Resume / GameTime操作だけを直列化
-します。`get_run`等の重いQueryはこのgateを取得しないため、Query実行中でも別接続からの
-Timer操作が待たされることはありません。`OperationResponse.timer_state`は操作直後に
-同期的に取得します。Timer操作の経路にUI threadへのdispatchは含まれません。
+します。`get_run`等のQueryはこのgateを取得しないため、Query実行中でも別接続からのTimer操作が
+待たされることはありません。`OperationResponse.timer_state`は操作直後に取得しますが、詳細
+Projectionのcommitは後続のProjection capture pointで行われるため、`run_revision` /
+`attempt_revision` / `runtime_revision`はまだ以前の公開値であることがあります。Timer操作の経路に
+UI threadへのdispatchは含まれません。
 
 クライアントは`OperationResponse.timer_state`を操作結果の確認に用い、Run / Attempt /
 Runtimeの世代更新はEvents側で継続して処理してください。RPCとEventsの受信順序は保証されない
@@ -403,6 +410,7 @@ EVENT_GAME_TIME_PAUSED
 EVENT_GAME_TIME_RESUMED
 
 EVENT_RUN_CHANGED
+EVENT_ATTEMPT_CHANGED
 EVENT_RUNTIME_CHANGED
 
 EVENT_HEARTBEAT
@@ -412,14 +420,35 @@ EVENT_HEARTBEAT
 Runtime状態の変更は`EVENT_RUNTIME_CHANGED`で通知されます。詳細はRPCで再取得して
 ください。
 
-`EVENT_RUN_CHANGED`はTimer operationとは独立したRun変更（Run Editor、Comparison編集、
-`RunManuallyModified`）で発行されます。内容の比較は行わない世代ベースの通知です。
-Resetに伴うRun変更は`EVENT_TIMER_RESET`で通知されるため、`EVENT_RUN_CHANGED`は発行しません。
+`EVENT_RUN_CHANGED` / `EVENT_ATTEMPT_CHANGED` / `EVENT_RUNTIME_CHANGED`は、対応する新しい
+ProjectionがProjectionStoreへcommitされ、Query可能になったことを通知します。revisionはこの
+commit時だけ増加します。Timer transition eventとは役割を分けて扱ってください。
 
-`EVENT_RUNTIME_CHANGED`は`RuntimeState`の変化で発行されます。Comparison switch / renameは
-LiveSplitイベントをauthorityとし、Timing Method、Global Hotkeys、Custom Variable、外部から
-変更されたGame Time関連状態は、Timer操作とは独立した軽量監視で検出します。監視はTimer
-操作のcritical pathからは実行されません。
+`EVENT_RUN_CHANGED`はRunProjectionのcommitで発行されます。Run EditorやComparison編集などの
+`RunManuallyModified`、およびReset後の`FixSplits`によるRun変更を含みます。内容の比較は行わない
+世代ベースの通知です。
+
+`EVENT_ATTEMPT_CHANGED`はAttemptProjectionのcommitで発行されます。Start / Split / Skip / Undo /
+Resetに伴うAttemptの変更が対象です。
+
+`EVENT_RUNTIME_CHANGED`はRuntimeProjectionのcommitで発行されます。Comparison switch / renameは
+LiveSplitイベントをauthorityとし、Timing Method、Global Hotkeys、Custom Variable等、専用イベントで
+網羅できない項目はTimer操作とは独立した軽量監視で検出します。監視はTimer操作のcritical pathからは
+実行されません。
+
+Resetでは次の順で通知されます（イベント間に他のTimer transition eventが入ることがあります）。
+
+```text
+EVENT_TIMER_RESET
+↓
+EVENT_ATTEMPT_CHANGED
+↓
+EVENT_RUN_CHANGED
+```
+
+`EVENT_TIMER_RESET`の時点では`run_revision` / `attempt_revision`はまだ増加していません。
+実際の増加は後続のProjection commitで起こり、それぞれ`EVENT_ATTEMPT_CHANGED` /
+`EVENT_RUN_CHANGED`で通知されます。
 
 ### `event_sequence`
 
@@ -437,6 +466,18 @@ LiveSplitイベントをauthorityとし、Timing Method、Global Hotkeys、Custo
 
 `session_id`はBridgeの配信セッションを識別します。Bridgeの再起動後は新しい値になります。
 異なる`session_id`を受信した場合、以前の`event_sequence`との連続性を仮定しないでください。
+
+## 保証範囲
+
+BridgeがrevisionとProjectionの整合性を保証する対象は次のとおりです。
+
+- Bridge Control Plane（RPC経由のTimer / GameTime操作）
+- 通常のLiveSplit UI / hotkey操作
+
+LiveSplit標準WebSocketや別のコンポーネントなど、Bridge外のthreadから直接`TimerModel`を
+操作した場合は保証対象外です。この場合もLiveSplitイベントはdirtyとして記録されますが、
+Bridge側だけでTimer mutation全体を同期するためのepochや疑似的なmutation lockは使用しません。
+保証対象外の操作と競合した場合、Projectionのcommitタイミングは保証されません。
 
 ## 接続手順
 

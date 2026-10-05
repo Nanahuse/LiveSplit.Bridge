@@ -25,12 +25,13 @@ public class RunRevisionTests
 
         // RunManuallyModified advances the generation even with identical content.
         state.CallRunManuallyModified();
-        runtime.ObserveExternalState();
+        runtime.Update();
         Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(initialStateRevision, runtime.StateRevision);
 
         run.GameName = "Changed Game";
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(3UL, runtime.RunRevision);
         // Run-only changes do not advance state_revision.
@@ -64,6 +65,7 @@ public class RunRevisionTests
         replacement.Add(new Segment("Second"));
         state.Run = replacement;
         state.CallRunManuallyModified();
+        runtime.Update();
 
         var second = Handle(runtime, new Request { RequestId = 2, GetRun = new GetRunRequest() });
         Assert.Equal("Second Game", second.GetRun.Run.GameName);
@@ -82,6 +84,7 @@ public class RunRevisionTests
 
         run[0].Name = "Renamed";
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
         var response = Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() });
@@ -104,12 +107,12 @@ public class RunRevisionTests
         timerModel.Start();
         timerModel.Split();
         timerModel.Split();
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         _ = state.Form.Handle;
         timerModel.Reset();
         System.Windows.Forms.Application.DoEvents();
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.True(runtime.RunRevision > originalRunRevision);
     }
@@ -125,13 +128,13 @@ public class RunRevisionTests
 
         // Start but never split: Reset has no split times to fold into the run.
         timerModel.Start();
-        runtime.ObserveExternalState();
+        runtime.Update();
         var beforeReset = runtime.RunRevision;
 
         _ = state.Form.Handle;
         timerModel.Reset();
         System.Windows.Forms.Application.DoEvents();
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(beforeReset + 1, runtime.RunRevision);
     }
@@ -148,6 +151,7 @@ public class RunRevisionTests
         // Rename that leaves the current comparison unchanged: only run_revision moves.
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
+        runtime.Update();
         Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
 
@@ -155,6 +159,7 @@ public class RunRevisionTests
         state.CurrentComparison = "Renamed";
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
+        runtime.Update();
         Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -170,16 +175,18 @@ public class RunRevisionTests
 
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
+        runtime.Update();
         Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
 
         // A plain run change must not carry the earlier rename's runtime check.
         run.GameName = "Changed";
         state.CallRunManuallyModified();
+        runtime.Update();
         Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
 
-        runtime.ObserveExternalState();
+        runtime.Update();
         Assert.Equal(1UL, runtime.RuntimeRevision);
     }
 
@@ -193,6 +200,7 @@ public class RunRevisionTests
 
         run.GameName = "Updated Game";
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -211,6 +219,7 @@ public class RunRevisionTests
 
         run.GameName = "Updated Game";
         state.CallRunManuallyModified();
+        runtime.Update();
 
         var runChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRunChanged);
         Assert.NotNull(runChanged.TimerState);

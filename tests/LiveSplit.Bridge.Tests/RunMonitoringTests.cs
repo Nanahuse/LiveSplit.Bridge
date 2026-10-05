@@ -18,7 +18,7 @@ public class RunMonitoringTests
 
         for (var iteration = 0; iteration < 50; iteration++)
         {
-            runtime.ObserveExternalState();
+            runtime.Update();
         }
 
         Assert.Equal(1UL, runtime.RunRevision);
@@ -35,6 +35,7 @@ public class RunMonitoringTests
 
         run.GameName = "Changed";
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -50,7 +51,7 @@ public class RunMonitoringTests
         run[0].SplitTime = new Time(TimeSpan.FromSeconds(1), null);
         for (var iteration = 0; iteration < 50; iteration++)
         {
-            runtime.ObserveExternalState();
+            runtime.Update();
         }
         Assert.Equal(1UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.AttemptRevision);

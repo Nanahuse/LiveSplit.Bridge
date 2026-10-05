@@ -15,6 +15,7 @@ public class AttemptRevisionTests
 
         var before = GetAttempt(runtime);
         timerModel.Start();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -28,9 +29,11 @@ public class AttemptRevisionTests
         using var _r = runtime;
 
         timerModel.Start();
+        runtime.Update();
         var before = GetAttempt(runtime);
 
         timerModel.Split();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -47,9 +50,11 @@ public class AttemptRevisionTests
         // segment, so that Skip observably changes AttemptState content.
         run[0].SplitTime = new Time(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(4));
         timerModel.Start();
+        runtime.Update();
         var before = GetAttempt(runtime);
 
         timerModel.SkipSplit();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -64,9 +69,11 @@ public class AttemptRevisionTests
 
         timerModel.Start();
         timerModel.Split();
+        runtime.Update();
         var before = GetAttempt(runtime);
 
         timerModel.UndoSplit();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -80,11 +87,13 @@ public class AttemptRevisionTests
 
         timerModel.Start();
         timerModel.Split();
+        runtime.Update();
         var before = GetAttempt(runtime);
 
         _ = state.Form.Handle;
         timerModel.Reset();
         System.Windows.Forms.Application.DoEvents();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision + 1, after.AttemptRevision);
@@ -100,6 +109,7 @@ public class AttemptRevisionTests
         // Timer is not running, so Split is a no-op.
         var before = GetAttempt(runtime);
         timerModel.Split();
+        runtime.Update();
 
         var after = GetAttempt(runtime);
         Assert.Equal(before.AttemptRevision, after.AttemptRevision);

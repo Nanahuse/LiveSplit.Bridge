@@ -54,6 +54,7 @@ enum BridgeEventType {
   EVENT_RUN_CHANGED = 20;
   EVENT_RUNTIME_CHANGED = 21;
   EVENT_HEARTBEAT = 22;
+  EVENT_ATTEMPT_CHANGED = 23;
 }
 
 message TimeValue {

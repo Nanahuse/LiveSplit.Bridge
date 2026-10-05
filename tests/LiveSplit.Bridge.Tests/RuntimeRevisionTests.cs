@@ -15,7 +15,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentComparison = "Best Segments";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -27,7 +27,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentTimingMethod = LiveSplit.Model.TimingMethod.GameTime;
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -39,7 +39,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -51,7 +51,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.Settings.HotkeyProfiles["Default"].GlobalHotkeysEnabled = false;
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -65,7 +65,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         // The profile name is not part of RuntimeState, so switching between profiles
         // with the same Global Hotkeys value must not change runtime_revision.
@@ -85,7 +85,7 @@ public class RuntimeRevisionTests
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
         state.CurrentHotkeyProfile = "Secondary";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         var duplicate = await TryReceiveNonHeartbeatAsync(events, TimeSpan.FromSeconds(1));
         Assert.Null(duplicate);
@@ -101,7 +101,7 @@ public class RuntimeRevisionTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }
@@ -114,7 +114,7 @@ public class RuntimeRevisionTests
 
         var runRevision = runtime.RunRevision;
         run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RuntimeRevision);
         // Custom variable current values live in RuntimeState, so run_revision is unchanged.
@@ -127,8 +127,8 @@ public class RuntimeRevisionTests
         var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        runtime.ObserveExternalState();
-        runtime.ObserveExternalState();
+        runtime.Update();
+        runtime.Update();
 
         Assert.Equal(1UL, runtime.RuntimeRevision);
     }
@@ -144,7 +144,7 @@ public class RuntimeRevisionTests
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
         state.CurrentComparison = "Best Segments";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         var runtimeChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRuntimeChanged);
         Assert.NotNull(runtimeChanged.TimerState);
@@ -162,7 +162,7 @@ public class RuntimeRevisionTests
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
         run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
-        runtime.ObserveExternalState();
+        runtime.Update();
 
         var runtimeChanged = await ReceiveUntilAsync(events, BridgeEventType.EventRuntimeChanged);
         Assert.Equal(2UL, runtimeChanged.TimerState.RuntimeRevision);

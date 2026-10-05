@@ -52,9 +52,11 @@ public class BridgeRuntimeEventTests
 
         harness.State.Run.GameName = "First Change";
         harness.State.CallRunManuallyModified();
+        harness.Runtime.Update();
         var first = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
         harness.State.Run.GameName = "Second Change";
         harness.State.CallRunManuallyModified();
+        harness.Runtime.Update();
         var second = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
         Assert.Equal(1UL, first.EventSequence);
@@ -93,6 +95,7 @@ public class BridgeRuntimeEventTests
 
         harness.State.Run.GameName = "Session Change";
         harness.State.CallRunManuallyModified();
+        harness.Runtime.Update();
         var bridgeEvent = await harness.ReceiveUntilAsync(BridgeEventType.EventRunChanged);
 
         Assert.Equal(attach.Attach.SessionId, bridgeEvent.SessionId);

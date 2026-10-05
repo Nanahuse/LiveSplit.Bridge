@@ -10,19 +10,37 @@ namespace LiveSplit.Bridge.Tests;
 public class DetailedRpcSyncTests
 {
     [Fact]
-    public void GetRunReturnsChangedContentWithoutAdvancingRevision()
+    public void GetRunReturnsPublishedProjectionWithoutReadingLiveState()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        // Change Run content without raising RunManuallyModified or running any monitor.
+        // Change Run content without raising RunManuallyModified.
         run.GameName = "Directly Changed";
 
         var runState = GetRun(runtime);
 
-        Assert.Equal("Directly Changed", runState.GameName);
+        // The query returns the last committed projection, untouched by the
+        // unannounced change.
+        Assert.NotEqual("Directly Changed", runState.GameName);
         Assert.Equal(1UL, runState.RunRevision);
         Assert.Equal(1UL, runtime.RunRevision);
+    }
+
+    [Fact]
+    public void GetRunReflectsChangeAfterProjectionCommit()
+    {
+        var state = CreateState(out var run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        run.GameName = "Committed Change";
+        state.CallRunManuallyModified();
+        runtime.Update();
+
+        var runState = GetRun(runtime);
+        Assert.Equal("Committed Change", runState.GameName);
+        Assert.Equal(2UL, runState.RunRevision);
+        Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
@@ -50,7 +68,7 @@ public class DetailedRpcSyncTests
     }
 
     [Fact]
-    public void GetAttemptReturnsChangedContentWithoutAdvancingRevision()
+    public void GetAttemptReturnsPublishedProjectionWithoutReadingLiveState()
     {
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -61,14 +79,13 @@ public class DetailedRpcSyncTests
         var response = GetAttempt(runtime);
 
         var segment = Assert.Single(response.Segments);
-        Assert.True(segment.SplitTime.HasRealTimeTicks);
-        Assert.Equal(TimeSpan.FromSeconds(3).Ticks, segment.SplitTime.RealTimeTicks);
+        Assert.False(segment.SplitTime.HasRealTimeTicks);
         Assert.Equal(1UL, response.AttemptRevision);
         Assert.Equal(1UL, runtime.AttemptRevision);
     }
 
     [Fact]
-    public void GetRuntimeStateReturnsChangedContentWithoutAdvancingRevision()
+    public void GetRuntimeStateReturnsPublishedProjectionWithoutReadingLiveState()
     {
         var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
@@ -78,24 +95,26 @@ public class DetailedRpcSyncTests
 
         var response = GetRuntimeState(runtime);
 
-        Assert.Equal("Best Segments", response.CurrentComparison);
-        Assert.Equal(ProtocolTimingMethod.GameTime, response.CurrentTimingMethod);
+        Assert.Equal("Personal Best", response.CurrentComparison);
+        Assert.Equal(ProtocolTimingMethod.RealTime, response.CurrentTimingMethod);
         Assert.Equal(1UL, response.RuntimeRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
     }
 
     [Fact]
-    public void GetRuntimeStateReadsMetadataCustomVariablesWithoutSync()
+    public void RuntimeStateReflectsChangeAfterProjectionCommit()
     {
-        var state = CreateState(out var run);
+        var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
+        state.CurrentComparison = "Best Segments";
+        state.CurrentTimingMethod = LiveSplit.Model.TimingMethod.GameTime;
+        runtime.Update();
 
         var response = GetRuntimeState(runtime);
-
-        Assert.Equal("changed", response.CustomVariables["custom"]);
-        Assert.Equal(1UL, response.RuntimeRevision);
+        Assert.Equal("Best Segments", response.CurrentComparison);
+        Assert.Equal(ProtocolTimingMethod.GameTime, response.CurrentTimingMethod);
+        Assert.Equal(2UL, response.RuntimeRevision);
     }
 
     [Fact]
@@ -104,11 +123,9 @@ public class DetailedRpcSyncTests
         var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        // Changes made before any monitoring runs.
-        run.GameName = "Changed Game";
-        run[0].SplitTime = new Time(TimeSpan.FromSeconds(1), null);
-        state.CurrentComparison = "Best Segments";
-        run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
+        run.GameName = "Committed";
+        state.CallRunManuallyModified();
+        runtime.Update();
 
         var attach = Handle(runtime, new Request { RequestId = 1, Attach = new AttachRequest() });
         var timerState = attach.Attach.TimerState;
@@ -125,19 +142,18 @@ public class DetailedRpcSyncTests
     [Fact]
     public void ReadDoesNotConsumePendingRuntimeObservation()
     {
-        var state = CreateState(out var run);
+        var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        run.GameName = "Changed Game";
         state.CurrentComparison = "Best Segments";
 
-        var runRevision = GetRun(runtime).RunRevision;
         var runtimeRevision = GetRuntimeState(runtime).RuntimeRevision;
 
-        // Reads do not consume a pending change; only the lightweight monitor does.
-        runtime.ObserveExternalState();
+        // Reads do not consume a pending change; only Update does.
+        Assert.Equal(runtimeRevision, GetRuntimeState(runtime).RuntimeRevision);
 
-        Assert.Equal(runRevision, runtime.RunRevision);
+        runtime.Update();
+
         Assert.Equal(runtimeRevision + 1, runtime.RuntimeRevision);
     }
 
@@ -157,37 +173,39 @@ public class DetailedRpcSyncTests
     }
 
     [Fact]
-    public void GetRunCapturesStateInSingleUiThreadRead()
+    public void DetailedQueriesDoNotDispatchToUiThread()
     {
         var state = CreateState(out _);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        // State and its current generation are captured within one UI call.
         var before = runtime.Adapter.UiThreadDispatchCount;
         GetRun(runtime);
-        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
-    }
-
-    [Fact]
-    public void GetAttemptCapturesStateInSingleUiThreadRead()
-    {
-        var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-
-        var before = runtime.Adapter.UiThreadDispatchCount;
         GetAttempt(runtime);
-        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+        GetRuntimeState(runtime);
+        Assert.Equal(before, runtime.Adapter.UiThreadDispatchCount);
     }
 
     [Fact]
-    public void GetRuntimeStateCapturesStateInSingleUiThreadRead()
+    public void RepeatedDetailedQueriesDoNotRebuildProjections()
     {
-        var state = CreateState(out _);
+        var state = CreateState(out var run);
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
-        var before = runtime.Adapter.UiThreadDispatchCount;
-        GetRuntimeState(runtime);
-        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+        var builds = 0;
+        runtime.Adapter.BeforeBuildRunState = () => builds++;
+
+        GetRun(runtime);
+        GetRun(runtime);
+        GetRun(runtime);
+
+        Assert.Equal(0, builds);
+
+        run.GameName = "Changed";
+        state.CallRunManuallyModified();
+        runtime.Update();
+
+        Assert.Equal(1, builds);
+        Assert.Equal(2UL, runtime.RunRevision);
     }
 
     [Fact]
@@ -211,126 +229,6 @@ public class DetailedRpcSyncTests
         Assert.Equal(runRevision, runtime.RunRevision);
         Assert.Equal(attemptRevision, runtime.AttemptRevision);
         Assert.Equal(runtimeRevision, runtime.RuntimeRevision);
-    }
-
-    [Fact]
-    public void GetRunRetriesWhenRunRevisionChangesDuringBuild()
-    {
-        var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        var firstBuild = true;
-        runtime.Adapter.BeforeBuildRunState = () =>
-        {
-            if (!firstBuild)
-            {
-                return;
-            }
-
-            firstBuild = false;
-            run.GameName = "Changed During Build";
-            state.CallRunManuallyModified();
-        };
-
-        var runState = GetRun(runtime);
-
-        Assert.Equal(2UL, runState.RunRevision);
-        Assert.Equal("Changed During Build", runState.GameName);
-        Assert.Equal(2UL, runtime.RunRevision);
-    }
-
-    [Fact]
-    public void GetAttemptRetriesWhenSplitHappensDuringBuild()
-    {
-        var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        var model = new TimerModel { CurrentState = state };
-        model.Start();
-
-        var firstBuild = true;
-        runtime.Adapter.BeforeBuildAttemptState = () =>
-        {
-            if (!firstBuild)
-            {
-                return;
-            }
-
-            firstBuild = false;
-            model.Split();
-        };
-
-        var attempt = GetAttempt(runtime);
-
-        Assert.Equal(3UL, attempt.AttemptRevision);
-        Assert.True(attempt.Segments[0].SplitTime.HasRealTimeTicks);
-        Assert.Equal(3UL, runtime.AttemptRevision);
-    }
-
-    [Fact]
-    public void GetRunReturnsErrorWhenSnapshotNeverStabilizes()
-    {
-        var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        runtime.Adapter.BeforeBuildRunState = () =>
-        {
-            run.GameName = $"changing";
-            state.CallRunManuallyModified();
-        };
-
-        var response = Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() });
-
-        Assert.NotNull(response.Error);
-        Assert.Equal(103, response.Error.Code);
-        Assert.Null(response.GetRun);
-    }
-
-    [Fact]
-    public void GetAttemptReturnsErrorWhenSnapshotNeverStabilizes()
-    {
-        var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        var model = new TimerModel { CurrentState = state };
-        var running = false;
-        runtime.Adapter.BeforeBuildAttemptState = () =>
-        {
-            if (running)
-            {
-                model.Reset();
-            }
-            else
-            {
-                model.Start();
-            }
-
-            running = !running;
-        };
-
-        var response = Handle(runtime, new Request { RequestId = 1, GetAttempt = new GetAttemptRequest() });
-
-        Assert.NotNull(response.Error);
-        Assert.Equal(103, response.Error.Code);
-        Assert.Null(response.GetAttempt);
-    }
-
-    [Fact]
-    public void GetRuntimeStateReturnsErrorWhenSnapshotNeverStabilizes()
-    {
-        var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        var gameTime = false;
-        runtime.Adapter.BeforeBuildRuntimeState = () =>
-        {
-            state.CurrentTimingMethod = gameTime
-                ? LiveSplit.Model.TimingMethod.RealTime
-                : LiveSplit.Model.TimingMethod.GameTime;
-            gameTime = !gameTime;
-            runtime.ObserveExternalState();
-        };
-
-        var response = Handle(runtime, new Request { RequestId = 1, GetRuntimeState = new GetRuntimeStateRequest() });
-
-        Assert.NotNull(response.Error);
-        Assert.Equal(103, response.Error.Code);
-        Assert.Null(response.GetRuntimeState);
     }
 
     private static LiveSplitState CreateState(out Run run)

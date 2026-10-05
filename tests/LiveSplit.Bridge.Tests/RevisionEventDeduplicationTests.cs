@@ -8,7 +8,7 @@ namespace LiveSplit.Bridge.Tests;
 public class RevisionEventDeduplicationTests
 {
     [Fact]
-    public async Task RpcTimerOperationIsNotRepublishedByExternalObservation()
+    public async Task RpcTimerOperationCommitsAttemptProjectionExactlyOnce()
     {
         using var harness = await Harness.CreateAsync();
         await harness.WaitForHeartbeatAsync();
@@ -23,19 +23,25 @@ public class RevisionEventDeduplicationTests
         Assert.True(response.Operation.Success);
 
         var started = await harness.ReceiveUntilAsync(BridgeEventType.EventTimerStarted);
-        Assert.Equal(2UL, started.TimerState.AttemptRevision);
+        // The immediate timer transition reports the previously published attempt
+        // generation; the projection is committed later by Update.
+        Assert.Equal(1UL, started.TimerState.AttemptRevision);
 
-        // The RPC operation already refreshed the observed state. Re-observing must
-        // not emit a duplicate event for the same change.
-        harness.Runtime.ObserveExternalState();
-        harness.Runtime.ObserveExternalState();
+        harness.Runtime.Update();
+
+        var attemptChanged = await harness.ReceiveUntilAsync(BridgeEventType.EventAttemptChanged);
+        Assert.Equal(2UL, attemptChanged.TimerState.AttemptRevision);
+
+        // Re-observing must not emit a duplicate event for the same change.
+        harness.Runtime.Update();
+        harness.Runtime.Update();
 
         var duplicate = await harness.TryReceiveNonHeartbeatAsync(TimeSpan.FromSeconds(1));
         Assert.Null(duplicate);
     }
 
     [Fact]
-    public async Task RpcGameTimeOperationIsNotRepublishedByExternalObservation()
+    public async Task RpcGameTimeOperationIsNotRepublishedByUpdate()
     {
         using var harness = await Harness.CreateAsync();
         await harness.WaitForHeartbeatAsync();
@@ -52,7 +58,7 @@ public class RevisionEventDeduplicationTests
         var initialized = await harness.ReceiveUntilAsync(BridgeEventType.EventGameTimeInitialized);
         Assert.Equal(1UL, initialized.EventSequence);
 
-        harness.Runtime.ObserveExternalState();
+        harness.Runtime.Update();
 
         var duplicate = await harness.TryReceiveNonHeartbeatAsync(TimeSpan.FromSeconds(1));
         Assert.Null(duplicate);

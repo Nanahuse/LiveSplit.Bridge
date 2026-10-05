@@ -9,7 +9,7 @@ namespace LiveSplit.Bridge.Tests;
 public class UiOperationTests
 {
     [Fact]
-    public async Task SplitResponseIsCapturedBeforeTheNextUiTurn()
+    public async Task SplitResponseReportsTimerStateBeforeProjectionCommit()
     {
         using var ui = await UiHost.CreateAsync();
         await ui.InvokeAsync(() =>
@@ -26,21 +26,27 @@ public class UiOperationTests
         }, TimeSpan.FromSeconds(5));
         Assert.True(response.Operation.Success, response.Operation.Message);
         Assert.Equal(1, response.Operation.TimerState.SplitIndex);
-        Assert.Equal(3UL, response.Operation.TimerState.AttemptRevision);
+        // The detailed projections are committed later; the operation response
+        // still reports the previously published attempt generation.
+        Assert.Equal(1UL, response.Operation.TimerState.AttemptRevision);
         await ui.InvokeAsync(() => Assert.Equal(2, ui.State.CurrentSplitIndex));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ResetPublishesSingleTimerResetCarryingRunAndAttemptRevisions(bool rpcReset)
+    public async Task ResetPublishesTimerResetThenProjectionChangedEvents(bool rpcReset)
     {
         using var ui = await UiHost.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(ui.Port));
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
-        var started = await ReadEventAsync(events, BridgeEventType.EventTimerStarted);
-        var stateBefore = started.TimerState.StateRevision;
+        // Commit the start before resetting so the reset generation is well defined.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        await DrainAsync(events);
+
+        var runBefore = ui.Runtime.RunRevision;
+        var attemptBefore = ui.Runtime.AttemptRevision;
 
         if (rpcReset)
         {
@@ -51,25 +57,36 @@ public class UiOperationTests
                 TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
             }, TimeSpan.FromSeconds(5));
             Assert.True(response.Operation.Success);
-            Assert.Equal(2UL, response.Operation.TimerState.RunRevision);
-            Assert.Equal(3UL, response.Operation.TimerState.AttemptRevision);
+            Assert.Equal(runBefore, response.Operation.TimerState.RunRevision);
+            Assert.Equal(attemptBefore, response.Operation.TimerState.AttemptRevision);
         }
         else
         {
             await ui.InvokeAsync(() => new TimerModel { CurrentState = ui.State }.Reset());
         }
 
-        // Reset is expressed by a single EVENT_TIMER_RESET; no separate
-        // EVENT_RUN_CHANGED follows. The event carries all updated generations.
-        var reset = await ReadEventAsync(events, BridgeEventType.EventTimerReset);
-        Assert.Equal(2UL, reset.TimerState.RunRevision);
-        Assert.Equal(3UL, reset.TimerState.AttemptRevision);
-        Assert.True(reset.TimerState.StateRevision > stateBefore);
-        await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+        // Reset is expressed by a single EVENT_TIMER_RESET carrying the previously
+        // published generations. No separate EVENT_RUN_CHANGED is emitted yet.
+        var reset = await ReadUntilAsync(events, BridgeEventType.EventTimerReset);
+        Assert.Equal(runBefore, reset.TimerState.RunRevision);
+        Assert.Equal(attemptBefore, reset.TimerState.AttemptRevision);
+        Assert.Equal(runBefore, ui.Runtime.RunRevision);
+
+        // The projections are committed on the next UI turn, after FixSplits.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+
+        var attemptChanged = await ReadUntilAsync(events, BridgeEventType.EventAttemptChanged);
+        var runChanged = await ReadUntilAsync(events, BridgeEventType.EventRunChanged);
+        Assert.True(attemptChanged.EventSequence > reset.EventSequence);
+        Assert.True(runChanged.EventSequence > attemptChanged.EventSequence);
+        Assert.Equal(attemptBefore + 1, attemptChanged.TimerState.AttemptRevision);
+        Assert.Equal(runBefore + 1, runChanged.TimerState.RunRevision);
+
+        await ReadUntilAsync(events, BridgeEventType.EventHeartbeat);
     }
 
     [Fact]
-    public async Task SlowGetRunDoesNotBlockSplitFromAnotherConnection()
+    public async Task SlowProjectionCommitDoesNotBlockSplitFromAnotherConnection()
     {
         using var ui = await UiHost.CreateAsync();
         using var entered = new ManualResetEventSlim(false);
@@ -80,21 +97,28 @@ public class UiOperationTests
             release.Wait(TimeSpan.FromSeconds(10));
         };
 
-        using var rpcRun = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         using var rpcSplit = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
 
-        var getRunTask = rpcRun.SendRequestAsync(new Request
+        var committed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ui.State.Form.BeginInvoke((Action)(() =>
         {
-            ProtocolVersion = 2,
-            RequestId = 1,
-            GetRun = new GetRunRequest(),
-        }, TimeSpan.FromSeconds(15));
+            try
+            {
+                ui.State.CallRunManuallyModified();
+                ui.Runtime.Update();
+                committed.TrySetResult(true);
+            }
+            catch (Exception exception)
+            {
+                committed.TrySetException(exception);
+            }
+        }));
 
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "get_run did not start.");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "projection build did not start.");
 
-        // get_run is holding the UI thread, but Split from another connection must
-        // still complete because it never takes the query path or a global lock.
+        // The UI thread is busy building the run projection, but Split from another
+        // connection runs on its own thread and must still complete.
         var splitResponse = await rpcSplit.SendRequestAsync(new Request
         {
             ProtocolVersion = 2,
@@ -105,12 +129,12 @@ public class UiOperationTests
         Assert.Equal(1, splitResponse.Operation.TimerState.SplitIndex);
 
         release.Set();
-        var runResponse = await getRunTask;
-        Assert.NotNull(runResponse.GetRun);
+        await committed.Task;
+        Assert.Equal(2UL, ui.Runtime.RunRevision);
     }
 
     [Fact]
-    public async Task GetRunDuringResetFixSplitsDoesNotReturnIntermediateState()
+    public async Task GetRunDuringResetReturnsLastCompletedProjection()
     {
         using var ui = await UiHost.CreateAsync();
         using var entered = new ManualResetEventSlim(false);
@@ -124,6 +148,8 @@ public class UiOperationTests
         using var rpcReset = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         using var rpcRun = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        var runRevisionBefore = ui.Runtime.RunRevision;
 
         var resetTask = rpcReset.SendRequestAsync(new Request
         {
@@ -134,35 +160,46 @@ public class UiOperationTests
 
         Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "Reset did not reach the FixSplits window.");
 
-        // run_revision is already advanced but FixSplits has not run. A stable
-        // snapshot is not possible, so the query must fail instead of returning
-        // the intermediate run content with the new revision.
+        // FixSplits has not run, but the query still returns the last completed
+        // projection with a matching revision instead of an intermediate state.
         var duringReset = await rpcRun.SendRequestAsync(new Request
         {
             ProtocolVersion = 2,
             RequestId = 2,
             GetRun = new GetRunRequest(),
         }, TimeSpan.FromSeconds(10));
-        Assert.NotNull(duringReset.Error);
-        Assert.Null(duringReset.GetRun);
-        Assert.Equal(103, duringReset.Error.Code);
+        Assert.Null(duringReset.Error);
+        Assert.NotNull(duringReset.GetRun);
+        Assert.Equal(runRevisionBefore, duringReset.GetRun.Run.RunRevision);
 
         release.Set();
         var resetResponse = await resetTask;
         Assert.True(resetResponse.Operation.Success, resetResponse.Operation.Message);
 
-        var afterReset = await rpcRun.SendRequestAsync(new Request
+        // Still the old projection until the commit happens on the UI thread.
+        var beforeCommit = await rpcRun.SendRequestAsync(new Request
         {
             ProtocolVersion = 2,
             RequestId = 3,
             GetRun = new GetRunRequest(),
         }, TimeSpan.FromSeconds(10));
-        Assert.NotNull(afterReset.GetRun);
-        Assert.True(afterReset.GetRun.Run.RunRevision >= 2UL);
+        Assert.Null(beforeCommit.Error);
+        Assert.Equal(runRevisionBefore, beforeCommit.GetRun.Run.RunRevision);
+
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+
+        var afterCommit = await rpcRun.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 4,
+            GetRun = new GetRunRequest(),
+        }, TimeSpan.FromSeconds(10));
+        Assert.NotNull(afterCommit.GetRun);
+        Assert.Equal(runRevisionBefore + 1, afterCommit.GetRun.Run.RunRevision);
     }
 
     [Fact]
-    public async Task GetAttemptDuringSplitDoesNotReturnIntermediateState()
+    public async Task GetAttemptDuringSplitReturnsLastCompletedProjection()
     {
         using var ui = await UiHost.CreateAsync();
         using var entered = new ManualResetEventSlim(false);
@@ -176,6 +213,8 @@ public class UiOperationTests
         using var rpcSplit = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         using var rpcAttempt = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        var attemptRevisionBefore = ui.Runtime.AttemptRevision;
 
         var splitTask = rpcSplit.SendRequestAsync(new Request
         {
@@ -192,13 +231,16 @@ public class UiOperationTests
             RequestId = 2,
             GetAttempt = new GetAttemptRequest(),
         }, TimeSpan.FromSeconds(10));
-        Assert.NotNull(duringSplit.Error);
-        Assert.Null(duringSplit.GetAttempt);
-        Assert.Equal(103, duringSplit.Error.Code);
+        Assert.Null(duringSplit.Error);
+        Assert.NotNull(duringSplit.GetAttempt);
+        Assert.Equal(attemptRevisionBefore, duringSplit.GetAttempt.Attempt.AttemptRevision);
+        Assert.False(duringSplit.GetAttempt.Attempt.Segments[0].SplitTime.HasRealTimeTicks);
 
         release.Set();
         var splitResponse = await splitTask;
         Assert.True(splitResponse.Operation.Success, splitResponse.Operation.Message);
+
+        await ui.InvokeAsync(() => ui.Runtime.Update());
 
         var afterSplit = await rpcAttempt.SendRequestAsync(new Request
         {
@@ -207,12 +249,12 @@ public class UiOperationTests
             GetAttempt = new GetAttemptRequest(),
         }, TimeSpan.FromSeconds(10));
         Assert.NotNull(afterSplit.GetAttempt);
-        Assert.True(afterSplit.GetAttempt.Attempt.AttemptRevision >= 3UL);
+        Assert.Equal(attemptRevisionBefore + 1, afterSplit.GetAttempt.Attempt.AttemptRevision);
         Assert.True(afterSplit.GetAttempt.Attempt.Segments[0].SplitTime.HasRealTimeTicks);
     }
 
     [Fact]
-    public async Task ExternalResetDuringFixSplitsDoesNotReturnIntermediateState()
+    public async Task ExternalResetDuringFixSplitsReturnsLastCompletedProjection()
     {
         using var ui = await UiHost.CreateAsync();
         using var entered = new ManualResetEventSlim(false);
@@ -225,6 +267,8 @@ public class UiOperationTests
 
         using var rpcRun = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        var runRevisionBefore = ui.Runtime.RunRevision;
 
         // Bridge外: a TimerModel created directly on a background thread, the same
         // shape LiveSplit's own command server uses.
@@ -238,11 +282,13 @@ public class UiOperationTests
             RequestId = 1,
             GetRun = new GetRunRequest(),
         }, TimeSpan.FromSeconds(10));
-        Assert.NotNull(duringReset.Error);
-        Assert.Equal(103, duringReset.Error.Code);
+        Assert.Null(duringReset.Error);
+        Assert.Equal(runRevisionBefore, duringReset.GetRun.Run.RunRevision);
 
         release.Set();
         await resetTask;
+
+        await ui.InvokeAsync(() => ui.Runtime.Update());
 
         var afterReset = await rpcRun.SendRequestAsync(new Request
         {
@@ -251,11 +297,11 @@ public class UiOperationTests
             GetRun = new GetRunRequest(),
         }, TimeSpan.FromSeconds(10));
         Assert.NotNull(afterReset.GetRun);
-        Assert.True(afterReset.GetRun.Run.RunRevision >= 2UL);
+        Assert.Equal(runRevisionBefore + 1, afterReset.GetRun.Run.RunRevision);
     }
 
     [Fact]
-    public async Task ExternalSplitDuringAttemptBuildDoesNotReturnIntermediateState()
+    public async Task ExternalSplitDuringMutationReturnsLastCompletedProjection()
     {
         using var ui = await UiHost.CreateAsync();
         using var entered = new ManualResetEventSlim(false);
@@ -268,7 +314,8 @@ public class UiOperationTests
 
         using var rpcAttempt = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
-        await Task.Delay(50);
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        var attemptRevisionBefore = ui.Runtime.AttemptRevision;
 
         // Bridge外: a Split issued directly from a background thread.
         var splitTask = Task.Run(() => new TimerModel { CurrentState = ui.State }.Split());
@@ -281,11 +328,13 @@ public class UiOperationTests
             RequestId = 1,
             GetAttempt = new GetAttemptRequest(),
         }, TimeSpan.FromSeconds(10));
-        Assert.NotNull(duringSplit.Error);
-        Assert.Equal(103, duringSplit.Error.Code);
+        Assert.Null(duringSplit.Error);
+        Assert.Equal(attemptRevisionBefore, duringSplit.GetAttempt.Attempt.AttemptRevision);
 
         release.Set();
         await splitTask;
+
+        await ui.InvokeAsync(() => ui.Runtime.Update());
 
         var afterSplit = await rpcAttempt.SendRequestAsync(new Request
         {
@@ -294,7 +343,7 @@ public class UiOperationTests
             GetAttempt = new GetAttemptRequest(),
         }, TimeSpan.FromSeconds(10));
         Assert.NotNull(afterSplit.GetAttempt);
-        Assert.True(afterSplit.GetAttempt.Attempt.AttemptRevision >= 3UL);
+        Assert.Equal(attemptRevisionBefore + 1, afterSplit.GetAttempt.Attempt.AttemptRevision);
         Assert.True(afterSplit.GetAttempt.Attempt.Segments[0].SplitTime.HasRealTimeTicks);
     }
 
@@ -309,6 +358,7 @@ public class UiOperationTests
             ui.State.CurrentComparison = "Renamed";
             ui.State.CallComparisonRenamed(EventArgs.Empty);
             ui.State.CallRunManuallyModified();
+            ui.Runtime.Update();
         });
         var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
         var runtime = await ReadEventAsync(events, BridgeEventType.EventRuntimeChanged);
@@ -331,6 +381,7 @@ public class UiOperationTests
             // The current comparison is unchanged by this rename.
             ui.State.CallComparisonRenamed(EventArgs.Empty);
             ui.State.CallRunManuallyModified();
+            ui.Runtime.Update();
         });
         var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
         Assert.Equal(2UL, run.TimerState.RunRevision);
@@ -350,6 +401,7 @@ public class UiOperationTests
         {
             ui.State.CallComparisonRenamed(EventArgs.Empty);
             ui.State.CallRunManuallyModified();
+            ui.Runtime.Update();
         });
         await ReadEventAsync(events, BridgeEventType.EventRunChanged);
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
@@ -358,6 +410,7 @@ public class UiOperationTests
         {
             ui.State.Run.GameName = "Changed";
             ui.State.CallRunManuallyModified();
+            ui.Runtime.Update();
         });
         var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
         Assert.Equal(3UL, run.TimerState.RunRevision);
@@ -366,6 +419,42 @@ public class UiOperationTests
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
     }
 
+    // Reads until a heartbeat arrives with no event published since the previous
+    // heartbeat, which drains events published before the reset.
+    private static async Task DrainAsync(WebSocketTestClient client)
+    {
+        var sawEventSinceHeartbeat = false;
+        while (true)
+        {
+            BridgeEvent result;
+            try
+            {
+                result = BridgeEvent.Parser.ParseFrom(
+                    await client.ReceiveBinaryAsync(TimeSpan.FromSeconds(3)));
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (result.Type == BridgeEventType.EventHeartbeat)
+            {
+                if (!sawEventSinceHeartbeat)
+                {
+                    return;
+                }
+
+                sawEventSinceHeartbeat = false;
+            }
+            else
+            {
+                sawEventSinceHeartbeat = true;
+            }
+        }
+    }
+
+    // Strict: the next non-heartbeat event must be the expected one. Used to prove
+    // that no other projection changed event is published.
     private static async Task<BridgeEvent> ReadEventAsync(WebSocketTestClient client, BridgeEventType expected)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -377,6 +466,33 @@ public class UiOperationTests
             Assert.Equal(expected, result.Type);
             return result;
         }
+        throw new TimeoutException($"Did not receive {expected}.");
+    }
+
+    // Lenient: scans past unrelated events. Used when events may legitimately
+    // interleave but relative ordering among the found events is still asserted.
+    private static async Task<BridgeEvent> ReadUntilAsync(WebSocketTestClient client, BridgeEventType expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            BridgeEvent result;
+            try
+            {
+                result = BridgeEvent.Parser.ParseFrom(
+                    await client.ReceiveBinaryAsync(deadline - DateTime.UtcNow));
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (result.Type == expected)
+            {
+                return result;
+            }
+        }
+
         throw new TimeoutException($"Did not receive {expected}.");
     }
 

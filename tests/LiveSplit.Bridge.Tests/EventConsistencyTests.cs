@@ -8,11 +8,9 @@ namespace LiveSplit.Bridge.Tests;
 public class EventConsistencyTests
 {
     [Fact]
-    public async Task ConcurrentRunChangesProduceMonotonicSequenceAndConsistentRevisions()
+    public async Task SequentialRunCommitsProduceMonotonicSequenceAndRevisions()
     {
-        const int threadCount = 8;
-        const int perThread = 25;
-        const int total = threadCount * perThread;
+        const int commits = 20;
 
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -23,30 +21,16 @@ public class EventConsistencyTests
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
 
-        var workers = new Thread[threadCount];
-        for (var thread = 0; thread < threadCount; thread++)
+        for (var iteration = 0; iteration < commits; iteration++)
         {
-            workers[thread] = new Thread(() =>
-            {
-                for (var iteration = 0; iteration < perThread; iteration++)
-                {
-                    state.CallRunManuallyModified();
-                }
-            })
-            {
-                IsBackground = true
-            };
-            workers[thread].Start();
-        }
-
-        foreach (var worker in workers)
-        {
-            worker.Join();
+            run.GameName = $"Change {iteration}";
+            state.CallRunManuallyModified();
+            runtime.Update();
         }
 
         var received = new List<BridgeEvent>();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (received.Count < total && DateTime.UtcNow < deadline)
+        while (received.Count < commits && DateTime.UtcNow < deadline)
         {
             var data = await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(3));
             var bridgeEvent = BridgeEvent.Parser.ParseFrom(data);
@@ -56,7 +40,7 @@ public class EventConsistencyTests
             }
         }
 
-        Assert.Equal(total, received.Count);
+        Assert.Equal(commits, received.Count);
 
         // event_sequence and the revision captured in its TimerState describe the
         // same logical point, so both increase in lockstep without gaps.
@@ -66,6 +50,24 @@ public class EventConsistencyTests
             Assert.NotNull(received[index].TimerState);
             Assert.Equal((ulong)(index + 2), received[index].TimerState.RunRevision);
         }
+    }
+
+    [Fact]
+    public void CoalescedRunChangesCommitASingleProjection()
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+
+        for (var iteration = 0; iteration < 25; iteration++)
+        {
+            state.CallRunManuallyModified();
+        }
+
+        runtime.Update();
+
+        Assert.Equal(2UL, runtime.RunRevision);
     }
 
     private static async Task<BridgeEvent> ReceiveUntilAsync(WebSocketTestClient client, BridgeEventType type)

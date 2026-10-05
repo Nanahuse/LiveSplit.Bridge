@@ -150,7 +150,9 @@ public class BridgeRuntimeRpcTests
         Assert.NotNull(response.Operation);
         Assert.True(response.Operation.Success);
         Assert.NotNull(response.Operation.TimerState);
-        Assert.Equal(2UL, response.Operation.TimerState.AttemptRevision);
+        // The attempt projection is committed by a later Update, so the immediate
+        // operation response still reports the previously published generation.
+        Assert.Equal(1UL, response.Operation.TimerState.AttemptRevision);
     }
 
     [Fact]

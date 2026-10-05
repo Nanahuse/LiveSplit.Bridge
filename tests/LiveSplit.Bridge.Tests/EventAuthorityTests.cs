@@ -10,23 +10,22 @@ namespace LiveSplit.Bridge.Tests;
 public class EventAuthorityTests
 {
     [Fact]
-    public void TimerOperationsDoNotReadIconsOrSynchronizeUnrelatedState()
+    public void TimerOperationsDoNotBuildRunOrRuntimeProjections()
     {
         var run = new GuardedRun();
         run.Add(new Segment("One"));
         run.Add(new Segment("Two"));
-        // A disposed icon throws if a fingerprint or PNG encoder touches it.
         var icon = new Bitmap(2, 2);
-        icon.Dispose();
         run.GameIcon = icon;
         run[0].Icon = icon;
         var state = TestLiveSplitState.Create(run);
         using var form = state.Form;
-        run.RejectFullReads = true;
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
-        run.GameName = "Unannounced change";
-        run.Metadata.GetOrAddCustomVariable("variable").Value = "changed";
-        state.CurrentComparison = "Best Segments";
+
+        // From here on any attempt to rebuild the run or read its comparisons must
+        // fail, so timer operations can be proven not to touch the run.
+        icon.Dispose();
+        run.RejectFullReads = true;
 
         foreach (var operation in new[] { TimerOperationType.TimerStart,
             TimerOperationType.TimerSkip, TimerOperationType.TimerUndo,
@@ -48,16 +47,16 @@ public class EventAuthorityTests
             Assert.Equal(1UL, runtime.RuntimeRevision);
         }
 
-        Assert.Equal(5UL, runtime.AttemptRevision);
+        // Timer transitions only marked the attempt dirty; they never committed a
+        // projection and never synchronized the unrelated run/runtime state.
+        Assert.Equal(1UL, runtime.AttemptRevision);
+        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(1UL, runtime.RuntimeRevision);
         Assert.Equal(7UL, runtime.StateRevision);
-        state.CallRunManuallyModified();
-        Assert.Equal(2UL, runtime.RunRevision);
-        runtime.ObserveExternalState();
-        Assert.Equal(2UL, runtime.RuntimeRevision);
     }
 
     [Fact]
-    public void SkipAndUndoAdvanceAttemptEvenWhenContentIsUnchanged()
+    public void SkipAndUndoAdvanceAttemptOnlyAfterCommit()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -67,15 +66,18 @@ public class EventAuthorityTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         var model = new TimerModel { CurrentState = state };
         model.Start();
+        runtime.Update();
         model.SkipSplit();
+        runtime.Update();
         Assert.Equal(3UL, runtime.AttemptRevision);
         model.UndoSplit();
+        runtime.Update();
         Assert.Equal(4UL, runtime.AttemptRevision);
         Assert.All(run, segment => Assert.Null(segment.SplitTime.RealTime));
     }
 
     [Fact]
-    public void ResetResponseCarriesUpdatedGenerationsWithoutDeferredCallback()
+    public void ResetTimerEventKeepsGenerationsUntilCommit()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -84,6 +86,7 @@ public class EventAuthorityTests
         _ = state.Form.Handle;
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart);
+        runtime.Update();
         var before = runtime.Adapter.UiThreadDispatchCount;
         var response = runtime.HandleRequest(new Request
         {
@@ -93,13 +96,19 @@ public class EventAuthorityTests
         Assert.True(response.Operation.Success, response.Operation.Message);
         // Reset no longer dispatches to the UI thread.
         Assert.Equal(before, runtime.Adapter.UiThreadDispatchCount);
-        // The response already reflects the reset generations.
-        Assert.Equal(2UL, response.Operation.TimerState.RunRevision);
-        Assert.Equal(3UL, response.Operation.TimerState.AttemptRevision);
-        Assert.Equal(2UL, runtime.RunRevision);
-        // No deferred callback should advance the run revision on the next turn.
+        // EVENT_TIMER_RESET is immediate but does not advance the run/attempt
+        // generations; the projections are not complete until FixSplits has run.
+        Assert.Equal(1UL, response.Operation.TimerState.RunRevision);
+        Assert.Equal(2UL, response.Operation.TimerState.AttemptRevision);
+        Assert.Equal(1UL, runtime.RunRevision);
+        Assert.Equal(2UL, runtime.AttemptRevision);
+        // No deferred callback advances the run revision on the next turn.
         Application.DoEvents();
+        Assert.Equal(1UL, runtime.RunRevision);
+        // The later commit publishes the new generations.
+        runtime.Update();
         Assert.Equal(2UL, runtime.RunRevision);
+        Assert.Equal(3UL, runtime.AttemptRevision);
     }
 
     [Fact]
@@ -113,20 +122,17 @@ public class EventAuthorityTests
         using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
-        // The rename pair has finished in the same call stack; the pending
-        // runtime check must not leak into a later UI turn.
-        Application.DoEvents();
+        runtime.Update();
         Assert.Equal(2UL, runtime.RunRevision);
         Assert.Equal(1UL, runtime.RuntimeRevision);
 
         state.CurrentComparison = "Renamed";
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
-        // The current comparison changed, so RuntimeState is synchronized in the
-        // same call stack, right after the run change.
+        runtime.Update();
         Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(2UL, runtime.RuntimeRevision);
-        runtime.ObserveExternalState();
+        runtime.Update();
         Assert.Equal(3UL, runtime.RunRevision);
         Assert.Equal(2UL, runtime.RuntimeRevision);
     }

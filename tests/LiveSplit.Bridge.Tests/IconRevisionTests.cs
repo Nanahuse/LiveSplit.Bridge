@@ -23,6 +23,7 @@ public class IconRevisionTests
         using var second = CreateBitmap(Color.Red);
         run.GameIcon = second;
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -45,6 +46,7 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -63,6 +65,7 @@ public class IconRevisionTests
         using var second = CreateBitmap(Color.Green);
         run[0].Icon = second;
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -84,6 +87,7 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
+        runtime.Update();
 
         Assert.Equal(2UL, runtime.RunRevision);
     }
@@ -108,6 +112,7 @@ public class IconRevisionTests
         }
 
         state.CallRunManuallyModified();
+        runtime.Update();
 
         var second = GetRun(runtime);
         Assert.NotEqual(first.GameIcon.Data, second.GameIcon.Data);
