@@ -280,10 +280,16 @@ Stateを再取得してください。revisionは内容のfingerprintではな�
 「世代が変わったなら再取得が必要」を表し、「返却内容が必ず異なる」ことは保証しません。
 
 `attach`、`get_timer_state`は現在の軽量`TimerState`とrevisionを直接読み取ります。
-`get_run`、`get_attempt`、`get_runtime_state`は重いStateを構築しますが、構築の前後で
-対応するrevisionを確認し、構築中に世代が進んだ場合は上限付きで再取得します。読み取りを
-契機にrevisionを更新したり、変更イベントを発行したりしません。Run / Attemptの定期
-fallback監視もありません。LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、
+`get_run`、`get_attempt`、`get_runtime_state`は重いStateを構築します。このとき
+`get_run`と`get_attempt`は、対応するrevisionが構築中に変化していないことに加え、
+Control mutation（Timer / GameTime操作）と競合していないことを確認し、安定したsnapshot
+だけを返します。`get_runtime_state`は`runtime_revision`が変化していないことを確認します。
+いずれも上限付きで再取得します。
+
+安定したsnapshotを取得できなかった場合は、未検証のStateを返さず、一時的なRPCエラー
+（`error.code = 103`）を返します。クライアントは同じ要求を再送することで再試行できます。
+読み取りを契機にrevisionを更新したり、変更イベントを発行したりしません。Run / Attemptの
+定期fallback監視もありません。LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、
 世代更新の対象になりません。RunのSegment、Comparison一覧、Metadata、PNGアイコン等は
 `get_run`時だけ構築します。RuntimeはComparison切替・renameイベントを使用し、専用
 イベントで網羅できない項目についてはTimer操作とは独立した軽量監視で検出します。

@@ -35,6 +35,7 @@ internal sealed class BridgeRuntime : IDisposable
     private long runRevision;
     private long attemptRevision;
     private long runtimeRevision;
+    private long controlEpoch;
     private GameTimeRevisionState observedGameTimeState;
     private RuntimeRevisionState observedRuntimeState;
     private int runtimeChangePending;
@@ -198,6 +199,10 @@ internal sealed class BridgeRuntime : IDisposable
 
             return MakeErrorResponse(request, 101, "Unknown request type.");
         }
+        catch (SnapshotUnstableException)
+        {
+            return MakeErrorResponse(request, 103, "State changed while snapshot was being captured. Retry the request.");
+        }
         catch (Exception exception)
         {
             return MakeErrorResponse(request, 102, exception.Message);
@@ -209,12 +214,20 @@ internal sealed class BridgeRuntime : IDisposable
         OperationResponse result;
         lock (controlGate)
         {
-            result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
-            if (result.Success)
+            Interlocked.Increment(ref controlEpoch);
+            try
             {
-                // The response reflects the state captured immediately after the
-                // mutation, still inside the control gate.
-                result.TimerState = BuildCurrentTimerState();
+                result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
+                if (result.Success)
+                {
+                    // The response reflects the state captured immediately after
+                    // the mutation, still inside the control gate.
+                    result.TimerState = BuildCurrentTimerState();
+                }
+            }
+            finally
+            {
+                Interlocked.Increment(ref controlEpoch);
             }
         }
 
@@ -231,13 +244,21 @@ internal sealed class BridgeRuntime : IDisposable
         GameTimeOperationExecution execution;
         lock (controlGate)
         {
-            execution = adapter.ExecuteGameTimeOperation(
-                request.GameTimeOperation.Operation,
-                request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
-
-            if (execution.Response.Success)
+            Interlocked.Increment(ref controlEpoch);
+            try
             {
-                execution.Response.TimerState = BuildCurrentTimerState();
+                execution = adapter.ExecuteGameTimeOperation(
+                    request.GameTimeOperation.Operation,
+                    request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
+
+                if (execution.Response.Success)
+                {
+                    execution.Response.TimerState = BuildCurrentTimerState();
+                }
+            }
+            finally
+            {
+                Interlocked.Increment(ref controlEpoch);
             }
         }
 
@@ -249,51 +270,86 @@ internal sealed class BridgeRuntime : IDisposable
         };
     }
 
-    // Query snapshots retry, bounded, when the target generation moves while the
-    // state is being built so a returned revision never describes older content.
+    // Query snapshots are only accepted while the control plane is stable and the
+    // target revision is unchanged for the whole build. A bounded retry loop yields
+    // between attempts without ever taking the control gate. If no stable snapshot
+    // can be produced, the query fails explicitly instead of returning unverified
+    // state.
     private RunState BuildRunStateConsistent()
     {
         for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
         {
-            var before = ReadRunRevision();
-            var snapshot = adapter.BuildRunState(before, sessionId);
-            if (ReadRunRevision() == before)
+            var epochBefore = ReadControlEpoch();
+            if ((epochBefore & 1) != 0)
+            {
+                Thread.Yield();
+                continue;
+            }
+
+            var revisionBefore = ReadRunRevision();
+            var snapshot = adapter.BuildRunState(revisionBefore, sessionId);
+            var revisionAfter = ReadRunRevision();
+            var epochAfter = ReadControlEpoch();
+
+            if (epochBefore == epochAfter
+                && (epochAfter & 1) == 0
+                && revisionBefore == revisionAfter)
             {
                 return snapshot;
             }
+
+            Thread.Yield();
         }
 
-        return adapter.BuildRunState(ReadRunRevision(), sessionId);
+        throw new SnapshotUnstableException("Run state changed while the snapshot was being captured.");
     }
 
     private AttemptState BuildAttemptStateConsistent()
     {
         for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
         {
-            var before = ReadAttemptRevision();
-            var snapshot = adapter.BuildAttemptState(before, sessionId);
-            if (ReadAttemptRevision() == before)
+            var epochBefore = ReadControlEpoch();
+            if ((epochBefore & 1) != 0)
+            {
+                Thread.Yield();
+                continue;
+            }
+
+            var revisionBefore = ReadAttemptRevision();
+            var snapshot = adapter.BuildAttemptState(revisionBefore, sessionId);
+            var revisionAfter = ReadAttemptRevision();
+            var epochAfter = ReadControlEpoch();
+
+            if (epochBefore == epochAfter
+                && (epochAfter & 1) == 0
+                && revisionBefore == revisionAfter)
             {
                 return snapshot;
             }
+
+            Thread.Yield();
         }
 
-        return adapter.BuildAttemptState(ReadAttemptRevision(), sessionId);
+        throw new SnapshotUnstableException("Attempt state changed while the snapshot was being captured.");
     }
 
+    // RuntimeState does not depend on Timer mutations, so only its own revision is
+    // verified rather than the control epoch.
     private RuntimeState BuildRuntimeStateConsistent()
     {
         for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
         {
-            var before = ReadRuntimeRevision();
-            var snapshot = adapter.BuildRuntimeState(before, sessionId);
-            if (ReadRuntimeRevision() == before)
+            var revisionBefore = ReadRuntimeRevision();
+            var snapshot = adapter.BuildRuntimeState(revisionBefore, sessionId);
+            if (ReadRuntimeRevision() == revisionBefore)
             {
                 return snapshot;
             }
+
+            Thread.Yield();
         }
 
-        return adapter.BuildRuntimeState(ReadRuntimeRevision(), sessionId);
+        throw new SnapshotUnstableException("Runtime state changed while the snapshot was being captured.");
     }
 
     private TimerState BuildCurrentTimerState()
@@ -472,7 +528,18 @@ internal sealed class BridgeRuntime : IDisposable
         return unchecked((ulong)Interlocked.Read(ref runtimeRevision));
     }
 
+    private long ReadControlEpoch()
+    {
+        return Interlocked.Read(ref controlEpoch);
+    }
+
     internal LiveSplitAdapter Adapter => adapter;
+
+    // Test seams: allow a test to pause inside a control mutation to exercise
+    // query/snapshot consistency.
+    internal Action? ResetBarrier { get; set; }
+
+    internal Action? SplitBarrier { get; set; }
 
     internal ulong StateRevision => ReadStateRevision();
 
@@ -505,6 +572,7 @@ internal sealed class BridgeRuntime : IDisposable
     private void StateOnSplit(object sender, EventArgs args)
     {
         PublishEvent(BridgeEventType.EventTimerSplit, RevisionChange.Timer);
+        SplitBarrier?.Invoke();
     }
 
     private void StateOnSkipSplit(object sender, EventArgs args)
@@ -525,6 +593,10 @@ internal sealed class BridgeRuntime : IDisposable
         PublishEvent(
             BridgeEventType.EventTimerReset,
             RevisionChange.State | RevisionChange.Attempt | RevisionChange.Run);
+
+        // Test seam: OnReset runs before FixSplits, so a test can pause here while
+        // the run generation is already advanced but the run is still mid-reset.
+        ResetBarrier?.Invoke();
     }
 
     private void StateOnPause(object sender, EventArgs args)
@@ -594,5 +666,15 @@ internal sealed class BridgeRuntime : IDisposable
         return int.TryParse(value, out var port) && port >= 1 && port <= 65535
             ? port
             : defaultValue;
+    }
+}
+
+// Raised when a heavy query cannot produce a snapshot that is consistent with the
+// current generations after the bounded retry budget is exhausted.
+internal sealed class SnapshotUnstableException : Exception
+{
+    public SnapshotUnstableException(string message)
+        : base(message)
+    {
     }
 }

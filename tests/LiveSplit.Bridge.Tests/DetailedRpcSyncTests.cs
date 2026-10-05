@@ -265,6 +265,74 @@ public class DetailedRpcSyncTests
         Assert.Equal(3UL, runtime.AttemptRevision);
     }
 
+    [Fact]
+    public void GetRunReturnsErrorWhenSnapshotNeverStabilizes()
+    {
+        var state = CreateState(out var run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        runtime.Adapter.BeforeBuildRunState = () =>
+        {
+            run.GameName = $"changing";
+            state.CallRunManuallyModified();
+        };
+
+        var response = Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() });
+
+        Assert.NotNull(response.Error);
+        Assert.Equal(103, response.Error.Code);
+        Assert.Null(response.GetRun);
+    }
+
+    [Fact]
+    public void GetAttemptReturnsErrorWhenSnapshotNeverStabilizes()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        var model = new TimerModel { CurrentState = state };
+        var running = false;
+        runtime.Adapter.BeforeBuildAttemptState = () =>
+        {
+            if (running)
+            {
+                model.Reset();
+            }
+            else
+            {
+                model.Start();
+            }
+
+            running = !running;
+        };
+
+        var response = Handle(runtime, new Request { RequestId = 1, GetAttempt = new GetAttemptRequest() });
+
+        Assert.NotNull(response.Error);
+        Assert.Equal(103, response.Error.Code);
+        Assert.Null(response.GetAttempt);
+    }
+
+    [Fact]
+    public void GetRuntimeStateReturnsErrorWhenSnapshotNeverStabilizes()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        var gameTime = false;
+        runtime.Adapter.BeforeBuildRuntimeState = () =>
+        {
+            state.CurrentTimingMethod = gameTime
+                ? LiveSplit.Model.TimingMethod.RealTime
+                : LiveSplit.Model.TimingMethod.GameTime;
+            gameTime = !gameTime;
+            runtime.ObserveExternalState();
+        };
+
+        var response = Handle(runtime, new Request { RequestId = 1, GetRuntimeState = new GetRuntimeStateRequest() });
+
+        Assert.NotNull(response.Error);
+        Assert.Equal(103, response.Error.Code);
+        Assert.Null(response.GetRuntimeState);
+    }
+
     private static LiveSplitState CreateState(out Run run)
     {
         run = new Run(new StandardComparisonGeneratorsFactory());

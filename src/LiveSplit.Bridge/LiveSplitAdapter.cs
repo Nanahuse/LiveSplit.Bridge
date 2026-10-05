@@ -83,6 +83,8 @@ namespace LiveSplit.Bridge
 
         internal Action? BeforeBuildAttemptState { get; set; }
 
+        internal Action? BeforeBuildRuntimeState { get; set; }
+
         public RunState BuildRunState(ulong runRevision, ulong sessionId)
         {
             return InvokeOnUiThread(() =>
@@ -103,7 +105,11 @@ namespace LiveSplit.Bridge
 
         public RuntimeState BuildRuntimeState(ulong runtimeRevision, ulong sessionId)
         {
-            return InvokeOnUiThread(() => BuildRuntimeStateCore(state.Run, runtimeRevision, sessionId));
+            return InvokeOnUiThread(() =>
+            {
+                BeforeBuildRuntimeState?.Invoke();
+                return BuildRuntimeStateCore(state.Run, runtimeRevision, sessionId);
+            });
         }
 
         public RuntimeRevisionState CaptureRuntimeRevisionState()
