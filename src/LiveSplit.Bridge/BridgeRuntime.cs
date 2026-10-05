@@ -36,6 +36,7 @@ internal sealed class BridgeRuntime : IDisposable
     private long attemptRevision;
     private long runtimeRevision;
     private long controlEpoch;
+    private long mutationEpoch;
     private GameTimeRevisionState observedGameTimeState;
     private RuntimeRevisionState observedRuntimeState;
     private int runtimeChangePending;
@@ -279,8 +280,9 @@ internal sealed class BridgeRuntime : IDisposable
     {
         for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
         {
-            var epochBefore = ReadControlEpoch();
-            if ((epochBefore & 1) != 0)
+            var controlBefore = ReadControlEpoch();
+            var mutationBefore = ReadMutationEpoch();
+            if (IsUnstableEpoch(controlBefore, mutationBefore))
             {
                 Thread.Yield();
                 continue;
@@ -289,10 +291,12 @@ internal sealed class BridgeRuntime : IDisposable
             var revisionBefore = ReadRunRevision();
             var snapshot = adapter.BuildRunState(revisionBefore, sessionId);
             var revisionAfter = ReadRunRevision();
-            var epochAfter = ReadControlEpoch();
+            var controlAfter = ReadControlEpoch();
+            var mutationAfter = ReadMutationEpoch();
 
-            if (epochBefore == epochAfter
-                && (epochAfter & 1) == 0
+            if (controlBefore == controlAfter
+                && mutationBefore == mutationAfter
+                && !IsUnstableEpoch(controlAfter, mutationAfter)
                 && revisionBefore == revisionAfter)
             {
                 return snapshot;
@@ -308,8 +312,9 @@ internal sealed class BridgeRuntime : IDisposable
     {
         for (var attempt = 0; attempt < MaxSnapshotAttempts; attempt++)
         {
-            var epochBefore = ReadControlEpoch();
-            if ((epochBefore & 1) != 0)
+            var controlBefore = ReadControlEpoch();
+            var mutationBefore = ReadMutationEpoch();
+            if (IsUnstableEpoch(controlBefore, mutationBefore))
             {
                 Thread.Yield();
                 continue;
@@ -318,10 +323,12 @@ internal sealed class BridgeRuntime : IDisposable
             var revisionBefore = ReadAttemptRevision();
             var snapshot = adapter.BuildAttemptState(revisionBefore, sessionId);
             var revisionAfter = ReadAttemptRevision();
-            var epochAfter = ReadControlEpoch();
+            var controlAfter = ReadControlEpoch();
+            var mutationAfter = ReadMutationEpoch();
 
-            if (epochBefore == epochAfter
-                && (epochAfter & 1) == 0
+            if (controlBefore == controlAfter
+                && mutationBefore == mutationAfter
+                && !IsUnstableEpoch(controlAfter, mutationAfter)
                 && revisionBefore == revisionAfter)
             {
                 return snapshot;
@@ -401,6 +408,25 @@ internal sealed class BridgeRuntime : IDisposable
             // Enqueue while holding the lock to keep broadcast order identical to
             // the assigned event_sequence order. Sending stays on the publisher thread.
             transport.Publish(bridgeEvent);
+        }
+    }
+
+    // Timer events fire on the thread that performs the mutation, whether that is
+    // a Bridge control operation or an external caller such as LiveSplit's own
+    // command server. Bracketing the callback with mutationEpoch lets queries see
+    // that an event-origin mutation is in progress even when it did not come
+    // through the control gate.
+    private void PublishMutationEvent(BridgeEventType type, RevisionChange change, Action? barrier = null)
+    {
+        Interlocked.Increment(ref mutationEpoch);
+        try
+        {
+            PublishEvent(type, change);
+            barrier?.Invoke();
+        }
+        finally
+        {
+            Interlocked.Increment(ref mutationEpoch);
         }
     }
 
@@ -533,6 +559,16 @@ internal sealed class BridgeRuntime : IDisposable
         return Interlocked.Read(ref controlEpoch);
     }
 
+    private long ReadMutationEpoch()
+    {
+        return Interlocked.Read(ref mutationEpoch);
+    }
+
+    private static bool IsUnstableEpoch(long controlEpoch, long mutationEpoch)
+    {
+        return (controlEpoch & 1) != 0 || (mutationEpoch & 1) != 0;
+    }
+
     internal LiveSplitAdapter Adapter => adapter;
 
     // Test seams: allow a test to pause inside a control mutation to exercise
@@ -566,23 +602,22 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void StateOnStart(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerStarted, RevisionChange.Timer);
+        PublishMutationEvent(BridgeEventType.EventTimerStarted, RevisionChange.Timer);
     }
 
     private void StateOnSplit(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerSplit, RevisionChange.Timer);
-        SplitBarrier?.Invoke();
+        PublishMutationEvent(BridgeEventType.EventTimerSplit, RevisionChange.Timer, SplitBarrier);
     }
 
     private void StateOnSkipSplit(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerSkipped, RevisionChange.Timer);
+        PublishMutationEvent(BridgeEventType.EventTimerSkipped, RevisionChange.Timer);
     }
 
     private void StateOnUndoSplit(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerUndo, RevisionChange.Timer);
+        PublishMutationEvent(BridgeEventType.EventTimerUndo, RevisionChange.Timer);
     }
 
     private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
@@ -590,23 +625,22 @@ internal sealed class BridgeRuntime : IDisposable
         // OnReset precedes FixSplits, so the run generation is advanced here rather
         // than on a later UI turn. A single EVENT_TIMER_RESET expresses the timer,
         // attempt, and run invalidation; no separate EVENT_RUN_CHANGED is emitted.
-        PublishEvent(
+        // The mutation marker stays set through this callback, so a query can tell
+        // that the run generation was advanced but the run is not yet settled.
+        PublishMutationEvent(
             BridgeEventType.EventTimerReset,
-            RevisionChange.State | RevisionChange.Attempt | RevisionChange.Run);
-
-        // Test seam: OnReset runs before FixSplits, so a test can pause here while
-        // the run generation is already advanced but the run is still mid-reset.
-        ResetBarrier?.Invoke();
+            RevisionChange.State | RevisionChange.Attempt | RevisionChange.Run,
+            ResetBarrier);
     }
 
     private void StateOnPause(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerPaused, RevisionChange.State);
+        PublishMutationEvent(BridgeEventType.EventTimerPaused, RevisionChange.State);
     }
 
     private void StateOnResume(object sender, EventArgs args)
     {
-        PublishEvent(BridgeEventType.EventTimerResumed, RevisionChange.State);
+        PublishMutationEvent(BridgeEventType.EventTimerResumed, RevisionChange.State);
     }
 
     private void StateRunManuallyModified(object sender, EventArgs args)

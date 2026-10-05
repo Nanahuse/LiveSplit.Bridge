@@ -212,6 +212,93 @@ public class UiOperationTests
     }
 
     [Fact]
+    public async Task ExternalResetDuringFixSplitsDoesNotReturnIntermediateState()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.ResetBarrier = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpcRun = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+
+        // Bridge外: a TimerModel created directly on a background thread, the same
+        // shape LiveSplit's own command server uses.
+        var resetTask = Task.Run(() => new TimerModel { CurrentState = ui.State }.Reset());
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "External reset did not reach the FixSplits window.");
+
+        var duringReset = await rpcRun.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            GetRun = new GetRunRequest(),
+        }, TimeSpan.FromSeconds(10));
+        Assert.NotNull(duringReset.Error);
+        Assert.Equal(103, duringReset.Error.Code);
+
+        release.Set();
+        await resetTask;
+
+        var afterReset = await rpcRun.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 2,
+            GetRun = new GetRunRequest(),
+        }, TimeSpan.FromSeconds(10));
+        Assert.NotNull(afterReset.GetRun);
+        Assert.True(afterReset.GetRun.Run.RunRevision >= 2UL);
+    }
+
+    [Fact]
+    public async Task ExternalSplitDuringAttemptBuildDoesNotReturnIntermediateState()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.SplitBarrier = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpcAttempt = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+        await Task.Delay(50);
+
+        // Bridge外: a Split issued directly from a background thread.
+        var splitTask = Task.Run(() => new TimerModel { CurrentState = ui.State }.Split());
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "External split did not reach the mutation window.");
+
+        var duringSplit = await rpcAttempt.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            GetAttempt = new GetAttemptRequest(),
+        }, TimeSpan.FromSeconds(10));
+        Assert.NotNull(duringSplit.Error);
+        Assert.Equal(103, duringSplit.Error.Code);
+
+        release.Set();
+        await splitTask;
+
+        var afterSplit = await rpcAttempt.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 2,
+            GetAttempt = new GetAttemptRequest(),
+        }, TimeSpan.FromSeconds(10));
+        Assert.NotNull(afterSplit.GetAttempt);
+        Assert.True(afterSplit.GetAttempt.Attempt.AttemptRevision >= 3UL);
+        Assert.True(afterSplit.GetAttempt.Attempt.Segments[0].SplitTime.HasRealTimeTicks);
+    }
+
+    [Fact]
     public async Task RenamePublishesRunThenRuntimeWithoutDuplicateRunEvent()
     {
         using var ui = await UiHost.CreateAsync();

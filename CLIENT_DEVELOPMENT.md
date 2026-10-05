@@ -282,9 +282,10 @@ Stateを再取得してください。revisionは内容のfingerprintではな�
 `attach`、`get_timer_state`は現在の軽量`TimerState`とrevisionを直接読み取ります。
 `get_run`、`get_attempt`、`get_runtime_state`は重いStateを構築します。このとき
 `get_run`と`get_attempt`は、対応するrevisionが構築中に変化していないことに加え、
-Control mutation（Timer / GameTime操作）と競合していないことを確認し、安定したsnapshot
-だけを返します。`get_runtime_state`は`runtime_revision`が変化していないことを確認します。
-いずれも上限付きで再取得します。
+Timer mutationと競合していないことを確認し、安定したsnapshotだけを返します。この競合検出は
+Bridge RPC経由のControl操作だけでなく、LiveSplit標準WebSocketなどBridge外のthreadから直接
+`TimerModel`を操作した場合のTimerイベントも対象にします。`get_runtime_state`は
+`runtime_revision`が変化していないことを確認します。いずれも上限付きで再取得します。
 
 安定したsnapshotを取得できなかった場合は、未検証のStateを返さず、一時的なRPCエラー
 （`error.code = 103`）を返します。クライアントは同じ要求を再送することで再試行できます。
