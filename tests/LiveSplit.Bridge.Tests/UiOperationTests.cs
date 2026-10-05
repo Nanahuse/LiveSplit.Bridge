@@ -33,13 +33,15 @@ public class UiOperationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ResetPublishesTimerThenOneRunEventAfterFixSplits(bool rpcReset)
+    public async Task ResetPublishesSingleTimerResetCarryingRunAndAttemptRevisions(bool rpcReset)
     {
         using var ui = await UiHost.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(ui.Port));
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
         await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
-        await ReadEventAsync(events, BridgeEventType.EventTimerStarted);
+        var started = await ReadEventAsync(events, BridgeEventType.EventTimerStarted);
+        var stateBefore = started.TimerState.StateRevision;
+
         if (rpcReset)
         {
             using var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
@@ -49,20 +51,62 @@ public class UiOperationTests
                 TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
             }, TimeSpan.FromSeconds(5));
             Assert.True(response.Operation.Success);
-            Assert.Equal(1UL, response.Operation.TimerState.RunRevision);
+            Assert.Equal(2UL, response.Operation.TimerState.RunRevision);
+            Assert.Equal(3UL, response.Operation.TimerState.AttemptRevision);
         }
         else
         {
             await ui.InvokeAsync(() => new TimerModel { CurrentState = ui.State }.Reset());
         }
 
+        // Reset is expressed by a single EVENT_TIMER_RESET; no separate
+        // EVENT_RUN_CHANGED follows. The event carries all updated generations.
         var reset = await ReadEventAsync(events, BridgeEventType.EventTimerReset);
-        var run = await ReadEventAsync(events, BridgeEventType.EventRunChanged);
-        Assert.Equal(reset.EventSequence + 1, run.EventSequence);
-        Assert.Equal(1UL, reset.TimerState.RunRevision);
-        Assert.Equal(2UL, run.TimerState.RunRevision);
-        Assert.Equal(3UL, run.TimerState.AttemptRevision);
+        Assert.Equal(2UL, reset.TimerState.RunRevision);
+        Assert.Equal(3UL, reset.TimerState.AttemptRevision);
+        Assert.True(reset.TimerState.StateRevision > stateBefore);
         await ReadEventAsync(events, BridgeEventType.EventHeartbeat);
+    }
+
+    [Fact]
+    public async Task SlowGetRunDoesNotBlockSplitFromAnotherConnection()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.Adapter.BeforeBuildRunState = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpcRun = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        using var rpcSplit = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+
+        var getRunTask = rpcRun.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            GetRun = new GetRunRequest(),
+        }, TimeSpan.FromSeconds(15));
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "get_run did not start.");
+
+        // get_run is holding the UI thread, but Split from another connection must
+        // still complete because it never takes the query path or a global lock.
+        var splitResponse = await rpcSplit.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 2,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerSplit },
+        }, TimeSpan.FromSeconds(5));
+        Assert.True(splitResponse.Operation.Success, splitResponse.Operation.Message);
+        Assert.Equal(1, splitResponse.Operation.TimerState.SplitIndex);
+
+        release.Set();
+        var runResponse = await getRunTask;
+        Assert.NotNull(runResponse.GetRun);
     }
 
     [Fact]

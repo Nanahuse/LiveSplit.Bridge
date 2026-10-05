@@ -197,7 +197,7 @@ public class BridgeTransportLifecycleTests
     }
 
     [Fact]
-    public async Task RpcRequestsAreSerializedAcrossClients()
+    public async Task RpcRequestsAreNotSerializedAcrossClients()
     {
         var port = BridgeTestEndpoints.GetFreePort();
         var current = 0;
@@ -221,7 +221,7 @@ public class BridgeTransportLifecycleTests
                 }
                 while (true);
 
-                Thread.Sleep(100);
+                Thread.Sleep(200);
                 Interlocked.Decrement(ref current);
                 return new Response { ProtocolVersion = 2 };
             },
@@ -256,7 +256,9 @@ public class BridgeTransportLifecycleTests
             }
         }
 
-        Assert.Equal(1, maxConcurrent);
+        // The transport no longer holds a global RPC lock, so independent
+        // connections must be able to run concurrently.
+        Assert.True(maxConcurrent > 1, $"Expected concurrent request handling, observed {maxConcurrent}.");
     }
 
     private static WebSocketTransport CreateTransport(int port)

@@ -213,6 +213,58 @@ public class DetailedRpcSyncTests
         Assert.Equal(runtimeRevision, runtime.RuntimeRevision);
     }
 
+    [Fact]
+    public void GetRunRetriesWhenRunRevisionChangesDuringBuild()
+    {
+        var state = CreateState(out var run);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        var firstBuild = true;
+        runtime.Adapter.BeforeBuildRunState = () =>
+        {
+            if (!firstBuild)
+            {
+                return;
+            }
+
+            firstBuild = false;
+            run.GameName = "Changed During Build";
+            state.CallRunManuallyModified();
+        };
+
+        var runState = GetRun(runtime);
+
+        Assert.Equal(2UL, runState.RunRevision);
+        Assert.Equal("Changed During Build", runState.GameName);
+        Assert.Equal(2UL, runtime.RunRevision);
+    }
+
+    [Fact]
+    public void GetAttemptRetriesWhenSplitHappensDuringBuild()
+    {
+        var state = CreateState(out _);
+        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        var model = new TimerModel { CurrentState = state };
+        model.Start();
+
+        var firstBuild = true;
+        runtime.Adapter.BeforeBuildAttemptState = () =>
+        {
+            if (!firstBuild)
+            {
+                return;
+            }
+
+            firstBuild = false;
+            model.Split();
+        };
+
+        var attempt = GetAttempt(runtime);
+
+        Assert.Equal(3UL, attempt.AttemptRevision);
+        Assert.True(attempt.Segments[0].SplitTime.HasRealTimeTicks);
+        Assert.Equal(3UL, runtime.AttemptRevision);
+    }
+
     private static LiveSplitState CreateState(out Run run)
     {
         run = new Run(new StandardComparisonGeneratorsFactory());

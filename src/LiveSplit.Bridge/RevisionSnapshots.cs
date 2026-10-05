@@ -26,6 +26,15 @@ internal readonly struct RuntimeRevisionState : IEquatable<RuntimeRevisionState>
     public bool GlobalHotkeysEnabled { get; }
     public IReadOnlyList<KeyValuePair<string, string>> CustomVariables { get; }
 
+    public RuntimeRevisionState WithCurrentComparison(string currentComparison)
+    {
+        return new RuntimeRevisionState(
+            TimingMethod,
+            currentComparison,
+            GlobalHotkeysEnabled,
+            CustomVariables);
+    }
+
     public bool Equals(RuntimeRevisionState other)
     {
         return TimingMethod == other.TimingMethod

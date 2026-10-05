@@ -218,17 +218,11 @@ EVENT_RUN_CHANGED
 の順序になります。Current Comparisonが変わらなかったrenameでは`EVENT_RUN_CHANGED`だけが
 発行され、`runtime_revision`は増加しません。
 
-Resetでは`EVENT_TIMER_RESET`を先に発行し、LiveSplitのReset処理（`FixSplits`を含む）が
-完了した後のUI処理で`run_revision`を増加させ、`EVENT_RUN_CHANGED`を発行します。
-PB等が結果的に変わらないResetでも増加します。したがってEventsチャネルでは
-
-```text
-EVENT_TIMER_RESET
-→ EVENT_RUN_CHANGED
-```
-
-の順序になります。`EVENT_TIMER_RESET`は旧`run_revision`を、`EVENT_RUN_CHANGED`は更新後の
-`run_revision`を持ちます。
+ResetではTimerのReset処理の中で`state_revision`、`attempt_revision`、`run_revision`を
+まとめて増加させ、`EVENT_TIMER_RESET`を1回だけ発行します。`EVENT_TIMER_RESET`の
+`TimerState`は更新後の`run_revision`と`attempt_revision`を持ちます。Resetに伴う別の
+`EVENT_RUN_CHANGED`は発行しません。Timer / Attempt / Runの変更を1つのイベントで表現します。
+PB等が結果的に変わらないResetでも`run_revision`は増加します。
 
 ### RPCとEventsの順序
 
@@ -237,8 +231,10 @@ RPC WebSocket（`/bridge/v2/rpc`）とEvents WebSocket（`/bridge/v2/events`）�
 される`BridgeEvent`の受信順序は保証しません。RPC responseとEventsのどちらが先に到着しても
 正常な動作として扱ってください。
 
-ただしEventsチャネル内では、前述のとおり`EVENT_TIMER_RESET` → `EVENT_RUN_CHANGED`など、
-LiveSplitのイベント配送に基づく順序を保証します。
+ただしEventsチャネル内では、LiveSplitのイベント配送に基づく順序を保証します。たとえば
+Comparison renameでCurrent Comparisonも変わる場合は`EVENT_RUN_CHANGED` →
+`EVENT_RUNTIME_CHANGED`の順になります。`event_sequence`は単調増加し、各イベントの
+`TimerState`はそのイベントで更新されたrevisionを保持します。
 
 クライアントは次の使い分けを想定しています。
 
@@ -283,18 +279,22 @@ Attemptを再取得すべき変更世代です。Start / Split / Skip / Undo / R
 Stateを再取得してください。revisionは内容のfingerprintではなく変更世代です。
 「世代が変わったなら再取得が必要」を表し、「返却内容が必ず異なる」ことは保証しません。
 
-`attach`、`get_timer_state`、`get_run`、`get_attempt`、`get_runtime_state`は現在の
-Stateと現在のrevisionを同じUI呼び出し内で読み取るだけです。読み取りを契機にrevisionを
-更新したり、変更イベントを発行したりしません。Run / Attemptの定期fallback監視もありません。
-LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、世代更新の対象になりません。
-RunのSegment、Comparison一覧、Metadata、PNGアイコン等は`get_run`時だけ構築します。
-RuntimeはComparison切替イベント等を使用し、専用イベントで網羅できない項目については
-軽量監視を継続します。監視がまだ検出していない変更を読み取っても、その読み取り自体は
-世代を進めません。
+`attach`、`get_timer_state`は現在の軽量`TimerState`とrevisionを直接読み取ります。
+`get_run`、`get_attempt`、`get_runtime_state`は重いStateを構築しますが、構築の前後で
+対応するrevisionを確認し、構築中に世代が進んだ場合は上限付きで再取得します。読み取りを
+契機にrevisionを更新したり、変更イベントを発行したりしません。Run / Attemptの定期
+fallback監視もありません。LiveSplitイベントを伴わないRun / Attemptの直接書き換えは、
+世代更新の対象になりません。RunのSegment、Comparison一覧、Metadata、PNGアイコン等は
+`get_run`時だけ構築します。RuntimeはComparison切替・renameイベントを使用し、専用
+イベントで網羅できない項目についてはTimer操作とは独立した軽量監視で検出します。
+監視がまだ検出していない変更を読み取っても、その読み取り自体は世代を進めません。
 
-Timer操作の`OperationResponse.timer_state`は操作完了直後に同じUI呼び出し内で取得します。
-Run / Attempt全体の走査やRuntime同期は行いません。Resetでも応答は`run_revision`の更新を
-待ちません。更新後の`run_revision`はEventsチャネルの`EVENT_RUN_CHANGED`で通知されるため、
+Timer操作はWebSocket受信threadから直接`TimerModel`へ実行し、Timer mutation専用のcontrol
+gateでStart / Split / Skip / Undo / Reset / Pause / Resume / GameTime操作だけを直列化
+します。`get_run`等の重いQueryはこのgateを取得しないため、Query実行中でも別接続からの
+Timer操作が待たされることはありません。`OperationResponse.timer_state`は操作直後に
+同期的に取得します。Timer操作の経路にUI threadへのdispatchは含まれません。
+
 クライアントは`OperationResponse.timer_state`を操作結果の確認に用い、Run / Attempt /
 Runtimeの世代更新はEvents側で継続して処理してください。RPCとEventsの受信順序は保証されない
 ため、どちらを先に観測しても正常です。
@@ -405,13 +405,14 @@ EVENT_HEARTBEAT
 Runtime状態の変更は`EVENT_RUNTIME_CHANGED`で通知されます。詳細はRPCで再取得して
 ください。
 
-`EVENT_RUN_CHANGED` / `EVENT_RUNTIME_CHANGED`は、対応するStateの内容が実際に変化した
-ときだけ発行されます。LiveSplit側の操作イベントを伴わない変更（例: Auto Splitterによる
-Custom Variable変更、Run Editor以外の経路によるRun変更）は、Bridge内部の監視によって
-検出され、短い遅延の後に発行されることがあります。Run / Attemptの内容変更はLiveSplitの
-描画更新ごとではなく、専用イベントと低頻度のフォールバック監視で検出します。Iconの
-変更は、公開される`RunState`と同じPNGデータの内容で判定するため、同じ内容の別インスタンス
-では`EVENT_RUN_CHANGED`は発行されません。
+`EVENT_RUN_CHANGED`はTimer operationとは独立したRun変更（Run Editor、Comparison編集、
+`RunManuallyModified`）で発行されます。内容の比較は行わない世代ベースの通知です。
+Resetに伴うRun変更は`EVENT_TIMER_RESET`で通知されるため、`EVENT_RUN_CHANGED`は発行しません。
+
+`EVENT_RUNTIME_CHANGED`は`RuntimeState`の変化で発行されます。Comparison switch / renameは
+LiveSplitイベントをauthorityとし、Timing Method、Global Hotkeys、Custom Variable、外部から
+変更されたGame Time関連状態は、Timer操作とは独立した軽量監視で検出します。監視はTimer
+操作のcritical pathからは実行されません。
 
 ### `event_sequence`
 

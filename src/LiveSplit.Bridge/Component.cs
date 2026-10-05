@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
 using System.Xml;
 using LiveSplit.Model;
@@ -14,6 +15,8 @@ internal enum BridgeRuntimeStatus { Starting, Running, Failed, Stopped }
 
 public sealed class Component : IComponent
 {
+    private static readonly TimeSpan ObservationInterval = TimeSpan.FromMilliseconds(100);
+
     private readonly LiveSplitState state;
     private readonly BridgeSettings settings = new();
     private readonly object runtimeLock = new();
@@ -22,6 +25,7 @@ public sealed class Component : IComponent
     private BridgeRuntimeStatus status = BridgeRuntimeStatus.Starting;
     private string? lastError;
     private long retryAt;
+    private long lastObservationTimestamp;
 
     public Component(LiveSplitState state) { this.state = state ?? throw new ArgumentNullException(nameof(state)); }
     public string ComponentName => "LiveSplit Bridge";
@@ -39,7 +43,10 @@ public sealed class Component : IComponent
         {
             if (status == BridgeRuntimeStatus.Stopped) return;
             if (runtime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
-            runtime?.ObserveExternalState();
+            if (runtime != null && ShouldObserveExternalState())
+            {
+                runtime.ObserveExternalState();
+            }
             UpdateControl();
         }
     }
@@ -53,4 +60,18 @@ public sealed class Component : IComponent
     }
     private void SettingsControlOnPortChanged(object sender, EventArgs e) { if (settingsControl == null) return; settings.WebSocketPort = settingsControl.WebSocketPort; lock (runtimeLock) { runtime?.Dispose(); runtime = null; status = BridgeRuntimeStatus.Starting; lastError = null; retryAt = 0; TryStartRuntime(); } }
     private void UpdateControl() => settingsControl?.SetRuntimeStatus(status.ToString(), status == BridgeRuntimeStatus.Failed ? lastError : null);
+
+    private bool ShouldObserveExternalState()
+    {
+        var intervalTicks = (long)(ObservationInterval.TotalSeconds * Stopwatch.Frequency);
+        var now = Stopwatch.GetTimestamp();
+        var previous = Interlocked.Read(ref lastObservationTimestamp);
+
+        if (now - previous < intervalTicks)
+        {
+            return false;
+        }
+
+        return Interlocked.CompareExchange(ref lastObservationTimestamp, now, previous) == previous;
+    }
 }

@@ -42,7 +42,8 @@ public class EventAuthorityTests
             Assert.Null(response.Error);
             Assert.True(response.Operation.Success, response.Operation.Message);
             Assert.NotNull(response.Operation.TimerState);
-            Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
+            // Timer control no longer dispatches to the UI thread.
+            Assert.Equal(before, runtime.Adapter.UiThreadDispatchCount);
             Assert.Equal(1UL, runtime.RunRevision);
             Assert.Equal(1UL, runtime.RuntimeRevision);
         }
@@ -74,7 +75,7 @@ public class EventAuthorityTests
     }
 
     [Fact]
-    public void ResetResponsePrecedesDeferredRunGenerationAndDisposedRuntimeIgnoresCallback()
+    public void ResetResponseCarriesUpdatedGenerationsWithoutDeferredCallback()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
@@ -90,16 +91,13 @@ public class EventAuthorityTests
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
         });
         Assert.True(response.Operation.Success, response.Operation.Message);
-        Assert.Equal(before + 1, runtime.Adapter.UiThreadDispatchCount);
-        Assert.Equal(1UL, response.Operation.TimerState.RunRevision);
+        // Reset no longer dispatches to the UI thread.
+        Assert.Equal(before, runtime.Adapter.UiThreadDispatchCount);
+        // The response already reflects the reset generations.
+        Assert.Equal(2UL, response.Operation.TimerState.RunRevision);
         Assert.Equal(3UL, response.Operation.TimerState.AttemptRevision);
-        Assert.Equal(1UL, runtime.RunRevision);
-        Application.DoEvents();
         Assert.Equal(2UL, runtime.RunRevision);
-
-        runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart);
-        runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerReset);
-        runtime.Dispose();
+        // No deferred callback should advance the run revision on the next turn.
         Application.DoEvents();
         Assert.Equal(2UL, runtime.RunRevision);
     }

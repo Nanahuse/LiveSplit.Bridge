@@ -40,6 +40,8 @@ namespace LiveSplit.Bridge
             this.timerModel = new TimerModel { CurrentState = state };
         }
 
+        // TimerState is intentionally UI-thread independent so it can be captured
+        // directly on the timer operation / LiveSplit event critical path.
         public TimerState BuildTimerState(
             ulong stateRevision,
             ulong sessionId,
@@ -47,44 +49,56 @@ namespace LiveSplit.Bridge
             ulong attemptRevision,
             ulong runtimeRevision)
         {
-            return InvokeOnUiThread(() =>
+            var currentTime = state.CurrentTime;
+            var timerState = new TimerState
             {
-                var currentTime = state.CurrentTime;
-                var timerState = new TimerState
-                {
-                    StateRevision = stateRevision,
-                    SessionId = sessionId,
-                    Phase = MapTimerPhase(state.CurrentPhase),
-                    SplitIndex = state.CurrentSplitIndex,
-                    IsGameTimeInitialized = state.IsGameTimeInitialized,
-                    IsGameTimePaused = state.IsGameTimePaused,
-                    RunRevision = runRevision,
-                    AttemptRevision = attemptRevision,
-                    RuntimeRevision = runtimeRevision,
-                };
+                StateRevision = stateRevision,
+                SessionId = sessionId,
+                Phase = MapTimerPhase(state.CurrentPhase),
+                SplitIndex = state.CurrentSplitIndex,
+                IsGameTimeInitialized = state.IsGameTimeInitialized,
+                IsGameTimePaused = state.IsGameTimePaused,
+                RunRevision = runRevision,
+                AttemptRevision = attemptRevision,
+                RuntimeRevision = runtimeRevision,
+            };
 
-                if (currentTime.RealTime.HasValue)
-                {
-                    timerState.RealTimeTicks = currentTime.RealTime.Value.Ticks;
-                }
+            if (currentTime.RealTime.HasValue)
+            {
+                timerState.RealTimeTicks = currentTime.RealTime.Value.Ticks;
+            }
 
-                if (currentTime.GameTime.HasValue)
-                {
-                    timerState.GameTimeTicks = currentTime.GameTime.Value.Ticks;
-                }
+            if (currentTime.GameTime.HasValue)
+            {
+                timerState.GameTimeTicks = currentTime.GameTime.Value.Ticks;
+            }
 
-                return timerState;
-            });
+            return timerState;
         }
+
+        // Test seams: allow a test to mutate state while a heavy query is being
+        // built, and to hold a query open to prove timer control is not serialized
+        // behind it.
+        internal Action? BeforeBuildRunState { get; set; }
+
+        internal Action? BeforeBuildAttemptState { get; set; }
 
         public RunState BuildRunState(ulong runRevision, ulong sessionId)
         {
-            return InvokeOnUiThread(() => BuildRunStateCore(state.Run, runRevision, sessionId));
+            return InvokeOnUiThread(() =>
+            {
+                BeforeBuildRunState?.Invoke();
+                return BuildRunStateCore(state.Run, runRevision, sessionId);
+            });
         }
 
         public AttemptState BuildAttemptState(ulong attemptRevision, ulong sessionId)
         {
-            return InvokeOnUiThread(() => BuildAttemptStateCore(state.Run, attemptRevision, sessionId));
+            return InvokeOnUiThread(() =>
+            {
+                BeforeBuildAttemptState?.Invoke();
+                return BuildAttemptStateCore(state.Run, attemptRevision, sessionId);
+            });
         }
 
         public RuntimeState BuildRuntimeState(ulong runtimeRevision, ulong sessionId)
@@ -94,7 +108,13 @@ namespace LiveSplit.Bridge
 
         public RuntimeRevisionState CaptureRuntimeRevisionState()
         {
-            return InvokeOnUiThread(() => BuildRuntimeRevisionStateCore(state.Run));
+            return BuildRuntimeRevisionStateCore(state.Run);
+        }
+
+        // Only CurrentComparison is consulted for comparison rename / switch events.
+        public string CaptureCurrentComparison()
+        {
+            return state.CurrentComparison ?? string.Empty;
         }
 
         private RunState BuildRunStateCore(IRun run, ulong runRevision, ulong sessionId)
@@ -354,133 +374,129 @@ namespace LiveSplit.Bridge
 
         public GameTimeRevisionState CaptureGameTimeRevisionState()
         {
-            return InvokeOnUiThread(() => new GameTimeRevisionState(
+            return new GameTimeRevisionState(
                 state.IsGameTimeInitialized,
                 state.IsGameTimePaused,
                 state.LoadingTimes.Ticks,
-                state.GameTimePauseTime?.Ticks));
+                state.GameTimePauseTime?.Ticks);
         }
 
+        // Timer mutations run on the request thread (like LiveSplit's own command
+        // server). Serialization is provided by the caller's control gate.
         public OperationResponse ExecuteTimerOperation(TimerOperationType operation)
         {
-            return InvokeOnUiThread(() =>
+            try
             {
-                try
+                switch (operation)
                 {
-                    switch (operation)
-                    {
-                        case TimerOperationType.TimerStart:
-                            timerModel.Start();
-                            break;
-                        case TimerOperationType.TimerSplit:
-                            timerModel.Split();
-                            break;
-                        case TimerOperationType.TimerSkip:
-                            timerModel.SkipSplit();
-                            break;
-                        case TimerOperationType.TimerUndo:
-                            timerModel.UndoSplit();
-                            break;
-                        case TimerOperationType.TimerReset:
-                            timerModel.Reset();
-                            break;
-                        case TimerOperationType.TimerPause:
-                            if (state.CurrentPhase == ModelTimerPhase.Running)
-                            {
-                                timerModel.Pause();
-                            }
-                            break;
-                        case TimerOperationType.TimerResume:
-                            if (state.CurrentPhase == ModelTimerPhase.Paused)
-                            {
-                                timerModel.Pause();
-                            }
-                            break;
-                        default:
-                            return new OperationResponse { Success = false, Message = $"Unsupported timer operation: {operation}" };
-                    }
+                    case TimerOperationType.TimerStart:
+                        timerModel.Start();
+                        break;
+                    case TimerOperationType.TimerSplit:
+                        timerModel.Split();
+                        break;
+                    case TimerOperationType.TimerSkip:
+                        timerModel.SkipSplit();
+                        break;
+                    case TimerOperationType.TimerUndo:
+                        timerModel.UndoSplit();
+                        break;
+                    case TimerOperationType.TimerReset:
+                        timerModel.Reset();
+                        break;
+                    case TimerOperationType.TimerPause:
+                        if (state.CurrentPhase == ModelTimerPhase.Running)
+                        {
+                            timerModel.Pause();
+                        }
+                        break;
+                    case TimerOperationType.TimerResume:
+                        if (state.CurrentPhase == ModelTimerPhase.Paused)
+                        {
+                            timerModel.Pause();
+                        }
+                        break;
+                    default:
+                        return new OperationResponse { Success = false, Message = $"Unsupported timer operation: {operation}" };
+                }
 
-                    return new OperationResponse
-                    {
-                        Success = true,
-                        Message = "OK"
-                    };
-                }
-                catch (Exception exception)
+                return new OperationResponse
                 {
-                    return new OperationResponse
-                    {
-                        Success = false,
-                        Message = exception.Message
-                    };
-                }
-            });
+                    Success = true,
+                    Message = "OK"
+                };
+            }
+            catch (Exception exception)
+            {
+                return new OperationResponse
+                {
+                    Success = false,
+                    Message = exception.Message
+                };
+            }
         }
 
         public GameTimeOperationExecution ExecuteGameTimeOperation(
             GameTimeOperationType operation,
             long? ticks)
         {
-            return InvokeOnUiThread(() =>
+            try
             {
-                try
+                var changed = false;
+
+                switch (operation)
                 {
-                    var changed = false;
-
-                    switch (operation)
-                    {
-                        case GameTimeOperationType.Initialize:
-                            changed = !state.IsGameTimeInitialized;
-                            if (changed)
-                            {
-                                timerModel.InitializeGameTime();
-                            }
-                            break;
-                        case GameTimeOperationType.Set:
-                            if (!ticks.HasValue)
-                            {
-                                return GameTimeOperationExecution.Failure(
-                                    "Game time set operation requires ticks.");
-                            }
-
-                            var gameTime = TimeSpan.FromTicks(ticks.Value);
-                            changed = state.CurrentTime.GameTime != gameTime;
-                            if (changed)
-                            {
-                                state.SetGameTime(gameTime);
-                            }
-                            break;
-                        case GameTimeOperationType.GameTimePause:
-                            changed = !state.IsGameTimePaused;
-                            if (changed)
-                            {
-                                state.IsGameTimePaused = true;
-                            }
-                            break;
-                        case GameTimeOperationType.GameTimeResume:
-                            changed = state.IsGameTimePaused;
-                            if (changed)
-                            {
-                                state.IsGameTimePaused = false;
-                            }
-                            break;
-                        default:
+                    case GameTimeOperationType.Initialize:
+                        changed = !state.IsGameTimeInitialized;
+                        if (changed)
+                        {
+                            timerModel.InitializeGameTime();
+                        }
+                        break;
+                    case GameTimeOperationType.Set:
+                        if (!ticks.HasValue)
+                        {
                             return GameTimeOperationExecution.Failure(
-                                $"Unsupported game time operation: {operation}");
-                    }
+                                "Game time set operation requires ticks.");
+                        }
 
-                    if (changed)
-                    {
-                        GameTimeChanged?.Invoke(operation);
-                    }
-
-                    return GameTimeOperationExecution.Success(changed);
+                        var gameTime = TimeSpan.FromTicks(ticks.Value);
+                        changed = state.CurrentTime.GameTime != gameTime;
+                        if (changed)
+                        {
+                            state.SetGameTime(gameTime);
+                        }
+                        break;
+                    case GameTimeOperationType.GameTimePause:
+                        changed = !state.IsGameTimePaused;
+                        if (changed)
+                        {
+                            state.IsGameTimePaused = true;
+                        }
+                        break;
+                    case GameTimeOperationType.GameTimeResume:
+                        changed = state.IsGameTimePaused;
+                        if (changed)
+                        {
+                            state.IsGameTimePaused = false;
+                        }
+                        break;
+                    default:
+                        return GameTimeOperationExecution.Failure(
+                            $"Unsupported game time operation: {operation}");
                 }
-                catch (Exception exception)
+
+                if (changed)
                 {
-                    return GameTimeOperationExecution.Failure(exception.Message);
+                    GameTimeChanged?.Invoke(operation);
                 }
-            });
+
+                return GameTimeOperationExecution.Success(changed);
+            }
+            catch (Exception exception)
+            {
+                return GameTimeOperationExecution.Failure(exception.Message);
+            }
         }
 
         internal T InvokeOnUiThread<T>(Func<T> callback)
