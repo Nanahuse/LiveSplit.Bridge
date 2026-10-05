@@ -130,6 +130,13 @@ public class UiOperationTests
 
         release.Set();
         await committed.Task;
+
+        // The Split overlapped the build, so the build was discarded instead of
+        // being committed with a stale generation.
+        Assert.Equal(1UL, ui.Runtime.RunRevision);
+
+        ui.Runtime.Adapter.BeforeBuildRunState = null;
+        await ui.InvokeAsync(() => ui.Runtime.Update());
         Assert.Equal(2UL, ui.Runtime.RunRevision);
     }
 
@@ -345,6 +352,103 @@ public class UiOperationTests
         Assert.NotNull(afterSplit.GetAttempt);
         Assert.Equal(attemptRevisionBefore + 1, afterSplit.GetAttempt.Attempt.AttemptRevision);
         Assert.True(afterSplit.GetAttempt.Attempt.Segments[0].SplitTime.HasRealTimeTicks);
+    }
+
+    [Fact]
+    public async Task UpdateDuringResetDoesNotCommitIntermediateProjection()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.ResetBarrier = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpcReset = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        await ui.InvokeAsync(() => ui.Runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart));
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        var runBefore = ui.Runtime.RunRevision;
+        var attemptBefore = ui.Runtime.AttemptRevision;
+
+        var resetTask = rpcReset.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        }, TimeSpan.FromSeconds(15));
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "Reset did not reach the FixSplits window.");
+
+        // The control mutation is still running. An Update must not commit the
+        // half-reset run as a completed projection.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        Assert.Equal(runBefore, ui.Runtime.RunRevision);
+        Assert.Equal(attemptBefore, ui.Runtime.AttemptRevision);
+
+        release.Set();
+        var resetResponse = await resetTask;
+        Assert.True(resetResponse.Operation.Success, resetResponse.Operation.Message);
+
+        // Now that the control mutation has finished, the next stable Update commits.
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        Assert.Equal(runBefore + 1, ui.Runtime.RunRevision);
+        Assert.Equal(attemptBefore + 1, ui.Runtime.AttemptRevision);
+    }
+
+    [Fact]
+    public async Task ControlMutationDuringProjectionBuildDiscardsStaleBuild()
+    {
+        using var ui = await UiHost.CreateAsync();
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        ui.Runtime.Adapter.BeforeBuildRunState = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+        };
+
+        using var rpcSplit = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(ui.Port));
+        var runRevisionBefore = ui.Runtime.RunRevision;
+
+        // Start a run projection build on the UI thread and hold it open.
+        var built = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ui.State.Form.BeginInvoke((Action)(() =>
+        {
+            try
+            {
+                ui.State.CallRunManuallyModified();
+                ui.Runtime.Update();
+                built.TrySetResult(true);
+            }
+            catch (Exception exception)
+            {
+                built.TrySetException(exception);
+            }
+        }));
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)), "projection build did not start.");
+
+        // A Bridge control mutation runs while the build is in flight.
+        var splitResponse = await rpcSplit.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 2,
+            RequestId = 1,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerSplit },
+        }, TimeSpan.FromSeconds(5));
+        Assert.True(splitResponse.Operation.Success, splitResponse.Operation.Message);
+
+        release.Set();
+        await built.Task;
+
+        // The overlapped build was discarded, so nothing was committed yet.
+        Assert.Equal(runRevisionBefore, ui.Runtime.RunRevision);
+
+        // The next stable Update rebuilds and commits.
+        ui.Runtime.Adapter.BeforeBuildRunState = null;
+        await ui.InvokeAsync(() => ui.Runtime.Update());
+        Assert.Equal(runRevisionBefore + 1, ui.Runtime.RunRevision);
     }
 
     [Fact]

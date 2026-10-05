@@ -260,14 +260,32 @@ Events
 
 ### `attempt_revision`
 
-Attemptを再取得すべき変更世代です。Start / Split / Skip / Undo / Resetの各LiveSplit
-イベントで増加します。Segment全体の比較は行いません。SkipやUndoによって返却内容が
-結果的に同じでも世代は進みます。Pause / ResumeおよびGame Time操作では増加しません。
-イベントが発生しない無効な操作では増加しません。
+`AttemptState`としてBridge内に公開済みのProjectionのversionです。Start / Split / Skip /
+Undo / Resetの各LiveSplitイベントはAttemptProjectionをdirtyとして記録します。revisionは
+イベント回数ではなく、Projectionのcommit時にだけ1増加します。Segment全体の比較は行いません。
+SkipやUndoによって返却内容が結果的に同じでも世代は進みます。Pause / ResumeおよびGame Time
+操作では増加しません。イベントが発生しない無効な操作でも増加しません。
+
+複数のTimer transitionが次のProjection commitまでに発生した場合、それらは1回の
+AttemptProjection commitへcoalesceされます。この場合は`attempt_revision`は1だけ増加します。
+
+```text
+Start
+Split
+↓
+1回のAttemptProjection commit
+↓
+attempt_revision += 1
+```
+
+`run_revision` / `runtime_revision`も同じ規則です。revisionは「イベントが何回発生したか」では
+なく「公開済みProjectionのversion」を表します。したがって、同じrevisionの間に対応するProjectionの
+内容は変化せず、内容が変わった場合は必ずrevisionが増加します。
 
 ### `runtime_revision`
 
-`get_runtime_state`の返却内容が変更されたことを表します。想定例は次のとおりです。
+`RuntimeState`としてBridge内に公開済みのProjectionのversionです。更新が検出され、
+RuntimeProjectionがcommitされた時に増加します。想定例は次のとおりです。
 
 - Current Comparison変更
 - Timing Method変更
@@ -300,6 +318,13 @@ Projectionのcommit完了後に発行されます。Resetの`FixSplits`途中な
 `get_run` / `get_attempt` / `get_runtime_state`を実行した場合は、最後にcommit済みのProjectionを
 正常に返します。中間Stateや一時エラーは返しません。新しいProjectionがcommitされると、対応する
 Projection changed eventで通知されます。
+
+Bridge Control PlaneのTimer / GameTime operation中はProjectionをcommitしません。また、Projection
+構築の開始から完了までの間にControl mutationが開始または終了した場合、その構築結果は破棄され、
+次の`Component.Update()`が安定した状態から再構築します。破棄された更新はdirtyとして保持され、
+次回のUpdateで再試行されます。この競合検出はProjection producer側だけで完結し、Query側に
+generation確認やretryはありません。Control mutationと競合した中間Stateが完成済みProjectionと
+して公開されることはありません。
 
 Timer操作はWebSocket受信threadから直接`TimerModel`へ実行し、Timer mutation専用のcontrol
 gateでStart / Split / Skip / Undo / Reset / Pause / Resume / GameTime操作だけを直列化

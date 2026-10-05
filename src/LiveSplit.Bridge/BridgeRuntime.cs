@@ -21,6 +21,7 @@ internal sealed class BridgeRuntime : IDisposable
     private readonly ProjectionStore projectionStore;
     private readonly LiveSplitState state;
     private readonly ulong sessionId;
+    private long controlGeneration;
     private long stateRevision;
     private int runDirty;
     private int attemptDirty;
@@ -205,15 +206,19 @@ internal sealed class BridgeRuntime : IDisposable
         OperationResponse result;
         lock (controlGate)
         {
-            result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
-            if (result.Success)
+            result = new OperationResponse();
+            ExecuteControlMutation(() =>
             {
-                // The response reflects the lightweight timer state captured right
-                // after the mutation. Detailed projections are committed later by
-                // Update(), so the run/attempt revisions may still be the previous
-                // published values.
-                result.TimerState = BuildCurrentTimerState();
-            }
+                result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
+                if (result.Success)
+                {
+                    // The response reflects the lightweight timer state captured right
+                    // after the mutation. Detailed projections are committed later by
+                    // Update(), so the run/attempt revisions may still be the previous
+                    // published values.
+                    result.TimerState = BuildCurrentTimerState();
+                }
+            });
         }
 
         return new Response
@@ -229,14 +234,18 @@ internal sealed class BridgeRuntime : IDisposable
         GameTimeOperationExecution execution;
         lock (controlGate)
         {
-            execution = adapter.ExecuteGameTimeOperation(
-                request.GameTimeOperation.Operation,
-                request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
-
-            if (execution.Response.Success)
+            execution = null!;
+            ExecuteControlMutation(() =>
             {
-                execution.Response.TimerState = BuildCurrentTimerState();
-            }
+                execution = adapter.ExecuteGameTimeOperation(
+                    request.GameTimeOperation.Operation,
+                    request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
+
+                if (execution.Response.Success)
+                {
+                    execution.Response.TimerState = BuildCurrentTimerState();
+                }
+            });
         }
 
         return new Response
@@ -245,6 +254,22 @@ internal sealed class BridgeRuntime : IDisposable
             RequestId = request.RequestId,
             Operation = execution.Response
         };
+    }
+
+    // Brackets a Bridge control mutation with an even/odd generation. A projection
+    // build that overlaps the mutation observes a changed generation and discards
+    // its result instead of publishing an intermediate state.
+    private void ExecuteControlMutation(Action mutation)
+    {
+        Interlocked.Increment(ref controlGeneration);
+        try
+        {
+            mutation();
+        }
+        finally
+        {
+            Interlocked.Increment(ref controlGeneration);
+        }
     }
 
     private TimerState BuildCurrentTimerState()
@@ -271,6 +296,14 @@ internal sealed class BridgeRuntime : IDisposable
 
     private void ProcessDirtyProjections()
     {
+        // If a Bridge control mutation is already in progress, keep the dirty flags
+        // set and build on a later Update so FixSplits et al. cannot be captured.
+        var generationBefore = ReadControlGeneration();
+        if ((generationBefore & 1) != 0)
+        {
+            return;
+        }
+
         var runDirty = Interlocked.Exchange(ref this.runDirty, 0) != 0;
         var attemptDirty = Interlocked.Exchange(ref this.attemptDirty, 0) != 0;
         var runtimeDirty = Interlocked.Exchange(ref this.runtimeDirty, 0) != 0;
@@ -315,9 +348,16 @@ internal sealed class BridgeRuntime : IDisposable
                 // Update instead of publishing a partially built generation.
                 System.Diagnostics.Debug.WriteLine(
                     $"[LiveSplit.Bridge] Projection build failed: {exception}");
-                if (runDirty) Interlocked.Exchange(ref this.runDirty, 1);
-                if (attemptDirty) Interlocked.Exchange(ref this.attemptDirty, 1);
-                if (runtimeDirty) Interlocked.Exchange(ref this.runtimeDirty, 1);
+                RestoreDirtyFlags(runDirty, attemptDirty, runtimeDirty);
+                return;
+            }
+
+            // A control mutation that started or finished while the projections were
+            // being built invalidates the build. Discard it and retry later.
+            var generationAfter = ReadControlGeneration();
+            if (generationBefore != generationAfter || (generationAfter & 1) != 0)
+            {
+                RestoreDirtyFlags(runDirty, attemptDirty, runtimeDirty);
                 return;
             }
 
@@ -348,6 +388,18 @@ internal sealed class BridgeRuntime : IDisposable
                 PublishProjectionChangedEvent(BridgeEventType.EventRuntimeChanged);
             }
         }
+    }
+
+    private void RestoreDirtyFlags(bool runDirty, bool attemptDirty, bool runtimeDirty)
+    {
+        if (runDirty) Interlocked.Exchange(ref this.runDirty, 1);
+        if (attemptDirty) Interlocked.Exchange(ref this.attemptDirty, 1);
+        if (runtimeDirty) Interlocked.Exchange(ref this.runtimeDirty, 1);
+    }
+
+    private long ReadControlGeneration()
+    {
+        return Interlocked.Read(ref controlGeneration);
     }
 
     private void PublishTimerTransitionEvent(BridgeEventType type, Action? barrier = null)
