@@ -56,7 +56,7 @@ jobs:
           uv run ruff format --check src tests scripts
 
       - name: Test .NET projects
-        run: dotnet test LiveSplit.Bridge.slnx --nologo
+        run: dotnet test LiveSplit.Bridge.slnx --configuration Release --nologo
 
       - name: Test CLI and Bridge integration
         working-directory: tools/livesplit-bridge-cli
