@@ -3,6 +3,11 @@
 LiveSplit.Bridge の RPC とイベントストリームを確認するための Python CLI です。
 Python 3.14以降を使用します。
 
+> [!NOTE]
+> このDebug CLIは現在Protocol v2対応で、v3へ移行中です。v3 Runtimeへ移行した
+> Bridgeとは互換性がありません。CLIのv3対応とBridgeとの統合テストは後続作業で
+> 行います。現時点ではこのCLIをv3 Bridgeへの接続に使用できません。
+
 ## セットアップ
 
 リポジトリルートから実行します。
@@ -33,30 +38,3 @@ uv run pytest
 統合テストは、CLIのv3対応が完了した後に追加します。GitHub Actionsでは.NET
 テスト、CLIのlint、およびCLIテストをWindows環境で実行します。
 
-通常の接続先は WebSocket の `ws://127.0.0.1:54000/bridge/v2/rpc` と
-`ws://127.0.0.1:54000/bridge/v2/events` です。LiveSplit を起動し、レイアウトへ
-`LiveSplit Bridge` コンポーネントを追加してから使ってください。
-
-## 使用例
-
-```powershell
-uv run livesplit-bridge timer-state
-uv run livesplit-bridge run
-uv run livesplit-bridge attempt
-uv run livesplit-bridge runtime
-uv run livesplit-bridge timer start
-uv run livesplit-bridge timer split
-uv run livesplit-bridge game-time set 12.345
-uv run livesplit-bridge events
-uv run livesplit-bridge --json timer-state
-```
-
-接続先ポートはオプションまたは本体と同じ環境変数で変更できます。
-
-```powershell
-uv run livesplit-bridge --port 55000 timer-state
-$env:LIVESPLIT_BRIDGE_WEBSOCKET_PORT = "55000"
-uv run livesplit-bridge events
-```
-
-全コマンドは `uv run livesplit-bridge --help` で確認できます。
