@@ -29,23 +29,9 @@ uv run pytest
 
 ## 自動テスト
 
-`uv run pytest` ではCLI自身の単体テストに加えて、CLIから
-`LiveSplit.Bridge`を操作するE2Eテストも実行します。E2Eテストは専用の.NET
-テストホストを自動的にビルド・起動し、空いているローカルポートを使って実際の
-WebSocket通信を行います。LiveSplit本体を手動で起動する必要はありません。
-
-現在は次の動作を検証します。
-
-- `timer-state`で初期状態を取得できること
-- `timer start`でタイマーが開始し、`TimerState`へ反映されること
-- `game-time set 12.345`でゲーム内時間が正しいtick値として反映されること
-
-実行にはPython 3.14以降、`uv`、.NET SDK、および.NET Framework 4.8.1の
-ビルド環境が必要です。
-
-GitHub ActionsのCIでも、`main`へのpushとpull requestに対して.NETテスト、
-CLIのlint、および上記E2EテストをWindows環境で自動実行します。Actions画面の
-`workflow_dispatch`から手動実行することもできます。
+`uv run pytest` はCLI自身のプロトコル非依存テストを実行します。Bridgeとの
+統合テストは、CLIのv3対応が完了した後に追加します。GitHub Actionsでは.NET
+テスト、CLIのlint、およびCLIテストをWindows環境で実行します。
 
 通常の接続先は WebSocket の `ws://127.0.0.1:54000/bridge/v2/rpc` と
 `ws://127.0.0.1:54000/bridge/v2/events` です。LiveSplit を起動し、レイアウトへ
