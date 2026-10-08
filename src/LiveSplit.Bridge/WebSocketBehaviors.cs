@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 using Google.Protobuf;
-using LiveSplit.Bridge.Protocol.V2;
+using LiveSplit.Bridge.Protocol.V3;
 using WebSocketSharp;
 using WebSocketSharp.Server;
 
@@ -84,10 +84,3 @@ internal sealed class WebSocketRpcBehavior : WebSocketBehavior
     }
 }
 
-internal sealed class WebSocketEventBehavior : WebSocketBehavior
-{
-    public WebSocketEventBehavior()
-    {
-        OriginValidator = WebSocketOriginValidator.IsAllowed;
-    }
-}

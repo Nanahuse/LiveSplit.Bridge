@@ -22,7 +22,7 @@ internal static class Program
         var layoutSettings = new BridgeLayoutSettings();
         var layout = new Layout { Settings = layoutSettings };
         var state = new LiveSplitState(run, form, layout, layoutSettings, new Settings());
-        using var runtime = new V2BridgeRuntime(
+        using var runtime = new BridgeRuntime(
             state,
             BridgeSettings.DefaultWebSocketPort);
 
@@ -31,3 +31,4 @@ internal static class Program
         Console.ReadLine();
     }
 }
+

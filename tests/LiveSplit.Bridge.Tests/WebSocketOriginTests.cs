@@ -1,5 +1,5 @@
 using System.Net.WebSockets;
-using LiveSplit.Bridge.Protocol.V2;
+using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -79,11 +79,6 @@ public class WebSocketOriginTests
 
     private static WebSocketTransport CreateTransport(int port)
     {
-        return new WebSocketTransport(
-            port,
-            V2BridgeRuntime.HeartbeatInterval,
-            _ => new Response { ProtocolVersion = 2 },
-            () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
-            _ => { });
+        return new WebSocketTransport(port, _ => new Response { ProtocolVersion = 3 });
     }
 }

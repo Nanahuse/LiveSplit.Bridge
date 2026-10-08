@@ -1,6 +1,6 @@
 using System.Net.WebSockets;
 using Google.Protobuf;
-using LiveSplit.Bridge.Protocol.V2;
+using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -78,3 +78,4 @@ internal sealed class WebSocketTestClient : IDisposable
         socket.Dispose();
     }
 }
+

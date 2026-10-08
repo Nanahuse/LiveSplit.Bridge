@@ -1,29 +1,50 @@
+#nullable enable
 using System;
 using System.Security.Cryptography;
 using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge;
 
-internal sealed class BridgeRuntime
+internal sealed class BridgeRuntime : IDisposable
 {
     private const uint ProtocolVersion = 3;
 
     private readonly object controlGate = new();
-    private readonly IV3LiveSplitAdapter adapter;
+    private readonly ILiveSplitAdapter adapter;
     private readonly ulong sessionId;
+    private WebSocketTransport? transport;
 
     public BridgeRuntime(LiveSplit.Model.LiveSplitState state)
-        : this(new V3LiveSplitAdapter(state))
+        : this(new LiveSplitAdapter(state))
     {
     }
 
-    internal BridgeRuntime(IV3LiveSplitAdapter adapter)
+    public BridgeRuntime(LiveSplit.Model.LiveSplitState state, int port)
+        : this(new LiveSplitAdapter(state), port)
+    {
+    }
+
+    internal BridgeRuntime(ILiveSplitAdapter adapter)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         sessionId = GenerateSessionId();
     }
 
+    private BridgeRuntime(ILiveSplitAdapter adapter, int port) : this(adapter)
+    {
+        transport = new WebSocketTransport(port, HandleRequest);
+        transport.Start();
+    }
+
     internal ulong SessionId => sessionId;
+    internal string? Endpoint => transport?.Endpoint;
+    internal bool IsListening => transport?.IsListening ?? false;
+
+    public void Dispose()
+    {
+        transport?.Dispose();
+        transport = null;
+    }
 
     internal Response HandleRequest(Request request)
     {

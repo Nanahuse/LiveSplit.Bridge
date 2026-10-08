@@ -316,7 +316,7 @@ public class BridgeRuntimeTests
         }
     }
 
-    private sealed class BlockingAdapter : IV3LiveSplitAdapter
+    private sealed class BlockingAdapter : ILiveSplitAdapter
     {
         private int activeControls;
         private int maximumConcurrentControls;
@@ -363,7 +363,7 @@ public class BridgeRuntimeTests
         }
     }
 
-    private sealed class FailingAdapter : IV3LiveSplitAdapter
+    private sealed class FailingAdapter : ILiveSplitAdapter
     {
         public TimerState GetTimerState() => throw new InvalidOperationException("query failure");
         public AttemptState GetAttempt() => new();
@@ -372,3 +372,4 @@ public class BridgeRuntimeTests
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) => throw new InvalidOperationException("control failure");
     }
 }
+

@@ -31,7 +31,7 @@ internal static class BridgeTestEndpoints
         }
     }
 
-    public static string Rpc(int port) => $"ws://127.0.0.1:{port}/bridge/v2/rpc";
+    public static string Rpc(int port) => $"ws://127.0.0.1:{port}/bridge/v3/rpc";
 
     public static string Events(int port) => $"ws://127.0.0.1:{port}/bridge/v2/events";
 
@@ -60,3 +60,4 @@ internal static class BridgeTestEndpoints
         Assert.Equal(expected, IsLoopbackListening(port));
     }
 }
+
