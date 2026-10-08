@@ -84,3 +84,11 @@ internal sealed class WebSocketRpcBehavior : WebSocketBehavior
     }
 }
 
+internal sealed class WebSocketEventBehavior : WebSocketBehavior
+{
+    public WebSocketEventBehavior()
+    {
+        OriginValidator = WebSocketOriginValidator.IsAllowed;
+    }
+}
+

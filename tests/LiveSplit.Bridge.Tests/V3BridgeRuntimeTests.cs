@@ -202,8 +202,12 @@ public class BridgeRuntimeTests
     {
         var adapter = new BlockingAdapter();
         var runtime = new BridgeRuntime(adapter);
-        var firstControl = Task.Run(() => SendTimerOperation(runtime));
-        Assert.True(await Task.Run(() => adapter.FirstControlEntered.Wait(TimeSpan.FromSeconds(3))));
+        var firstControl = Task.Factory.StartNew(
+            () => SendTimerOperation(runtime),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.True(adapter.FirstControlEntered.Wait(TimeSpan.FromSeconds(5)));
 
         var query = Task.Run(() => runtime.HandleRequest(new Request
         {
@@ -213,8 +217,12 @@ public class BridgeRuntimeTests
         Assert.Same(query, await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(1))));
         Assert.NotNull((await query).GetTimerState);
 
-        var secondControl = Task.Run(() => SendTimerOperation(runtime));
-        Assert.False(await Task.Run(() => adapter.SecondControlEntered.Wait(TimeSpan.FromMilliseconds(150))));
+        var secondControl = Task.Factory.StartNew(
+            () => SendTimerOperation(runtime),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.False(adapter.SecondControlEntered.Wait(TimeSpan.FromMilliseconds(150)));
 
         adapter.ReleaseFirstControl.Set();
         var controls = Task.WhenAll(firstControl, secondControl);
@@ -243,7 +251,7 @@ public class BridgeRuntimeTests
     }
 
     [Fact]
-    public void RecognizedButDeferredQueriesReturnAnEnvelopeError()
+    public void RunAndContextQueriesReturnV3State()
     {
         var runtime = new BridgeRuntime(CreateState(out _));
 
@@ -258,8 +266,10 @@ public class BridgeRuntimeTests
             GetContextState = new GetContextStateRequest(),
         });
 
-        Assert.Equal(BridgeErrorCode.OperationFailed, run.Error.Code);
-        Assert.Equal(BridgeErrorCode.OperationFailed, context.Error.Code);
+        Assert.NotNull(run.GetRun.Run);
+        Assert.NotNull(context.GetContextState.ContextState);
+        AssertEnvelope(run, runtime);
+        AssertEnvelope(context, runtime);
     }
 
     private static LiveSplitState CreateState(out Run run)
@@ -330,6 +340,7 @@ public class BridgeRuntimeTests
 
         public TimerState GetTimerState() => new();
         public AttemptState GetAttempt() => new();
+        public ContextState GetContextState() => new();
         public CompletedCount GetCompletedCount() => new();
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) { }
 
@@ -367,6 +378,7 @@ public class BridgeRuntimeTests
     {
         public TimerState GetTimerState() => throw new InvalidOperationException("query failure");
         public AttemptState GetAttempt() => new();
+        public ContextState GetContextState() => new();
         public CompletedCount GetCompletedCount() => new();
         public void ExecuteTimerOperation(TimerOperationType operation) => throw new InvalidOperationException("control failure");
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) => throw new InvalidOperationException("control failure");

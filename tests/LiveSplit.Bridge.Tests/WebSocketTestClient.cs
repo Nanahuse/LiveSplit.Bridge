@@ -47,12 +47,22 @@ internal sealed class WebSocketTestClient : IDisposable
     public async Task<byte[]> ReceiveBinaryAsync(TimeSpan timeout)
     {
         using var cancellation = new CancellationTokenSource(timeout);
+        return await ReceiveBinaryAsync(cancellation.Token);
+    }
+
+    public Task<byte[]> ReceiveBinaryAsync()
+    {
+        return ReceiveBinaryAsync(CancellationToken.None);
+    }
+
+    private async Task<byte[]> ReceiveBinaryAsync(CancellationToken cancellationToken)
+    {
         var buffer = new byte[8192];
         using var stream = new MemoryStream();
 
         while (true)
         {
-            var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation.Token);
+            var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
             {
                 throw new WebSocketException("The WebSocket was closed.");

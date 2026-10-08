@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using LiveSplit.Bridge.Protocol.V3;
 using LiveSplit.Model;
+using ProtocolTimingMethod = LiveSplit.Bridge.Protocol.V3.TimingMethod;
 using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V3.TimerPhase;
 
 namespace LiveSplit.Bridge;
@@ -10,6 +11,7 @@ internal interface ILiveSplitAdapter
 {
     TimerState GetTimerState();
     AttemptState GetAttempt();
+    ContextState GetContextState();
     CompletedCount GetCompletedCount();
     void ExecuteTimerOperation(TimerOperationType operation);
     void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks);
@@ -61,6 +63,27 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
     {
         var attempts = state.Run?.AttemptHistory;
         return new CompletedCount { CompletedCount_ = attempts == null ? 0U : (uint)attempts.Count(attempt => attempt.Time.RealTime != null) };
+    }
+
+    public ContextState GetContextState()
+    {
+        var result = new ContextState
+        {
+            CurrentTimingMethod = state.CurrentTimingMethod switch
+            {
+                LiveSplit.Model.TimingMethod.RealTime => ProtocolTimingMethod.RealTime,
+                LiveSplit.Model.TimingMethod.GameTime => ProtocolTimingMethod.GameTime,
+                _ => ProtocolTimingMethod.Unspecified,
+            },
+            CurrentComparison = state.CurrentComparison ?? string.Empty,
+        };
+        var variables = state.Run?.Metadata?.CustomVariables;
+        if (variables != null)
+        {
+            foreach (var pair in variables) result.CustomVariables[pair.Key] = pair.Value?.Value ?? string.Empty;
+        }
+
+        return result;
     }
 
     public void ExecuteTimerOperation(TimerOperationType operation)

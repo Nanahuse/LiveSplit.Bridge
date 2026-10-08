@@ -27,6 +27,10 @@ public class BridgeTransportLifecycleTests
             Assert.NotNull(response.GetCompletedCount);
             Assert.Equal(runtime.SessionId, response.SessionId);
         }
+        using (var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port)))
+        {
+            Assert.EndsWith(WebSocketTransport.EventsPath, runtime.EventsEndpoint, StringComparison.Ordinal);
+        }
         runtime.Dispose();
         BridgeTestEndpoints.WaitForListener(port, expected: false);
     }
