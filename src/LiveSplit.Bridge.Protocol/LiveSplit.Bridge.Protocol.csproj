@@ -15,6 +15,9 @@
     <Protobuf Include="../../proto/livesplit/bridge/v2/common.proto" ProtoRoot="../../proto" />
     <Protobuf Include="../../proto/livesplit/bridge/v2/run.proto" ProtoRoot="../../proto" />
     <Protobuf Include="../../proto/livesplit/bridge/v2/bridge.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v3/common.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v3/run.proto" ProtoRoot="../../proto" />
+    <Protobuf Include="../../proto/livesplit/bridge/v3/bridge.proto" ProtoRoot="../../proto" />
   </ItemGroup>
 
 </Project>
