@@ -14,7 +14,7 @@ public class RunRevisionTests
         run.Add(new Segment("One"));
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var initialStateRevision = runtime.StateRevision;
         Assert.Equal(1UL, runtime.RunRevision);
@@ -51,7 +51,7 @@ public class RunRevisionTests
         };
         run.Add(new Segment("First"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var first = Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() });
         Assert.Equal("First Game", first.GetRun.Run.GameName);
@@ -78,7 +78,7 @@ public class RunRevisionTests
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         run[0].Name = "Renamed";
         state.CallRunManuallyModified();
@@ -96,7 +96,7 @@ public class RunRevisionTests
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var originalRunRevision = runtime.RunRevision;
 
@@ -121,7 +121,7 @@ public class RunRevisionTests
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Start but never split: Reset has no split times to fold into the run.
         timerModel.Start();
@@ -143,7 +143,7 @@ public class RunRevisionTests
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
         state.CurrentComparison = "Personal Best";
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Rename that leaves the current comparison unchanged: only run_revision moves.
         state.CallComparisonRenamed(EventArgs.Empty);
@@ -166,7 +166,7 @@ public class RunRevisionTests
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
         state.CurrentComparison = "Personal Best";
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
@@ -189,7 +189,7 @@ public class RunRevisionTests
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         run.GameName = "Updated Game";
         state.CallRunManuallyModified();
@@ -204,7 +204,7 @@ public class RunRevisionTests
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
         var port = BridgeTestEndpoints.GetFreePort();
-        using var runtime = new BridgeRuntime(state, port);
+        using var runtime = new V2BridgeRuntime(state, port);
 
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
@@ -233,7 +233,7 @@ public class RunRevisionTests
         throw new TimeoutException($"Did not receive {type}.");
     }
 
-    private static Response Handle(BridgeRuntime runtime, Request request)
+    private static Response Handle(V2BridgeRuntime runtime, Request request)
     {
         request.ProtocolVersion = 2;
         return runtime.HandleRequest(request);

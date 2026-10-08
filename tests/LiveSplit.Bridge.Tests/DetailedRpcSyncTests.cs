@@ -13,7 +13,7 @@ public class DetailedRpcSyncTests
     public void GetRunReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Change Run content without raising RunManuallyModified or running any monitor.
         run.GameName = "Directly Changed";
@@ -30,7 +30,7 @@ public class DetailedRpcSyncTests
     {
         var state = CreateState(out var run);
         var port = BridgeTestEndpoints.GetFreePort();
-        using var runtime = new BridgeRuntime(state, port);
+        using var runtime = new V2BridgeRuntime(state, port);
 
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
@@ -53,7 +53,7 @@ public class DetailedRpcSyncTests
     public void GetAttemptReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Change AttemptState content directly (no timer event / monitoring).
         run[0].SplitTime = new Time(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2));
@@ -71,7 +71,7 @@ public class DetailedRpcSyncTests
     public void GetRuntimeStateReturnsChangedContentWithoutAdvancingRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentComparison = "Best Segments";
         state.CurrentTimingMethod = LiveSplit.Model.TimingMethod.GameTime;
@@ -88,7 +88,7 @@ public class DetailedRpcSyncTests
     public void GetRuntimeStateReadsMetadataCustomVariablesWithoutSync()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
 
@@ -102,7 +102,7 @@ public class DetailedRpcSyncTests
     public void AttachReadsCurrentGenerationsWithoutSynchronization()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Changes made before any monitoring runs.
         run.GameName = "Changed Game";
@@ -126,7 +126,7 @@ public class DetailedRpcSyncTests
     public void ReadDoesNotConsumePendingRuntimeObservation()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         run.GameName = "Changed Game";
         state.CurrentComparison = "Best Segments";
@@ -145,7 +145,7 @@ public class DetailedRpcSyncTests
     public void GetTimerStateKeepsRevisionsInSyncWithoutFullContentSync()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // get_timer_state stays lightweight and must not advance revisions by itself.
         run.GameName = "Changed Game";
@@ -160,7 +160,7 @@ public class DetailedRpcSyncTests
     public void GetRunCapturesStateInSingleUiThreadRead()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // State and its current generation are captured within one UI call.
         var before = runtime.Adapter.UiThreadDispatchCount;
@@ -172,7 +172,7 @@ public class DetailedRpcSyncTests
     public void GetAttemptCapturesStateInSingleUiThreadRead()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var before = runtime.Adapter.UiThreadDispatchCount;
         GetAttempt(runtime);
@@ -183,7 +183,7 @@ public class DetailedRpcSyncTests
     public void GetRuntimeStateCapturesStateInSingleUiThreadRead()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var before = runtime.Adapter.UiThreadDispatchCount;
         GetRuntimeState(runtime);
@@ -194,7 +194,7 @@ public class DetailedRpcSyncTests
     public void RepeatedDetailedQueriesDoNotAdvanceRevisions()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         GetRun(runtime);
         GetAttempt(runtime);
@@ -232,30 +232,30 @@ public class DetailedRpcSyncTests
         return state;
     }
 
-    private static Response Handle(BridgeRuntime runtime, Request request)
+    private static Response Handle(V2BridgeRuntime runtime, Request request)
     {
         request.ProtocolVersion = 2;
         return runtime.HandleRequest(request);
     }
 
-    private static RunState GetRun(BridgeRuntime runtime)
+    private static RunState GetRun(V2BridgeRuntime runtime)
     {
         return Handle(runtime, new Request { RequestId = 1, GetRun = new GetRunRequest() }).GetRun.Run;
     }
 
-    private static AttemptState GetAttempt(BridgeRuntime runtime)
+    private static AttemptState GetAttempt(V2BridgeRuntime runtime)
     {
         return Handle(runtime, new Request { RequestId = 1, GetAttempt = new GetAttemptRequest() })
             .GetAttempt.Attempt;
     }
 
-    private static RuntimeState GetRuntimeState(BridgeRuntime runtime)
+    private static RuntimeState GetRuntimeState(V2BridgeRuntime runtime)
     {
         return Handle(runtime, new Request { RequestId = 1, GetRuntimeState = new GetRuntimeStateRequest() })
             .GetRuntimeState.RuntimeState;
     }
 
-    private static TimerState GetTimerState(BridgeRuntime runtime)
+    private static TimerState GetTimerState(V2BridgeRuntime runtime)
     {
         return Handle(runtime, new Request { RequestId = 1, GetTimerState = new GetTimerStateRequest() })
             .GetTimerState.TimerState;

@@ -12,7 +12,7 @@ public class RuntimeRevisionTests
     public void CurrentComparisonChangeAdvancesRuntimeRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentComparison = "Best Segments";
         runtime.ObserveExternalState();
@@ -24,7 +24,7 @@ public class RuntimeRevisionTests
     public void TimingMethodChangeAdvancesRuntimeRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentTimingMethod = LiveSplit.Model.TimingMethod.GameTime;
         runtime.ObserveExternalState();
@@ -36,7 +36,7 @@ public class RuntimeRevisionTests
     public void HotkeyProfileChangeAdvancesRuntimeRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
         runtime.ObserveExternalState();
@@ -48,7 +48,7 @@ public class RuntimeRevisionTests
     public void GlobalHotkeysChangeAdvancesRuntimeRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.Settings.HotkeyProfiles["Default"].GlobalHotkeysEnabled = false;
         runtime.ObserveExternalState();
@@ -62,7 +62,7 @@ public class RuntimeRevisionTests
         var state = CreateState(
             ("Default", true),
             ("Secondary", true));
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
         runtime.ObserveExternalState();
@@ -79,7 +79,7 @@ public class RuntimeRevisionTests
             ("Default", true),
             ("Secondary", true));
         var port = BridgeTestEndpoints.GetFreePort();
-        using var runtime = new BridgeRuntime(state, port);
+        using var runtime = new V2BridgeRuntime(state, port);
 
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
@@ -98,7 +98,7 @@ public class RuntimeRevisionTests
         var state = CreateState(
             ("Default", true),
             ("Secondary", false));
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         state.CurrentHotkeyProfile = "Secondary";
         runtime.ObserveExternalState();
@@ -110,7 +110,7 @@ public class RuntimeRevisionTests
     public void MetadataCustomVariableChangeAdvancesRuntimeRevisionOnly()
     {
         var state = CreateState(out var run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var runRevision = runtime.RunRevision;
         run.Metadata.GetOrAddCustomVariable("custom").Value = "changed";
@@ -125,7 +125,7 @@ public class RuntimeRevisionTests
     public void UnchangedRuntimeStateDoesNotAdvanceRuntimeRevision()
     {
         var state = CreateState(out _);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         runtime.ObserveExternalState();
         runtime.ObserveExternalState();
@@ -138,7 +138,7 @@ public class RuntimeRevisionTests
     {
         var state = CreateState(out _);
         var port = BridgeTestEndpoints.GetFreePort();
-        using var runtime = new BridgeRuntime(state, port);
+        using var runtime = new V2BridgeRuntime(state, port);
 
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);
@@ -156,7 +156,7 @@ public class RuntimeRevisionTests
     {
         var state = CreateState(out var run);
         var port = BridgeTestEndpoints.GetFreePort();
-        using var runtime = new BridgeRuntime(state, port);
+        using var runtime = new V2BridgeRuntime(state, port);
 
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         await ReceiveUntilAsync(events, BridgeEventType.EventHeartbeat);

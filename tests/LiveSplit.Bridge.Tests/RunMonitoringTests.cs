@@ -14,7 +14,7 @@ public class RunMonitoringTests
         run.Add(new Segment("One"));
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         for (var iteration = 0; iteration < 50; iteration++)
         {
@@ -31,7 +31,7 @@ public class RunMonitoringTests
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         run.GameName = "Changed";
         state.CallRunManuallyModified();
@@ -45,7 +45,7 @@ public class RunMonitoringTests
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         run.CategoryName = "Any%";
         run[0].SplitTime = new Time(TimeSpan.FromSeconds(1), null);
         for (var iteration = 0; iteration < 50; iteration++)

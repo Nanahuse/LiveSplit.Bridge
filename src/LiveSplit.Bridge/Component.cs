@@ -18,7 +18,7 @@ public sealed class Component : IComponent
     private readonly BridgeSettings settings = new();
     private readonly object runtimeLock = new();
     private BridgeSettingsControl? settingsControl;
-    private BridgeRuntime? runtime;
+    private V2BridgeRuntime? runtime;
     private BridgeRuntimeStatus status = BridgeRuntimeStatus.Starting;
     private string? lastError;
     private long retryAt;
@@ -47,7 +47,7 @@ public sealed class Component : IComponent
     private void TryStartRuntime()
     {
         status = BridgeRuntimeStatus.Starting; UpdateControl();
-        try { runtime = new BridgeRuntime(state, settings.WebSocketPort); status = BridgeRuntimeStatus.Running; lastError = null; Debug.WriteLine("[LiveSplit.Bridge] Bridge runtime recovered successfully."); }
+        try { runtime = new V2BridgeRuntime(state, settings.WebSocketPort); status = BridgeRuntimeStatus.Running; lastError = null; Debug.WriteLine("[LiveSplit.Bridge] Bridge runtime recovered successfully."); }
         catch (BridgeTransportStartException ex) { runtime = null; status = BridgeRuntimeStatus.Failed; lastError = $"Failed to bind WebSocket endpoint:\r\n{ex.Endpoint}\r\n\r\nThe port may already be in use.\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] {ex.Message}: {ex.InnerException?.Message}"); }
         catch (Exception ex) { runtime = null; status = BridgeRuntimeStatus.Failed; lastError = $"Runtime startup failed:\r\n{ex.Message}\r\n\r\nRetrying automatically every 5 seconds."; retryAt = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency; Debug.WriteLine($"[LiveSplit.Bridge] Runtime startup failed: {ex}"); }
     }

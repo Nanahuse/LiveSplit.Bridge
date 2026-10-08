@@ -159,7 +159,7 @@ public class BridgeTransportLifecycleTests
         var settled = new List<ulong>();
         using var transport = new WebSocketTransport(
             port,
-            BridgeRuntime.HeartbeatInterval,
+            V2BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 2 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             sequence =>
@@ -197,14 +197,15 @@ public class BridgeTransportLifecycleTests
     }
 
     [Fact]
-    public async Task RpcRequestsAreSerializedAcrossClients()
+    public async Task RpcRequestsCanRunConcurrentlyAcrossClients()
     {
         var port = BridgeTestEndpoints.GetFreePort();
         var current = 0;
         var maxConcurrent = 0;
+        using var entered = new CountdownEvent(4);
         using var transport = new WebSocketTransport(
             port,
-            BridgeRuntime.HeartbeatInterval,
+            V2BridgeRuntime.HeartbeatInterval,
             _ =>
             {
                 var active = Interlocked.Increment(ref current);
@@ -221,7 +222,8 @@ public class BridgeTransportLifecycleTests
                 }
                 while (true);
 
-                Thread.Sleep(100);
+                entered.Signal();
+                entered.Wait(TimeSpan.FromSeconds(1));
                 Interlocked.Decrement(ref current);
                 return new Response { ProtocolVersion = 2 };
             },
@@ -256,14 +258,14 @@ public class BridgeTransportLifecycleTests
             }
         }
 
-        Assert.Equal(1, maxConcurrent);
+        Assert.True(maxConcurrent > 1, $"Expected concurrent RPC handling, observed maximum {maxConcurrent}.");
     }
 
     private static WebSocketTransport CreateTransport(int port)
     {
         return new WebSocketTransport(
             port,
-            BridgeRuntime.HeartbeatInterval,
+            V2BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 2 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });

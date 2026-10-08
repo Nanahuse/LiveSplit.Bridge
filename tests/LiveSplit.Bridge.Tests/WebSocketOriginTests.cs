@@ -81,7 +81,7 @@ public class WebSocketOriginTests
     {
         return new WebSocketTransport(
             port,
-            BridgeRuntime.HeartbeatInterval,
+            V2BridgeRuntime.HeartbeatInterval,
             _ => new Response { ProtocolVersion = 2 },
             () => new BridgeEvent { Type = BridgeEventType.EventHeartbeat },
             _ => { });

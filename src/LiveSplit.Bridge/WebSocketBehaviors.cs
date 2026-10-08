@@ -46,12 +46,10 @@ internal static class WebSocketOriginValidator
 internal sealed class WebSocketRpcBehavior : WebSocketBehavior
 {
     private readonly Func<Request, Response> requestHandler;
-    private readonly object rpcLock;
 
-    public WebSocketRpcBehavior(Func<Request, Response> requestHandler, object rpcLock)
+    public WebSocketRpcBehavior(Func<Request, Response> requestHandler)
     {
         this.requestHandler = requestHandler ?? throw new ArgumentNullException(nameof(requestHandler));
-        this.rpcLock = rpcLock ?? throw new ArgumentNullException(nameof(rpcLock));
         OriginValidator = WebSocketOriginValidator.IsAllowed;
     }
 
@@ -73,11 +71,7 @@ internal sealed class WebSocketRpcBehavior : WebSocketBehavior
             return;
         }
 
-        Response response;
-        lock (rpcLock)
-        {
-            response = requestHandler(request);
-        }
+        var response = requestHandler(request);
 
         try
         {

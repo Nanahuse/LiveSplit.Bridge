@@ -151,7 +151,7 @@ public class UiOperationTests
     {
         private Thread thread = null!;
         public LiveSplitState State { get; private set; } = null!;
-        public BridgeRuntime Runtime { get; private set; } = null!;
+        public V2BridgeRuntime Runtime { get; private set; } = null!;
         public int Port { get; } = BridgeTestEndpoints.GetFreePort();
 
         public static async Task<UiHost> CreateAsync()
@@ -167,7 +167,7 @@ public class UiOperationTests
                     host.State = TestLiveSplitState.Create(run);
                     using var form = host.State.Form;
                     _ = form.Handle;
-                    using var runtime = new BridgeRuntime(host.State, host.Port);
+                    using var runtime = new V2BridgeRuntime(host.State, host.Port);
                     host.Runtime = runtime;
                     form.BeginInvoke((Action)(() => ready.SetResult(host)));
                     Application.Run();

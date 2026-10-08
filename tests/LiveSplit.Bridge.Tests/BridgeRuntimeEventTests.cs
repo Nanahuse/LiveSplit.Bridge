@@ -103,7 +103,7 @@ public class BridgeRuntimeEventTests
         private readonly WebSocketTestClient events;
         private readonly WebSocketTestClient rpc;
 
-        private EventHarness(BridgeRuntime runtime, LiveSplitState state, WebSocketTestClient events, WebSocketTestClient rpc)
+        private EventHarness(V2BridgeRuntime runtime, LiveSplitState state, WebSocketTestClient events, WebSocketTestClient rpc)
         {
             Runtime = runtime;
             State = state;
@@ -111,7 +111,7 @@ public class BridgeRuntimeEventTests
             this.rpc = rpc;
         }
 
-        public BridgeRuntime Runtime { get; }
+        public V2BridgeRuntime Runtime { get; }
         public LiveSplitState State { get; }
 
         public static async Task<EventHarness> CreateAsync()
@@ -121,7 +121,7 @@ public class BridgeRuntimeEventTests
             run.Add(new Segment("One"));
             run.Add(new Segment("Two"));
             var state = TestLiveSplitState.Create(run);
-            var runtime = new BridgeRuntime(state, port);
+            var runtime = new V2BridgeRuntime(state, port);
             var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
             var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
             return new EventHarness(runtime, state, events, rpc);

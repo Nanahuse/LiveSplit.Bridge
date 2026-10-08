@@ -17,7 +17,7 @@ public class IconRevisionTests
         using var first = CreateBitmap(Color.Red);
         run.GameIcon = first;
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Assign a distinct instance that carries identical pixel data.
         using var second = CreateBitmap(Color.Red);
@@ -36,7 +36,7 @@ public class IconRevisionTests
         using var icon = CreateBitmap(Color.Red);
         run.GameIcon = icon;
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         // Mutate the same image instance so its published PNG data changes.
         using (var graphics = Graphics.FromImage(icon))
@@ -58,7 +58,7 @@ public class IconRevisionTests
         using var first = CreateBitmap(Color.Green);
         run[0].Icon = first;
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         using var second = CreateBitmap(Color.Green);
         run[0].Icon = second;
@@ -76,7 +76,7 @@ public class IconRevisionTests
         using var icon = CreateBitmap(Color.Green);
         run[0].Icon = icon;
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         using (var graphics = Graphics.FromImage(icon))
         {
@@ -97,7 +97,7 @@ public class IconRevisionTests
         using var icon = CreateBitmap(Color.Red);
         run.GameIcon = icon;
         var state = TestLiveSplitState.Create(run);
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
 
         var first = GetRun(runtime);
         Assert.Equal("image/png", first.GameIcon.MimeType);
@@ -121,7 +121,7 @@ public class IconRevisionTests
         return bitmap;
     }
 
-    private static RunState GetRun(BridgeRuntime runtime)
+    private static RunState GetRun(V2BridgeRuntime runtime)
     {
         var response = runtime.HandleRequest(new Request
         {

@@ -34,6 +34,6 @@ public class EventSequenceTests
     [Fact]
     public void RuntimeUsesSpecifiedHeartbeatInterval()
     {
-        Assert.Equal(TimeSpan.FromSeconds(1), BridgeRuntime.HeartbeatInterval);
+        Assert.Equal(TimeSpan.FromSeconds(1), V2BridgeRuntime.HeartbeatInterval);
     }
 }

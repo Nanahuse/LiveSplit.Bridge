@@ -63,14 +63,14 @@ public class RevisionEventDeduplicationTests
         private readonly WebSocketTestClient events;
         private readonly WebSocketTestClient rpc;
 
-        private Harness(BridgeRuntime runtime, WebSocketTestClient events, WebSocketTestClient rpc)
+        private Harness(V2BridgeRuntime runtime, WebSocketTestClient events, WebSocketTestClient rpc)
         {
             Runtime = runtime;
             this.events = events;
             this.rpc = rpc;
         }
 
-        public BridgeRuntime Runtime { get; }
+        public V2BridgeRuntime Runtime { get; }
 
         public static async Task<Harness> CreateAsync()
         {
@@ -79,7 +79,7 @@ public class RevisionEventDeduplicationTests
             run.Add(new Segment("One"));
             run.Add(new Segment("Two"));
             var state = TestLiveSplitState.Create(run);
-            var runtime = new BridgeRuntime(state, port);
+            var runtime = new V2BridgeRuntime(state, port);
             var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
             var rpc = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
             return new Harness(runtime, events, rpc);

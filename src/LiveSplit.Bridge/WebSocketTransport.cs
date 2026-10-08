@@ -21,7 +21,6 @@ internal sealed class WebSocketTransport : IDisposable
     private readonly Action<ulong> eventSettled;
     private readonly CancellationTokenSource cancellation = new();
     private readonly BlockingCollection<BridgeEvent> publishQueue = new();
-    private readonly object rpcLock = new();
     private readonly Thread publisherThread;
     private WebSocketServer server;
     private WebSocketSessionManager eventSessions;
@@ -70,7 +69,7 @@ internal sealed class WebSocketTransport : IDisposable
             };
             server.AddWebSocketService<WebSocketRpcBehavior>(
                 RpcPath,
-                () => new WebSocketRpcBehavior(requestHandler, rpcLock));
+                () => new WebSocketRpcBehavior(requestHandler));
             server.AddWebSocketService<WebSocketEventBehavior>(EventPath, () => new WebSocketEventBehavior());
             server.Start();
         }

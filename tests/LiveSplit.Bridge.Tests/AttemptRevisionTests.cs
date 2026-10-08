@@ -105,18 +105,18 @@ public class AttemptRevisionTests
         Assert.Equal(before.AttemptRevision, after.AttemptRevision);
     }
 
-    private static (BridgeRuntime Runtime, LiveSplitState State, TimerModel TimerModel, Run Run) Create()
+    private static (V2BridgeRuntime Runtime, LiveSplitState State, TimerModel TimerModel, Run Run) Create()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.Add(new Segment("One"));
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
         var timerModel = new TimerModel { CurrentState = state };
-        var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         return (runtime, state, timerModel, run);
     }
 
-    private static AttemptState GetAttempt(BridgeRuntime runtime)
+    private static AttemptState GetAttempt(V2BridgeRuntime runtime)
     {
         var response = runtime.HandleRequest(new Request
         {

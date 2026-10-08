@@ -23,7 +23,7 @@ public class EventAuthorityTests
         var state = TestLiveSplitState.Create(run);
         using var form = state.Form;
         run.RejectFullReads = true;
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         run.GameName = "Unannounced change";
         run.Metadata.GetOrAddCustomVariable("variable").Value = "changed";
         state.CurrentComparison = "Best Segments";
@@ -63,7 +63,7 @@ public class EventAuthorityTests
         run.Add(new Segment("Two"));
         var state = TestLiveSplitState.Create(run);
         using var form = state.Form;
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         var model = new TimerModel { CurrentState = state };
         model.Start();
         model.SkipSplit();
@@ -81,7 +81,7 @@ public class EventAuthorityTests
         var state = TestLiveSplitState.Create(run);
         using var form = state.Form;
         _ = state.Form.Handle;
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         runtime.Adapter.ExecuteTimerOperation(TimerOperationType.TimerStart);
         var before = runtime.Adapter.UiThreadDispatchCount;
         var response = runtime.HandleRequest(new Request
@@ -112,7 +112,7 @@ public class EventAuthorityTests
         var state = TestLiveSplitState.Create(run);
         using var form = state.Form;
         _ = state.Form.Handle;
-        using var runtime = new BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
+        using var runtime = new V2BridgeRuntime(state, BridgeTestEndpoints.GetFreePort());
         state.CallComparisonRenamed(EventArgs.Empty);
         state.CallRunManuallyModified();
         // The rename pair has finished in the same call stack; the pending

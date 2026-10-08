@@ -175,13 +175,13 @@ public class BridgeRuntimeRpcTests
     {
         private readonly WebSocketTestClient client;
 
-        private RpcFixture(BridgeRuntime runtime, WebSocketTestClient client)
+        private RpcFixture(V2BridgeRuntime runtime, WebSocketTestClient client)
         {
             Runtime = runtime;
             this.client = client;
         }
 
-        public BridgeRuntime Runtime { get; }
+        public V2BridgeRuntime Runtime { get; }
 
         public static async Task<RpcFixture> CreateAsync()
         {
@@ -193,7 +193,7 @@ public class BridgeRuntimeRpcTests
             };
             run.Add(new Segment("One"));
             var state = TestLiveSplitState.Create(run);
-            var runtime = new BridgeRuntime(state, port);
+            var runtime = new V2BridgeRuntime(state, port);
             var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
             return new RpcFixture(runtime, client);
         }
