@@ -58,6 +58,6 @@ jobs:
       - name: Test .NET projects
         run: dotnet test LiveSplit.Bridge.slnx --configuration Release --nologo
 
-      - name: Test CLI and Bridge integration
+      - name: Test CLI
         working-directory: tools/livesplit-bridge-cli
         run: uv run pytest

@@ -39,7 +39,6 @@ public sealed class Component : IComponent
         {
             if (status == BridgeRuntimeStatus.Stopped) return;
             if (runtime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
-            runtime?.ObserveExternalState();
             UpdateControl();
         }
     }

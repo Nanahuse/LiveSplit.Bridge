@@ -3,6 +3,11 @@
 LiveSplit.Bridge の RPC とイベントストリームを確認するための Python CLI です。
 Python 3.14以降を使用します。
 
+> [!NOTE]
+> このDebug CLIは現在Protocol v2対応で、v3へ移行中です。v3 Runtimeへ移行した
+> Bridgeとは互換性がありません。CLIのv3対応とBridgeとの統合テストは後続作業で
+> 行います。現時点ではこのCLIをv3 Bridgeへの接続に使用できません。
+
 ## セットアップ
 
 リポジトリルートから実行します。
@@ -29,48 +34,7 @@ uv run pytest
 
 ## 自動テスト
 
-`uv run pytest` ではCLI自身の単体テストに加えて、CLIから
-`LiveSplit.Bridge`を操作するE2Eテストも実行します。E2Eテストは専用の.NET
-テストホストを自動的にビルド・起動し、空いているローカルポートを使って実際の
-WebSocket通信を行います。LiveSplit本体を手動で起動する必要はありません。
+`uv run pytest` はCLI自身のプロトコル非依存テストを実行します。Bridgeとの
+統合テストは、CLIのv3対応が完了した後に追加します。GitHub Actionsでは.NET
+テスト、CLIのlint、およびCLIテストをWindows環境で実行します。
 
-現在は次の動作を検証します。
-
-- `timer-state`で初期状態を取得できること
-- `timer start`でタイマーが開始し、`TimerState`へ反映されること
-- `game-time set 12.345`でゲーム内時間が正しいtick値として反映されること
-
-実行にはPython 3.14以降、`uv`、.NET SDK、および.NET Framework 4.8.1の
-ビルド環境が必要です。
-
-GitHub ActionsのCIでも、`main`へのpushとpull requestに対して.NETテスト、
-CLIのlint、および上記E2EテストをWindows環境で自動実行します。Actions画面の
-`workflow_dispatch`から手動実行することもできます。
-
-通常の接続先は WebSocket の `ws://127.0.0.1:54000/bridge/v2/rpc` と
-`ws://127.0.0.1:54000/bridge/v2/events` です。LiveSplit を起動し、レイアウトへ
-`LiveSplit Bridge` コンポーネントを追加してから使ってください。
-
-## 使用例
-
-```powershell
-uv run livesplit-bridge timer-state
-uv run livesplit-bridge run
-uv run livesplit-bridge attempt
-uv run livesplit-bridge runtime
-uv run livesplit-bridge timer start
-uv run livesplit-bridge timer split
-uv run livesplit-bridge game-time set 12.345
-uv run livesplit-bridge events
-uv run livesplit-bridge --json timer-state
-```
-
-接続先ポートはオプションまたは本体と同じ環境変数で変更できます。
-
-```powershell
-uv run livesplit-bridge --port 55000 timer-state
-$env:LIVESPLIT_BRIDGE_WEBSOCKET_PORT = "55000"
-uv run livesplit-bridge events
-```
-
-全コマンドは `uv run livesplit-bridge --help` で確認できます。
