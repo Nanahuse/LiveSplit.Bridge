@@ -75,6 +75,13 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        var started = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerStarted, started.Type);
+
         fixture.State.Run.GameName = "Edited Game";
         fixture.State.CallRunManuallyModified();
 
