@@ -268,6 +268,16 @@ def test_connection_failure_returns_nonzero_and_error(
     assert "Failed to connect" in result.stderr
 
 
+def test_explicit_port_overrides_invalid_environment(
+    test_host: BridgeTestHost, monkeypatch
+) -> None:
+    monkeypatch.setenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", "invalid")
+    result = test_host.cli("timer-state")
+
+    assert result.returncode == 0, result.stderr
+    assert "phase=NOT_RUNNING" in result.stdout
+
+
 @pytest.mark.parametrize("port", ["0", "65536"])
 def test_testhost_rejects_invalid_port(port: str) -> None:
     result = subprocess.run(

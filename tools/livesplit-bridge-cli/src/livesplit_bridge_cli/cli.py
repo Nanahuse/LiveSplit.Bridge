@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import socket
 import sys
-import threading
 from decimal import (
     MAX_EMAX,
     MIN_EMIN,
@@ -30,8 +31,6 @@ DEFAULT_PORT = 54000
 RPC_PATH = "/bridge/v3/rpc"
 EVENTS_PATH = "/bridge/v3/events"
 TICKS_PER_SECOND = 10_000_000
-# CPython socket.settimeout shares the platform timeout bound exposed here.
-MAX_TIMEOUT_MS = int(threading.TIMEOUT_MAX * 1000)
 
 
 def rpc_url(port: int) -> str:
@@ -40,10 +39,6 @@ def rpc_url(port: int) -> str:
 
 def events_url(port: int) -> str:
     return f"ws://127.0.0.1:{port}{EVENTS_PATH}"
-
-
-def default_port() -> int:
-    return int(os.getenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", str(DEFAULT_PORT)))
 
 
 def decimal_argument(value: str) -> Decimal:
@@ -66,22 +61,34 @@ def scaled_integer(value: Decimal, scale: int) -> int:
 def timeout_milliseconds(
     value: Decimal, argument_parser: argparse.ArgumentParser
 ) -> int:
-    limit_message = (
-        f"--timeout exceeds the socket timeout limit of {threading.TIMEOUT_MAX} seconds"
-    )
     if not value.is_finite() or value <= 0:
         argument_parser.error("--timeout must be a finite number greater than zero")
-    timeout_limit = Decimal(str(threading.TIMEOUT_MAX))
-    if value.adjusted() > timeout_limit.adjusted():
-        argument_parser.error(limit_message)
     if value < Decimal("0.0005"):
         argument_parser.error("--timeout must round to at least 1 millisecond")
 
-    milliseconds = scaled_integer(value, 1000)
+    # Bound extreme Decimal exponents before scaling them into an integer.
+    try:
+        seconds = float(value)
+    except OverflowError, ValueError:
+        argument_parser.error("--timeout is not supported by the socket")
+    if not math.isfinite(seconds):
+        argument_parser.error("--timeout is not supported by the socket")
+
+    try:
+        milliseconds = scaled_integer(value, 1000)
+    except OverflowError, InvalidOperation:
+        argument_parser.error("--timeout is not supported by the socket")
     if milliseconds < 1:
         argument_parser.error("--timeout must round to at least 1 millisecond")
-    if milliseconds > MAX_TIMEOUT_MS:
-        argument_parser.error(limit_message)
+
+    # Check the final value BridgeClient passes to websocket.create_connection,
+    # without opening a connection or imposing a platform-specific limit here.
+    try:
+        timeout_seconds = milliseconds / 1000
+        with socket.socket() as probe:
+            probe.settimeout(timeout_seconds)
+    except OSError, OverflowError, ValueError:
+        argument_parser.error("--timeout is not supported by the socket")
     return milliseconds
 
 
@@ -115,7 +122,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--port",
         type=int,
-        default=default_port(),
+        default=os.getenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", str(DEFAULT_PORT)),
         help="WebSocket port of the bridge (default: 54000)",
     )
     result.add_argument(

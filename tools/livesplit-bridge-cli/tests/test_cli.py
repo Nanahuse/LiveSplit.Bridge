@@ -69,8 +69,13 @@ def test_rpc_error_is_reported_and_returns_nonzero(monkeypatch, capsys) -> None:
         (["game-time", "pause", "5"], "does not accept seconds"),
         (["--timeout", "nan", "timer-state"], "finite number"),
         (["--timeout", "inf", "timer-state"], "finite number"),
-        (["--timeout", "1e306", "timer-state"], "socket timeout limit"),
-        (["--timeout", "4294968", "timer-state"], "socket timeout limit"),
+        (["--timeout", "1e306", "timer-state"], "not supported by the socket"),
+        (
+            ["--timeout", "1e999999999999999999", "timer-state"],
+            "not supported by the socket",
+        ),
+        (["--timeout", "0", "timer-state"], "finite number"),
+        (["--timeout", "-1", "timer-state"], "finite number"),
         (["--timeout", "0.0001", "timer-state"], "at least 1 millisecond"),
     ],
 )
@@ -96,6 +101,64 @@ def test_invalid_arguments_fail_before_connecting(
     assert message in result.stderr
     assert "Failed to connect" not in result.stderr
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("environment", "arguments", "expected_port", "message"),
+    [
+        (None, [], 54000, None),
+        ("54001", [], 54001, None),
+        ("invalid", [], None, "invalid int value"),
+        ("invalid", ["--port", "54002"], 54002, None),
+        ("70000", [], None, "between 1 and 65535"),
+    ],
+)
+def test_port_environment_parsing_and_cli_precedence(
+    monkeypatch, capsys, environment, arguments, expected_port, message
+) -> None:
+    if environment is None:
+        monkeypatch.delenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", raising=False)
+    else:
+        monkeypatch.setenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", environment)
+
+    endpoints: list[str] = []
+
+    def create_connection(endpoint: str, **kwargs: object) -> ErrorSocket:
+        endpoints.append(endpoint)
+        return ErrorSocket()
+
+    monkeypatch.setattr(client_module.websocket, "create_connection", create_connection)
+
+    if message is not None:
+        with pytest.raises(SystemExit) as error:
+            main([*arguments, "timer-state"])
+        captured = capsys.readouterr()
+        assert error.value.code == 2
+        assert message in captured.err
+        assert endpoints == []
+    else:
+        # The fake RPC returns an operation error after connection, proving the
+        # parsed port reached the normal connection path.
+        assert main([*arguments, "timer-state"]) == 1
+        assert endpoints == [f"ws://127.0.0.1:{expected_port}/bridge/v3/rpc"]
+
+
+def test_socket_supported_timeout_is_not_limited_by_thread_timeout_max(
+    monkeypatch,
+) -> None:
+    socket = ErrorSocket()
+    timeouts: list[float] = []
+
+    def create_connection(*args: object, **kwargs: object) -> ErrorSocket:
+        timeouts.append(kwargs["timeout"])
+        return socket
+
+    monkeypatch.setattr(client_module.websocket, "create_connection", create_connection)
+
+    # 24 hours is accepted by socket.settimeout on supported platforms and is
+    # intentionally independent of threading.TIMEOUT_MAX.
+    assert main(["--timeout", "86400", "timer-state"]) == 1
+    assert timeouts == [86400.0]
 
 
 @pytest.mark.parametrize(
