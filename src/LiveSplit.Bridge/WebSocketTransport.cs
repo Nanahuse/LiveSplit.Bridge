@@ -33,6 +33,7 @@ internal sealed class WebSocketTransport : IDisposable
     internal string Endpoint => $"ws://127.0.0.1:{port}";
     internal bool IsListening => server?.IsListening ?? false;
     internal bool IsInactiveSessionCleanupEnabled => server?.KeepClean ?? false;
+    internal int EventsSessionCount => server?.WebSocketServices[EventsPath].Sessions.Count ?? 0;
 
     public void Start()
     {

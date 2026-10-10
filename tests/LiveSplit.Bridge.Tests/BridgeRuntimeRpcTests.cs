@@ -44,6 +44,7 @@ public class BridgeRuntimeRpcTests
         using var fixture = await RpcFixture.CreateAsync();
         using var first = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
         using var second = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 2);
 
         await fixture.SendAsync(new Request
         {
@@ -75,6 +76,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         await fixture.SendAsync(new Request
         {
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
@@ -97,6 +99,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         fixture.State.CurrentTimingMethod = LiveSplit.Model.TimingMethod.GameTime;
         fixture.State.CurrentComparison = "Best Segments";
         fixture.State.Run.Metadata.CustomVariables["route"] = new LiveSplit.Model.CustomVariable("right", false);
@@ -122,6 +125,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync(run => run.Metadata.RunID = "before-reset");
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         fixture.State.Run.Metadata.RunID = null;
         fixture.State.Run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(6), null);
 
@@ -150,6 +154,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         await fixture.SendAsync(new Request
         {
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
@@ -178,6 +183,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         await fixture.SendAsync(new Request
         {
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
@@ -205,6 +211,7 @@ public class BridgeRuntimeRpcTests
     {
         using var fixture = await RpcFixture.CreateAsync();
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
         var timer = new TimerModel { CurrentState = fixture.State };
         timer.Start();
         var started = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));

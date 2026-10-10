@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -195,8 +196,8 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     argument_parser = parser()
     args = argument_parser.parse_args(argv)
-    if args.timeout <= 0:
-        argument_parser.error("--timeout must be greater than zero")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        argument_parser.error("--timeout must be a finite number greater than zero")
     if not 1 <= args.port <= 65535:
         argument_parser.error("--port must be between 1 and 65535")
     if args.command == "events" and args.count is not None and args.count < 1:
@@ -249,7 +250,20 @@ def main(argv: list[str] | None = None) -> int:
                     if args.operation == "set":
                         if args.seconds is None:
                             argument_parser.error("game-time set requires seconds")
-                        ticks = round(args.seconds * TICKS_PER_SECOND)
+                        if not math.isfinite(args.seconds):
+                            argument_parser.error("game-time seconds must be finite")
+                        scaled_ticks = args.seconds * TICKS_PER_SECOND
+                        if not math.isfinite(scaled_ticks):
+                            argument_parser.error(
+                                "game-time seconds are outside the signed 64-bit "
+                                "tick range"
+                            )
+                        ticks = round(scaled_ticks)
+                        if not -(1 << 63) <= ticks <= (1 << 63) - 1:
+                            argument_parser.error(
+                                "game-time seconds are outside the signed 64-bit "
+                                "tick range"
+                            )
                         response = client.game_time(common_pb2.SET, ticks)
                     else:
                         if args.seconds is not None:

@@ -339,6 +339,7 @@ public class BridgeRuntimeTests
         var port = BridgeTestEndpoints.GetFreePort();
         using var runtime = new BridgeRuntime(adapter, state, port);
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        EventsSubscriptionTestHelper.WaitForCount(runtime, 1);
         run.GameName = "Older edit";
 
         var olderBuild = Task.Factory.StartNew(
@@ -367,6 +368,7 @@ public class BridgeRuntimeTests
         var port = BridgeTestEndpoints.GetFreePort();
         using var runtime = new BridgeRuntime(adapter, state, port);
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        EventsSubscriptionTestHelper.WaitForCount(runtime, 1);
         originalRun.GameName = "Run A";
 
         var buildA = Task.Factory.StartNew(
@@ -399,6 +401,7 @@ public class BridgeRuntimeTests
         var port = BridgeTestEndpoints.GetFreePort();
         using var runtime = new BridgeRuntime(adapter, state, port);
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        EventsSubscriptionTestHelper.WaitForCount(runtime, 1);
         run.GameName = "Edited during build";
 
         var staticBuild = Task.Factory.StartNew(
@@ -444,6 +447,7 @@ public class BridgeRuntimeTests
         var port = BridgeTestEndpoints.GetFreePort();
         using var runtime = new BridgeRuntime(adapter, state, port);
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        EventsSubscriptionTestHelper.WaitForCount(runtime, 1);
 
         var runB = new Run(new StandardComparisonGeneratorsFactory())
         {
@@ -493,6 +497,7 @@ public class BridgeRuntimeTests
         var port = BridgeTestEndpoints.GetFreePort();
         using var runtime = new BridgeRuntime(new FailingAdapter(), state, port);
         using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        EventsSubscriptionTestHelper.WaitForCount(runtime, 1);
         var timer = new TimerModel { CurrentState = state };
 
         timer.Start();
