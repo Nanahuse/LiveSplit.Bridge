@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
+import threading
+from decimal import (
+    MAX_EMAX,
+    MIN_EMIN,
+    ROUND_HALF_EVEN,
+    Decimal,
+    InvalidOperation,
+    localcontext,
+)
 
 import websocket
 from google.protobuf.json_format import MessageToDict
@@ -22,6 +30,8 @@ DEFAULT_PORT = 54000
 RPC_PATH = "/bridge/v3/rpc"
 EVENTS_PATH = "/bridge/v3/events"
 TICKS_PER_SECOND = 10_000_000
+# CPython socket.settimeout shares the platform timeout bound exposed here.
+MAX_TIMEOUT_MS = int(threading.TIMEOUT_MAX * 1000)
 
 
 def rpc_url(port: int) -> str:
@@ -36,6 +46,68 @@ def default_port() -> int:
     return int(os.getenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", str(DEFAULT_PORT)))
 
 
+def decimal_argument(value: str) -> Decimal:
+    try:
+        return Decimal(value)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError("must be a decimal number") from error
+
+
+def scaled_integer(value: Decimal, scale: int) -> int:
+    """Scale a Decimal exactly, then round with Python round() semantics."""
+    with localcontext() as context:
+        context.prec = max(28, len(value.as_tuple().digits) + len(str(scale)) + 1)
+        context.Emax = MAX_EMAX
+        context.Emin = MIN_EMIN
+        scaled = value * scale
+        return int(scaled.to_integral_value(rounding=ROUND_HALF_EVEN))
+
+
+def timeout_milliseconds(
+    value: Decimal, argument_parser: argparse.ArgumentParser
+) -> int:
+    limit_message = (
+        f"--timeout exceeds the socket timeout limit of {threading.TIMEOUT_MAX} seconds"
+    )
+    if not value.is_finite() or value <= 0:
+        argument_parser.error("--timeout must be a finite number greater than zero")
+    timeout_limit = Decimal(str(threading.TIMEOUT_MAX))
+    if value.adjusted() > timeout_limit.adjusted():
+        argument_parser.error(limit_message)
+    if value < Decimal("0.0005"):
+        argument_parser.error("--timeout must round to at least 1 millisecond")
+
+    milliseconds = scaled_integer(value, 1000)
+    if milliseconds < 1:
+        argument_parser.error("--timeout must round to at least 1 millisecond")
+    if milliseconds > MAX_TIMEOUT_MS:
+        argument_parser.error(limit_message)
+    return milliseconds
+
+
+def game_time_ticks(seconds: Decimal, argument_parser: argparse.ArgumentParser) -> int:
+    if not seconds.is_finite():
+        argument_parser.error("game-time seconds must be finite")
+    if not seconds:
+        return 0
+
+    # These bounds avoid materializing enormous integers for extreme exponents.
+    adjusted = seconds.adjusted()
+    if adjusted >= 12:
+        argument_parser.error(
+            "game-time seconds are outside the signed 64-bit tick range"
+        )
+    if adjusted <= -9:
+        return 0
+
+    ticks = scaled_integer(seconds, TICKS_PER_SECOND)
+    if not -(1 << 63) <= ticks <= (1 << 63) - 1:
+        argument_parser.error(
+            "game-time seconds are outside the signed 64-bit tick range"
+        )
+    return ticks
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description="Debug LiveSplit.Bridge over WebSocket"
@@ -47,7 +119,10 @@ def parser() -> argparse.ArgumentParser:
         help="WebSocket port of the bridge (default: 54000)",
     )
     result.add_argument(
-        "--timeout", type=float, default=3.0, help="RPC timeout in seconds (default: 3)"
+        "--timeout",
+        type=decimal_argument,
+        default=Decimal("3"),
+        help="RPC timeout in seconds (default: 3)",
     )
     result.add_argument(
         "--json", action="store_true", help="Print protobuf messages as JSON"
@@ -65,7 +140,10 @@ def parser() -> argparse.ArgumentParser:
     game_time = commands.add_parser("game-time", help="Execute a game-time operation")
     game_time.add_argument("operation", choices=[*GAME_TIME_OPERATIONS, "set"])
     game_time.add_argument(
-        "seconds", type=float, nargs="?", help="Game time in seconds (required by set)"
+        "seconds",
+        type=decimal_argument,
+        nargs="?",
+        help="Game time in seconds (required by set)",
     )
 
     events = commands.add_parser("events", help="Monitor bridge events")
@@ -196,17 +274,25 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     argument_parser = parser()
     args = argument_parser.parse_args(argv)
-    if not math.isfinite(args.timeout) or args.timeout <= 0:
-        argument_parser.error("--timeout must be a finite number greater than zero")
     if not 1 <= args.port <= 65535:
         argument_parser.error("--port must be between 1 and 65535")
     if args.command == "events" and args.count is not None and args.count < 1:
         argument_parser.error("events --count must be greater than zero")
 
+    timeout_ms = timeout_milliseconds(args.timeout, argument_parser)
+    ticks: int | None = None
+    if args.command == "game-time":
+        if args.operation == "set":
+            if args.seconds is None:
+                argument_parser.error("game-time set requires seconds")
+            ticks = game_time_ticks(args.seconds, argument_parser)
+        elif args.seconds is not None:
+            argument_parser.error(f"game-time {args.operation} does not accept seconds")
+
     try:
         if args.command == "events":
             return run_events(events_url(args.port), args.json, args.count)
-        with BridgeClient(rpc_url(args.port), round(args.timeout * 1000)) as client:
+        with BridgeClient(rpc_url(args.port), timeout_ms) as client:
             match args.command:
                 case "timer-state":
                     response = client.timer_state()
@@ -248,28 +334,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 case "game-time":
                     if args.operation == "set":
-                        if args.seconds is None:
-                            argument_parser.error("game-time set requires seconds")
-                        if not math.isfinite(args.seconds):
-                            argument_parser.error("game-time seconds must be finite")
-                        scaled_ticks = args.seconds * TICKS_PER_SECOND
-                        if not math.isfinite(scaled_ticks):
-                            argument_parser.error(
-                                "game-time seconds are outside the signed 64-bit "
-                                "tick range"
-                            )
-                        ticks = round(scaled_ticks)
-                        if not -(1 << 63) <= ticks <= (1 << 63) - 1:
-                            argument_parser.error(
-                                "game-time seconds are outside the signed 64-bit "
-                                "tick range"
-                            )
+                        assert ticks is not None
                         response = client.game_time(common_pb2.SET, ticks)
                     else:
-                        if args.seconds is not None:
-                            argument_parser.error(
-                                f"game-time {args.operation} does not accept seconds"
-                            )
                         response = client.game_time(
                             GAME_TIME_OPERATIONS[args.operation]
                         )

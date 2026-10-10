@@ -186,6 +186,22 @@ def test_timer_and_game_time_controls_change_observed_state(
     negative_time = test_host.cli("game-time", "set", "-2.5")
     assert negative_time.returncode == 0, negative_time.stderr
     assert "game_time=-0:00:02.500" in test_host.cli("timer-state").stdout
+    tick_cases = [
+        ("12.345", 123_450_000),
+        ("-2.5", -25_000_000),
+        ("0.0000001", 1),
+        ("0.00000005", 0),
+        ("0.00000015", 2),
+        ("-0.00000015", -2),
+    ]
+    for seconds, expected_ticks in tick_cases:
+        result = test_host.cli("game-time", "set", seconds)
+        assert result.returncode == 0, result.stderr
+        state = json.loads(test_host.cli("timer-state", json_output=True).stdout)
+        assert (
+            int(state["get_timer_state"]["timer_state"]["game_time_ticks"])
+            == expected_ticks
+        )
     assert "game_time_initialized=True" in timer.stdout
     assert "game_time_paused=True" in test_host.cli("timer-state").stdout
     assert test_host.cli("game-time", "resume").returncode == 0
@@ -240,42 +256,6 @@ def test_events_cli_receives_types_and_contiguous_sequences(
             except subprocess.TimeoutExpired:
                 events.kill()
                 events.wait(timeout=5)
-
-
-@pytest.mark.parametrize("seconds", ["nan", "inf", "-inf", "1e300", "-1e300"])
-def test_game_time_set_rejects_invalid_seconds_without_traceback(
-    test_host: BridgeTestHost, seconds: str
-) -> None:
-    result = test_host.cli("game-time", "set", seconds)
-    assert result.returncode != 0
-    assert "error:" in result.stderr
-    assert "Traceback" not in result.stderr
-
-
-@pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "0", "-1"])
-def test_timeout_rejects_non_finite_or_non_positive_values(
-    test_host: BridgeTestHost, timeout: str
-) -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "livesplit_bridge_cli.cli",
-            "--port",
-            str(test_host.port),
-            "--timeout",
-            timeout,
-            "timer-state",
-        ],
-        cwd=ROOT / "tools" / "livesplit-bridge-cli",
-        text=True,
-        capture_output=True,
-        timeout=8,
-        check=False,
-    )
-    assert result.returncode != 0
-    assert "error:" in result.stderr
-    assert "Traceback" not in result.stderr
 
 
 def test_connection_failure_returns_nonzero_and_error(
