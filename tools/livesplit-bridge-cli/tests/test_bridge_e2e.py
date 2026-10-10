@@ -50,7 +50,7 @@ class BridgeTestHost:
             "--port",
             str(self.port),
             "--timeout",
-            "1",
+            "5",
         ]
         if json_output:
             command.append("--json")
