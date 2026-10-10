@@ -83,6 +83,7 @@ internal sealed class BridgeRuntime : IDisposable
     internal ulong SessionId => sessionId;
     internal string? Endpoint => transport?.Endpoint;
     internal bool IsListening => transport?.IsListening ?? false;
+    internal int EventsSessionCount => transport?.EventsSessionCount ?? 0;
 
     public void Dispose()
     {

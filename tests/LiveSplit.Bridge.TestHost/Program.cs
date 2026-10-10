@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Threading;
 using System.Windows.Forms;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
@@ -49,7 +50,9 @@ internal static class Program
 
             Console.WriteLine("READY");
             Console.Out.Flush();
-            Console.ReadLine();
+            string command;
+            while ((command = Console.ReadLine()) is not null && command.Length > 0)
+                WaitForEvents(runtime, command);
             return 0;
         }
         catch (BridgeTransportStartException exception)
@@ -57,6 +60,31 @@ internal static class Program
             Console.Error.WriteLine(exception.Message);
             return 1;
         }
+    }
+
+    private static void WaitForEvents(BridgeRuntime runtime, string command)
+    {
+        var parts = command.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (
+            parts.Length != 3
+            || parts[0] != "WAIT_EVENTS"
+            || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var expected)
+            || expected < 0
+            || !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var timeoutMilliseconds)
+            || timeoutMilliseconds < 1
+        )
+        {
+            Console.WriteLine("ERROR invalid command");
+            Console.Out.Flush();
+            return;
+        }
+
+        var reached = SpinWait.SpinUntil(
+            () => runtime.EventsSessionCount == expected,
+            timeoutMilliseconds
+        );
+        Console.WriteLine(reached ? $"EVENTS_READY {expected}" : $"EVENTS_TIMEOUT {runtime.EventsSessionCount}");
+        Console.Out.Flush();
     }
 
     private static int Usage()

@@ -39,6 +39,7 @@ def enqueue_lines(stream: object, lines: queue.Queue[str]) -> None:
 class BridgeTestHost:
     process: subprocess.Popen[str]
     port: int
+    output_lines: queue.Queue[str]
 
     def cli(
         self, *args: str, json_output: bool = False
@@ -76,6 +77,16 @@ class BridgeTestHost:
                 self.process.terminate()
                 self.process.wait(timeout=5)
 
+    def wait_for_events(self, expected: int, timeout_seconds: int = 5) -> None:
+        assert self.process.stdin is not None
+        self.process.stdin.write(f"WAIT_EVENTS {expected} {timeout_seconds * 1000}\n")
+        self.process.stdin.flush()
+        try:
+            response = self.output_lines.get(timeout=timeout_seconds + 1)
+        except queue.Empty:
+            pytest.fail("TestHost did not respond to the Events subscription check")
+        assert response == f"EVENTS_READY {expected}", response
+
 
 @pytest.fixture
 def test_host() -> Iterator[BridgeTestHost]:
@@ -106,7 +117,7 @@ def test_host() -> Iterator[BridgeTestHost]:
         process.terminate()
         process.wait(timeout=5)
         pytest.fail(f"TestHost failed to start: {line}")
-    host = BridgeTestHost(process, port)
+    host = BridgeTestHost(process, port, lines)
     try:
         yield host
     finally:
@@ -172,6 +183,25 @@ def test_timer_and_game_time_controls_change_observed_state(
     assert set_time.returncode == 0, set_time.stderr
     timer = test_host.cli("timer-state")
     assert "game_time=0:00:12.345" in timer.stdout
+    negative_time = test_host.cli("game-time", "set", "-2.5")
+    assert negative_time.returncode == 0, negative_time.stderr
+    assert "game_time=-0:00:02.500" in test_host.cli("timer-state").stdout
+    tick_cases = [
+        ("12.345", 123_450_000),
+        ("-2.5", -25_000_000),
+        ("0.0000001", 1),
+        ("0.00000005", 0),
+        ("0.00000015", 2),
+        ("-0.00000015", -2),
+    ]
+    for seconds, expected_ticks in tick_cases:
+        result = test_host.cli("game-time", "set", seconds)
+        assert result.returncode == 0, result.stderr
+        state = json.loads(test_host.cli("timer-state", json_output=True).stdout)
+        assert (
+            int(state["get_timer_state"]["timer_state"]["game_time_ticks"])
+            == expected_ticks
+        )
     assert "game_time_initialized=True" in timer.stdout
     assert "game_time_paused=True" in test_host.cli("timer-state").stdout
     assert test_host.cli("game-time", "resume").returncode == 0
@@ -182,7 +212,7 @@ def test_timer_and_game_time_controls_change_observed_state(
     assert "phase=NOT_RUNNING" in test_host.cli("timer-state").stdout
 
 
-def test_events_cli_receives_types_and_increasing_sequences(
+def test_events_cli_receives_types_and_contiguous_sequences(
     test_host: BridgeTestHost,
 ) -> None:
     command = [
@@ -202,27 +232,30 @@ def test_events_cli_receives_types_and_increasing_sequences(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    connected: queue.Queue[str] = queue.Queue()
-    threading.Thread(
-        target=enqueue_lines, args=(events.stderr, connected), daemon=True
-    ).start()
-    assert connected.get(timeout=5).startswith("Monitoring ")
+    try:
+        test_host.wait_for_events(1)
+        for operation in ("start", "split", "reset"):
+            result = test_host.cli("timer", operation)
+            assert result.returncode == 0, result.stderr
 
-    for operation in ("start", "split", "reset"):
-        result = test_host.cli("timer", operation)
-        assert result.returncode == 0, result.stderr
-
-    output, error = events.communicate(timeout=8)
-    assert events.returncode == 0, error
-    rows = [line for line in output.splitlines() if line.startswith("[")]
-    assert [row.split("] ", 1)[1] for row in rows] == [
-        "EVENT_TIMER_STARTED",
-        "EVENT_TIMER_SPLIT",
-        "EVENT_TIMER_RESET",
-    ]
-    sequences = [int(row[1:].split("]", 1)[0]) for row in rows]
-    assert sequences == sorted(sequences)
-    assert len(set(sequences)) == 3
+        output, error = events.communicate(timeout=8)
+        assert events.returncode == 0, error
+        rows = [line for line in output.splitlines() if line.startswith("[")]
+        assert [row.split("] ", 1)[1] for row in rows] == [
+            "EVENT_TIMER_STARTED",
+            "EVENT_TIMER_SPLIT",
+            "EVENT_TIMER_RESET",
+        ]
+        sequences = [int(row[1:].split("]", 1)[0]) for row in rows]
+        assert sequences == list(range(sequences[0], sequences[0] + len(sequences)))
+    finally:
+        if events.poll() is None:
+            events.terminate()
+            try:
+                events.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                events.kill()
+                events.wait(timeout=5)
 
 
 def test_connection_failure_returns_nonzero_and_error(
@@ -233,6 +266,16 @@ def test_connection_failure_returns_nonzero_and_error(
     assert result.returncode != 0
     assert "error:" in result.stderr
     assert "Failed to connect" in result.stderr
+
+
+def test_explicit_port_overrides_invalid_environment(
+    test_host: BridgeTestHost, monkeypatch
+) -> None:
+    monkeypatch.setenv("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", "invalid")
+    result = test_host.cli("timer-state")
+
+    assert result.returncode == 0, result.stderr
+    assert "phase=NOT_RUNNING" in result.stdout
 
 
 @pytest.mark.parametrize("port", ["0", "65536"])
