@@ -96,35 +96,35 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
         if (run == null) return new RunStateBuildCandidate(result, images);
         try
         {
-        result.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
-        if (!string.IsNullOrEmpty(run.FilePath)) result.FilePath = run.FilePath;
-        if (!string.IsNullOrEmpty(run.LayoutPath)) result.LayoutPath = run.LayoutPath;
-        var metadata = run.Metadata;
-        if (metadata != null)
-        {
-            if (metadata.RunID != null) result.Metadata.RunId = metadata.RunID;
-            if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
-            if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
-            result.Metadata.UsesEmulator = metadata.UsesEmulator;
-            // RunState.variables describe VariableValueNames, not current values.
-            if (metadata.VariableValueNames != null)
-                foreach (var pair in metadata.VariableValueNames) result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
-        }
-        result.Comparisons.Add((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
-        images.Add(CloneImage(run.GameIcon));
-        for (var index = 0; index < run.Count; index++)
-        {
-            var segment = run[index];
-            var info = new SegmentInfo { Index = (uint)index, Name = segment.Name ?? string.Empty };
-            foreach (var comparison in result.Comparisons)
+            result.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
+            if (!string.IsNullOrEmpty(run.FilePath)) result.FilePath = run.FilePath;
+            if (!string.IsNullOrEmpty(run.LayoutPath)) result.LayoutPath = run.LayoutPath;
+            var metadata = run.Metadata;
+            if (metadata != null)
             {
-                info.Comparisons.Add(new ComparisonTime { Name = comparison, Time = MapTime(segment.Comparisons, comparison) });
+                if (metadata.RunID != null) result.Metadata.RunId = metadata.RunID;
+                if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
+                if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
+                result.Metadata.UsesEmulator = metadata.UsesEmulator;
+                // RunState.variables describe VariableValueNames, not current values.
+                if (metadata.VariableValueNames != null)
+                    foreach (var pair in metadata.VariableValueNames) result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
             }
-            info.BestSegmentTime = MapTime(segment.BestSegmentTime);
-            images.Add(CloneImage(segment.Icon));
-            result.Segments.Add(info);
-        }
-        return new RunStateBuildCandidate(result, images);
+            result.Comparisons.Add((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
+            images.Add(CloneImage(run.GameIcon));
+            for (var index = 0; index < run.Count; index++)
+            {
+                var segment = run[index];
+                var info = new SegmentInfo { Index = (uint)index, Name = segment.Name ?? string.Empty };
+                foreach (var comparison in result.Comparisons)
+                {
+                    info.Comparisons.Add(new ComparisonTime { Name = comparison, Time = MapTime(segment.Comparisons, comparison) });
+                }
+                info.BestSegmentTime = MapTime(segment.BestSegmentTime);
+                images.Add(CloneImage(segment.Icon));
+                result.Segments.Add(info);
+            }
+            return new RunStateBuildCandidate(result, images);
         }
         catch
         {
@@ -209,6 +209,57 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
         return true;
     }
 
+    internal static bool TryMergeRunTimings(RunState candidate, RunState latest, out RunState merged)
+    {
+        if (candidate.Segments.Count != latest.Segments.Count
+            || candidate.Comparisons.Count != latest.Comparisons.Count)
+        {
+            merged = candidate;
+            return false;
+        }
+        for (var comparisonIndex = 0; comparisonIndex < candidate.Comparisons.Count; comparisonIndex++)
+        {
+            if (!string.Equals(candidate.Comparisons[comparisonIndex], latest.Comparisons[comparisonIndex], StringComparison.Ordinal))
+            {
+                merged = candidate;
+                return false;
+            }
+        }
+        for (var segmentIndex = 0; segmentIndex < candidate.Segments.Count; segmentIndex++)
+        {
+            var targetSegment = candidate.Segments[segmentIndex];
+            var sourceSegment = latest.Segments[segmentIndex];
+            if (!string.Equals(targetSegment.Name, sourceSegment.Name, StringComparison.Ordinal)
+                || targetSegment.Comparisons.Count != sourceSegment.Comparisons.Count)
+            {
+                merged = candidate;
+                return false;
+            }
+            for (var comparisonIndex = 0; comparisonIndex < targetSegment.Comparisons.Count; comparisonIndex++)
+            {
+                if (!string.Equals(targetSegment.Comparisons[comparisonIndex].Name, sourceSegment.Comparisons[comparisonIndex].Name, StringComparison.Ordinal))
+                {
+                    merged = candidate;
+                    return false;
+                }
+            }
+        }
+
+        merged = candidate.Clone();
+        if (merged.Metadata == null) merged.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
+        if (latest.Metadata?.HasRunId == true) merged.Metadata.RunId = latest.Metadata.RunId;
+        else merged.Metadata.ClearRunId();
+        for (var segmentIndex = 0; segmentIndex < merged.Segments.Count; segmentIndex++)
+        {
+            var targetSegment = merged.Segments[segmentIndex];
+            var sourceSegment = latest.Segments[segmentIndex];
+            targetSegment.BestSegmentTime = sourceSegment.BestSegmentTime.Clone();
+            for (var comparisonIndex = 0; comparisonIndex < targetSegment.Comparisons.Count; comparisonIndex++)
+                targetSegment.Comparisons[comparisonIndex].Time = sourceSegment.Comparisons[comparisonIndex].Time.Clone();
+        }
+        return true;
+    }
+
     public bool IsTimerOnlyRun()
     {
         var run = state.Run;
@@ -231,7 +282,7 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
     internal static LiveSplit.Bridge.Protocol.V3.Image? MapImage(System.Drawing.Image image)
     {
         if (image == null) return null;
-        // Encode synchronously while the owning LiveSplit object is known to be alive.
+        // Encode from the detached bitmap snapshot, not the image owned by LiveSplit.
         using var stream = new MemoryStream();
         image.Save(stream, ImageFormat.Png);
         return new LiveSplit.Bridge.Protocol.V3.Image { MimeType = "image/png", Data = ByteString.CopyFrom(stream.ToArray()), Width = (uint)image.Width, Height = (uint)image.Height };

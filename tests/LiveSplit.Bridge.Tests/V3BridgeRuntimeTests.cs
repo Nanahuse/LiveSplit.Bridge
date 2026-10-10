@@ -307,11 +307,38 @@ public class BridgeRuntimeTests
     }
 
     [Fact]
+    public void CapturedRunIconIsIndependentOfTheLiveSplitImageLifetime()
+    {
+        var state = CreateState(out var run);
+        var source = new System.Drawing.Bitmap(2, 2);
+        var segmentSource = new System.Drawing.Bitmap(2, 2);
+        source.SetPixel(0, 0, System.Drawing.Color.Magenta);
+        run.GameIcon = source;
+        run[0].Icon = segmentSource;
+        using var candidate = new LiveSplitAdapter(state).CaptureRunState();
+
+        source.Dispose();
+        segmentSource.Dispose();
+        run.GameIcon = null;
+        run[0].Icon = null;
+        var completed = candidate.Build();
+
+        Assert.NotNull(completed.GameIcon);
+        Assert.Equal(2U, completed.GameIcon.Width);
+        Assert.Equal("image/png", completed.GameIcon.MimeType);
+        Assert.NotEmpty(completed.GameIcon.Data);
+        Assert.NotNull(completed.Segments[0].Icon);
+        Assert.Equal(2U, completed.Segments[0].Icon.Width);
+    }
+
+    [Fact]
     public async Task OlderSameRunBuildCannotOverwriteANewerEdit()
     {
         var state = CreateState(out var run);
         var adapter = new BlockingRunAdapter(state);
-        using var runtime = new BridgeRuntime(adapter, state);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(adapter, state, port);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         run.GameName = "Older edit";
 
         var olderBuild = Task.Factory.StartNew(
@@ -323,10 +350,12 @@ public class BridgeRuntimeTests
 
         run.GameName = "Newer edit";
         state.CallRunManuallyModified();
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
         adapter.ReleaseFirstManualBuild.Set();
         await olderBuild;
 
         var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Newer edit", response.GetRun.Run.GameName);
     }
 
@@ -335,7 +364,9 @@ public class BridgeRuntimeTests
     {
         var state = CreateState(out var originalRun);
         var adapter = new BlockingRunAdapter(state);
-        using var runtime = new BridgeRuntime(adapter, state);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(adapter, state, port);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         originalRun.GameName = "Run A";
 
         var buildA = Task.Factory.StartNew(
@@ -349,10 +380,12 @@ public class BridgeRuntimeTests
         replacement.Add(new Segment("Replacement"));
         state.Run = replacement;
         state.CallRunManuallyModified();
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
         adapter.ReleaseFirstManualBuild.Set();
         await buildA;
 
         var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Run B", response.GetRun.Run.GameName);
         Assert.Equal("Replacement", response.GetRun.Run.Segments[0].Name);
     }
@@ -363,7 +396,9 @@ public class BridgeRuntimeTests
         var state = CreateState(out var run);
         run.Metadata.RunID = "before";
         var adapter = new BlockingRunAdapter(state);
-        using var runtime = new BridgeRuntime(adapter, state);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(adapter, state, port);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
         run.GameName = "Edited during build";
 
         var staticBuild = Task.Factory.StartNew(
@@ -375,16 +410,49 @@ public class BridgeRuntimeTests
 
         var timer = new TimerModel { CurrentState = state };
         timer.Start();
+        Assert.Equal(BridgeEventType.EventTimerStarted,
+            BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5))).Type);
         run.Metadata.RunID = null;
         run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(11), null);
         timer.Reset();
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var resetChanged = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+        Assert.Equal(BridgeEventType.EventRunChanged, resetChanged.Type);
+        var resetResponse = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.False(resetResponse.GetRun.Run.Metadata.HasRunId);
+        Assert.Equal(TimeSpan.FromSeconds(11).Ticks, resetResponse.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
         adapter.ReleaseFirstManualBuild.Set();
         await staticBuild;
 
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
         var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Edited during build", response.GetRun.Run.GameName);
         Assert.False(response.GetRun.Run.Metadata.HasRunId);
         Assert.Equal(TimeSpan.FromSeconds(11).Ticks, response.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
+    }
+
+    [Fact]
+    public async Task RuntimeDisposeRejectsAnInFlightRunCandidate()
+    {
+        var state = CreateState(out var run);
+        var adapter = new BlockingRunAdapter(state);
+        using var runtime = new BridgeRuntime(adapter, state, BridgeTestEndpoints.GetFreePort());
+        run.GameName = "Must not publish after dispose";
+
+        var update = Task.Factory.StartNew(
+            state.CallRunManuallyModified,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.True(adapter.FirstManualBuildEntered.Wait(TimeSpan.FromSeconds(5)));
+        runtime.Dispose();
+        adapter.ReleaseFirstManualBuild.Set();
+        await update;
+
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.Equal(string.Empty, response.GetRun.Run.GameName);
     }
 
     private static LiveSplitState CreateState(out Run run)
@@ -507,7 +575,16 @@ public class BridgeRuntimeTests
         public ContextState GetContextState() => new();
         public void ExecuteTimerOperation(TimerOperationType operation) { }
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) { }
-        public RunStateBuildCandidate CaptureRunState() => new(BuildRunState(), new System.Collections.Generic.List<System.Drawing.Bitmap?>());
+        public RunStateBuildCandidate CaptureRunState()
+        {
+            var result = BuildRunState();
+            if (Interlocked.Increment(ref runBuildCount) == 1)
+            {
+                FirstManualBuildEntered.Set();
+                ReleaseFirstManualBuild.Wait(TimeSpan.FromSeconds(10));
+            }
+            return new RunStateBuildCandidate(result, new System.Collections.Generic.List<System.Drawing.Bitmap?>());
+        }
         public bool TryUpdateRunTimings(RunState published, out RunState updated)
         {
             var run = state.Run;
@@ -530,16 +607,7 @@ public class BridgeRuntimeTests
         }
         public bool IsTimerOnlyRun() => false;
 
-        public RunState GetRunState()
-        {
-            var result = BuildRunState();
-            if (Interlocked.Increment(ref runBuildCount) == 2)
-            {
-                FirstManualBuildEntered.Set();
-                ReleaseFirstManualBuild.Wait(TimeSpan.FromSeconds(10));
-            }
-            return result;
-        }
+        public RunState GetRunState() => BuildRunState();
 
         private RunState BuildRunState()
         {
