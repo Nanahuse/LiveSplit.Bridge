@@ -3,6 +3,7 @@ using System;
 using System.Security.Cryptography;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge;
@@ -19,13 +20,18 @@ internal sealed class BridgeRuntime : IDisposable
     private RunState publishedRun;
     private ContextState publishedContext;
     private object? cachedRunReference;
+    private object? requestedRunReference;
+    private long staticUpdateGeneration;
+    private long timingUpdateGeneration;
+    private int staticRefreshRequested;
+    private int resetPublicationDepth;
     private long lastContextObservation;
     private long eventSequence;
     private readonly object eventGate = new();
     private int disposed;
 
     public BridgeRuntime(LiveSplit.Model.LiveSplitState state)
-        : this(new LiveSplitAdapter(state), state)
+        : this(new LiveSplitAdapter(state), state, attachStateEvents: true)
     {
     }
 
@@ -35,11 +41,16 @@ internal sealed class BridgeRuntime : IDisposable
     }
 
     internal BridgeRuntime(ILiveSplitAdapter adapter)
-        : this(adapter, null)
+        : this(adapter, null, attachStateEvents: true)
     {
     }
 
-    private BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState? state)
+    internal BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState state)
+        : this(adapter, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true)
+    {
+    }
+
+    private BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState? state, bool attachStateEvents)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.state = state;
@@ -48,10 +59,10 @@ internal sealed class BridgeRuntime : IDisposable
         publishedContext = adapter.GetContextState();
         cachedRunReference = state?.Run;
         lastContextObservation = Stopwatch.GetTimestamp();
-        AttachStateEvents();
+        if (attachStateEvents) AttachStateEvents();
     }
 
-    private BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState state, int port) : this(adapter, state)
+    private BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState state, int port) : this(adapter, state, attachStateEvents: true)
     {
         try
         {
@@ -258,18 +269,51 @@ internal sealed class BridgeRuntime : IDisposable
     {
         if (state == null || Volatile.Read(ref disposed) != 0) return;
         var current = state.Run;
-        if (ReferenceEquals(current, cachedRunReference)) return;
+        long generation;
+        lock (eventGate)
+        {
+            var forceRefresh = Interlocked.Exchange(ref staticRefreshRequested, 0) != 0;
+            if (ReferenceEquals(current, cachedRunReference) && !forceRefresh) return;
+            if (!forceRefresh && ReferenceEquals(current, requestedRunReference)) return;
+            requestedRunReference = current;
+            generation = ++staticUpdateGeneration;
+        }
         try
         {
-            var next = adapter.GetRunState();
-            if (!ReferenceEquals(current, state.Run)) return;
-            cachedRunReference = current;
-            var previous = Volatile.Read(ref publishedRun);
-            if (next.Equals(previous)) return;
-            Interlocked.Exchange(ref publishedRun, next);
-            QueueEvent(BridgeEventType.EventRunChanged, null);
+            state.Form.BeginInvoke((Action)(() => CaptureObservedRunCandidate(current, generation)));
         }
-        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Run replacement observation failed: {exception}"); }
+        catch (Exception exception)
+        {
+            ClearRequestedRunReference(current, generation);
+            Debug.WriteLine($"[LiveSplit.Bridge] Run replacement observation failed: {exception}");
+        }
+    }
+
+    private void CaptureObservedRunCandidate(object? runReference, long generation)
+    {
+        if (state == null || Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)) return;
+        if (!ReferenceEquals(runReference, state.Run))
+        {
+            ClearRequestedRunReference(runReference, generation);
+            return;
+        }
+        RunStateBuildCandidate candidate;
+        try
+        {
+            candidate = adapter.CaptureRunState();
+            if (!ReferenceEquals(runReference, state.Run))
+            {
+                candidate.Dispose();
+                ClearRequestedRunReference(runReference, generation);
+                return;
+            }
+            _ = Task.Run(() => BuildAndPublishRunCandidate(candidate, runReference, generation));
+        }
+        catch (Exception exception)
+        {
+            ClearRequestedRunReference(runReference, generation);
+            Debug.WriteLine($"[LiveSplit.Bridge] Run replacement capture failed: {exception}");
+        }
     }
 
     private void AttachStateEvents()
@@ -307,24 +351,63 @@ internal sealed class BridgeRuntime : IDisposable
     private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
     {
         if (Volatile.Read(ref disposed) != 0) return;
-        bool runChanged = false;
+        Interlocked.Increment(ref resetPublicationDepth);
+        try { StateOnResetCore(); }
+        finally { Interlocked.Decrement(ref resetPublicationDepth); }
+    }
+
+    private void StateOnResetCore()
+    {
+        var currentRun = state!.Run;
+        Interlocked.Increment(ref timingUpdateGeneration);
+        RunState? resetCandidate = null;
+        var candidateForReplacement = false;
         try
         {
-            var currentRun = state!.Run;
-            var old = Volatile.Read(ref publishedRun);
-            var next = ReferenceEquals(currentRun, cachedRunReference)
-                ? adapter.UpdateRunTimings(old)
-                : adapter.GetRunState();
-            cachedRunReference = currentRun;
-            if (!next.Equals(old))
+            if (!ReferenceEquals(currentRun, Volatile.Read(ref cachedRunReference)))
             {
-                Interlocked.Exchange(ref publishedRun, next);
-                runChanged = true;
+                if (adapter.IsTimerOnlyRun())
+                {
+                    var candidate = adapter.GetRunState();
+                    if (adapter.TryUpdateRunTimings(candidate, out var latest))
+                    {
+                        resetCandidate = latest;
+                        candidateForReplacement = true;
+                    }
+                }
+            }
+            else if (adapter.TryUpdateRunTimings(Volatile.Read(ref publishedRun), out var updated))
+            {
+                resetCandidate = updated;
             }
         }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Run timing update after reset failed: {exception}"); }
-        PublishTimerEvent(BridgeEventType.EventTimerReset);
-        if (runChanged) QueueEvent(BridgeEventType.EventRunChanged, null);
+
+        try
+        {
+            var timerState = adapter.GetTimerState();
+            var previous = Volatile.Read(ref publishedRun);
+            var runChanged = resetCandidate != null && !resetCandidate.Equals(previous);
+            lock (eventGate)
+            {
+                if (resetCandidate != null && ReferenceEquals(currentRun, state.Run)
+                    && ReferenceEquals(previous, publishedRun)
+                    && (candidateForReplacement || ReferenceEquals(currentRun, cachedRunReference)))
+                {
+                    if (runChanged) Interlocked.Exchange(ref publishedRun, resetCandidate);
+                    if (candidateForReplacement) cachedRunReference = currentRun;
+                    if (ReferenceEquals(requestedRunReference, currentRun)) requestedRunReference = null;
+                }
+                else if (resetCandidate == null || !ReferenceEquals(currentRun, state.Run) || !ReferenceEquals(previous, publishedRun))
+                {
+                    runChanged = false;
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                }
+                EnqueueEventLocked(BridgeEventType.EventTimerReset, timerState);
+                if (runChanged) EnqueueEventLocked(BridgeEventType.EventRunChanged, null);
+            }
+        }
+        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Reset event callback failed: {exception}"); }
     }
 
     private void StateRunManuallyModified(object sender, EventArgs args)
@@ -334,18 +417,95 @@ internal sealed class BridgeRuntime : IDisposable
         // We intentionally avoid scanning/comparing the run on every update to preserve timer latency.
         try
         {
-            var currentRun = state!.Run;
-            var next = adapter.GetRunState();
-            if (!ReferenceEquals(currentRun, state.Run)) return;
-            cachedRunReference = currentRun;
-            var previous = Volatile.Read(ref publishedRun);
-            if (!next.Equals(previous))
+            RequestSynchronousRunRefresh(state!.Run);
+        }
+        catch (Exception exception)
+        {
+            lock (eventGate) requestedRunReference = null;
+            Debug.WriteLine($"[LiveSplit.Bridge] Run cache update failed: {exception}");
+        }
+    }
+
+    private void RequestSynchronousRunRefresh(object? runReference)
+    {
+        long generation;
+        lock (eventGate)
+        {
+            generation = ++staticUpdateGeneration;
+            requestedRunReference = runReference;
+        }
+        try
+        {
+            var candidate = adapter.GetRunState();
+            PublishRunCandidate(candidate, runReference, generation);
+        }
+        catch
+        {
+            ClearRequestedRunReference(runReference, generation);
+            throw;
+        }
+    }
+
+    private void BuildAndPublishRunCandidate(RunStateBuildCandidate candidate, object? runReference, long generation)
+    {
+        try { PublishRunCandidate(candidate.Build(), runReference, generation); }
+        catch (Exception exception)
+        {
+            ClearRequestedRunReference(runReference, generation);
+            Debug.WriteLine($"[LiveSplit.Bridge] Background Run cache build failed: {exception}");
+        }
+        finally { candidate.Dispose(); }
+    }
+
+    private void ClearRequestedRunReference(object? runReference, long generation)
+    {
+        lock (eventGate)
+            if (generation == staticUpdateGeneration && ReferenceEquals(requestedRunReference, runReference)) requestedRunReference = null;
+    }
+
+    private void PublishRunCandidate(RunState candidate, object? runReference, long generation)
+    {
+        if (state == null) return;
+        while (Volatile.Read(ref disposed) == 0)
+        {
+            if (Volatile.Read(ref resetPublicationDepth) != 0)
             {
-                Interlocked.Exchange(ref publishedRun, next);
-                QueueEvent(BridgeEventType.EventRunChanged, null);
+                Thread.Yield();
+                continue;
+            }
+            if (!ReferenceEquals(runReference, state.Run)) return;
+            var timingGeneration = Interlocked.Read(ref timingUpdateGeneration);
+            if (!adapter.TryUpdateRunTimings(candidate, out var withLatestTiming))
+            {
+                Interlocked.Exchange(ref staticRefreshRequested, 1);
+                return;
+            }
+            var previous = Volatile.Read(ref publishedRun);
+            var changed = !withLatestTiming.Equals(previous);
+            lock (eventGate)
+            {
+                if (Volatile.Read(ref disposed) != 0
+                    || generation != staticUpdateGeneration
+                    || !ReferenceEquals(runReference, state.Run)) return;
+                if (Volatile.Read(ref resetPublicationDepth) != 0 || timingGeneration != Interlocked.Read(ref timingUpdateGeneration))
+                {
+                    Thread.Yield();
+                    continue;
+                }
+                if (!ReferenceEquals(previous, publishedRun))
+                {
+                    continue;
+                }
+                if (changed)
+                {
+                    Interlocked.Exchange(ref publishedRun, withLatestTiming);
+                    EnqueueEventLocked(BridgeEventType.EventRunChanged, null);
+                }
+                cachedRunReference = runReference;
+                if (ReferenceEquals(requestedRunReference, runReference)) requestedRunReference = null;
+                return;
             }
         }
-        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Run cache update failed: {exception}"); }
     }
 
     private void PublishTimerEvent(BridgeEventType type)
@@ -361,9 +521,15 @@ internal sealed class BridgeRuntime : IDisposable
         lock (eventGate)
         {
             if (Volatile.Read(ref disposed) != 0) return;
-            var bridgeEvent = new BridgeEvent { SessionId = sessionId, EventSequence = unchecked((ulong)++eventSequence), Type = type };
-            if (timerState != null) bridgeEvent.TimerState = timerState;
-            transport?.Publish(bridgeEvent);
+            EnqueueEventLocked(type, timerState);
         }
+    }
+
+    private void EnqueueEventLocked(BridgeEventType type, TimerState? timerState)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        var bridgeEvent = new BridgeEvent { SessionId = sessionId, EventSequence = unchecked((ulong)++eventSequence), Type = type };
+        if (timerState != null) bridgeEvent.TimerState = timerState;
+        transport?.Publish(bridgeEvent);
     }
 }

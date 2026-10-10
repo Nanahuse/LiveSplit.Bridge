@@ -1,5 +1,7 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
@@ -19,7 +21,9 @@ internal interface ILiveSplitAdapter
     AttemptState GetAttempt();
     CompletedCount GetCompletedCount();
     RunState GetRunState();
-    RunState UpdateRunTimings(RunState published);
+    RunStateBuildCandidate CaptureRunState();
+    bool TryUpdateRunTimings(RunState published, out RunState updated);
+    bool IsTimerOnlyRun();
     ContextState GetContextState();
     void ExecuteTimerOperation(TimerOperationType operation);
     void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks);
@@ -75,6 +79,12 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
 
     public RunState GetRunState()
     {
+        using var candidate = CaptureRunState();
+        return candidate.Build();
+    }
+
+    public RunStateBuildCandidate CaptureRunState()
+    {
         var run = state.Run;
         var result = new RunState
         {
@@ -82,14 +92,17 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
             CategoryName = run?.CategoryName ?? string.Empty,
             OffsetTicks = run?.Offset.Ticks ?? 0,
         };
-        if (run == null) return result;
+        var images = new List<Bitmap?>();
+        if (run == null) return new RunStateBuildCandidate(result, images);
+        try
+        {
         result.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
         if (!string.IsNullOrEmpty(run.FilePath)) result.FilePath = run.FilePath;
         if (!string.IsNullOrEmpty(run.LayoutPath)) result.LayoutPath = run.LayoutPath;
         var metadata = run.Metadata;
         if (metadata != null)
         {
-            if (!string.IsNullOrEmpty(metadata.RunID)) result.Metadata.RunId = metadata.RunID;
+            if (metadata.RunID != null) result.Metadata.RunId = metadata.RunID;
             if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
             if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
             result.Metadata.UsesEmulator = metadata.UsesEmulator;
@@ -98,8 +111,7 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
                 foreach (var pair in metadata.VariableValueNames) result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
         }
         result.Comparisons.Add((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
-        var gameIcon = MapImage(run.GameIcon);
-        if (gameIcon != null) result.GameIcon = gameIcon;
+        images.Add(CloneImage(run.GameIcon));
         for (var index = 0; index < run.Count; index++)
         {
             var segment = run[index];
@@ -109,11 +121,16 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
                 info.Comparisons.Add(new ComparisonTime { Name = comparison, Time = MapTime(segment.Comparisons, comparison) });
             }
             info.BestSegmentTime = MapTime(segment.BestSegmentTime);
-            var icon = MapImage(segment.Icon);
-            if (icon != null) info.Icon = icon;
+            images.Add(CloneImage(segment.Icon));
             result.Segments.Add(info);
         }
-        return result;
+        return new RunStateBuildCandidate(result, images);
+        }
+        catch
+        {
+            foreach (var image in images) image?.Dispose();
+            throw;
+        }
     }
 
     public ContextState GetContextState()
@@ -134,10 +151,43 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
         return result;
     }
 
-    public RunState UpdateRunTimings(RunState published)
+    public bool TryUpdateRunTimings(RunState published, out RunState updated)
     {
         var run = state.Run;
-        if (run == null || published.Segments.Count != run.Count) return GetRunState();
+        if (run == null || published.Segments.Count != run.Count)
+        {
+            updated = published;
+            return false;
+        }
+        var currentComparisons = (run.Comparisons ?? Enumerable.Empty<string>()).Distinct().ToArray();
+        if (currentComparisons.Length != published.Comparisons.Count)
+        {
+            updated = published;
+            return false;
+        }
+        for (var comparisonIndex = 0; comparisonIndex < currentComparisons.Length; comparisonIndex++)
+        {
+            if (!string.Equals(currentComparisons[comparisonIndex], published.Comparisons[comparisonIndex], StringComparison.Ordinal))
+            {
+                updated = published;
+                return false;
+            }
+        }
+        for (var index = 0; index < run.Count; index++)
+        {
+            if (!string.Equals(published.Segments[index].Name, run[index].Name ?? string.Empty, StringComparison.Ordinal)
+                || published.Segments[index].Comparisons.Count != published.Comparisons.Count)
+            {
+                updated = published;
+                return false;
+            }
+            for (var comparisonIndex = 0; comparisonIndex < published.Comparisons.Count; comparisonIndex++)
+                if (!string.Equals(published.Segments[index].Comparisons[comparisonIndex].Name, published.Comparisons[comparisonIndex], StringComparison.Ordinal))
+                {
+                    updated = published;
+                    return false;
+                }
+        }
         var result = published.Clone();
         var comparisons = result.Comparisons;
         for (var index = 0; index < run.Count; index++)
@@ -151,21 +201,40 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
                 target.Comparisons[comparisonIndex].Time = MapTime(source.Comparisons, name);
             }
         }
-        return result;
+        if (result.Metadata == null) result.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
+        var runId = run.Metadata?.RunID;
+        if (runId == null) result.Metadata.ClearRunId();
+        else result.Metadata.RunId = runId;
+        updated = result;
+        return true;
     }
+
+    public bool IsTimerOnlyRun()
+    {
+        var run = state.Run;
+        return run != null
+            && run.Count == 1
+            && string.IsNullOrEmpty(run.GameName)
+            && string.IsNullOrEmpty(run.CategoryName)
+            && string.IsNullOrEmpty(run[0].Name)
+            && run.GameIcon == null
+            && run[0].Icon == null;
+    }
+
+    private static Bitmap? CloneImage(System.Drawing.Image image) => image == null ? null : new Bitmap(image);
 
     private static TimeValue MapTime(IComparisons comparisons, string name)
     {
         return comparisons != null && comparisons.TryGetValue(name, out var time) ? MapTime(time) : new TimeValue();
     }
 
-    private static Image? MapImage(System.Drawing.Image image)
+    internal static LiveSplit.Bridge.Protocol.V3.Image? MapImage(System.Drawing.Image image)
     {
         if (image == null) return null;
         // Encode synchronously while the owning LiveSplit object is known to be alive.
         using var stream = new MemoryStream();
         image.Save(stream, ImageFormat.Png);
-        return new Image { MimeType = "image/png", Data = ByteString.CopyFrom(stream.ToArray()), Width = (uint)image.Width, Height = (uint)image.Height };
+        return new LiveSplit.Bridge.Protocol.V3.Image { MimeType = "image/png", Data = ByteString.CopyFrom(stream.ToArray()), Width = (uint)image.Width, Height = (uint)image.Height };
     }
 
     public void ExecuteTimerOperation(TimerOperationType operation)
@@ -214,4 +283,38 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
         LiveSplit.Model.TimerPhase.Ended => ProtocolTimerPhase.Ended,
         _ => ProtocolTimerPhase.Unspecified,
     };
+}
+
+internal sealed class RunStateBuildCandidate : IDisposable
+{
+    private readonly List<Bitmap?> images;
+    private bool disposed;
+
+    internal RunStateBuildCandidate(RunState state, List<Bitmap?> images)
+    {
+        State = state;
+        this.images = images;
+    }
+
+    internal RunState State { get; }
+
+    internal RunState Build()
+    {
+        if (disposed) throw new ObjectDisposedException(nameof(RunStateBuildCandidate));
+        try
+        {
+            if (images.Count > 0 && images[0] != null) State.GameIcon = LiveSplitAdapter.MapImage(images[0]!);
+            for (var index = 1; index < images.Count; index++)
+                if (images[index] != null) State.Segments[index - 1].Icon = LiveSplitAdapter.MapImage(images[index]!);
+            return State;
+        }
+        finally { Dispose(); }
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        foreach (var image in images) image?.Dispose();
+    }
 }

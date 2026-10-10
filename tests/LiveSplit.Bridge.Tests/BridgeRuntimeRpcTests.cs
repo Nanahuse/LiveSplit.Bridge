@@ -110,6 +110,113 @@ public class BridgeRuntimeRpcTests
         Assert.Equal(Timeout.InfiniteTimeSpan, await TryReceiveTimeoutAsync(events));
     }
 
+    [Fact]
+    public async Task ResetPublishesUpdatedRunIdBeforeRunChangedAndKeepsEventOrder()
+    {
+        using var fixture = await RpcFixture.CreateAsync(run => run.Metadata.RunID = "before-reset");
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        fixture.State.Run.Metadata.RunID = null;
+        fixture.State.Run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(6), null);
+
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        var started = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerStarted, started.Type);
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var response = await fixture.SendAsync(new Request { GetRun = new GetRunRequest() });
+
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
+        Assert.Equal(reset.EventSequence + 1, changed.EventSequence);
+        Assert.False(response.GetRun.Run.Metadata.HasRunId);
+    }
+
+    [Fact]
+    public async Task ResetWithoutRunChangesDoesNotPublishRunChanged()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        Assert.Equal(BridgeEventType.EventTimerStarted,
+            BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5))).Type);
+
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        var started = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerStarted, started.Type);
+        Assert.Equal(reset.EventSequence + 1, started.EventSequence);
+    }
+
+    [Fact]
+    public async Task BestSegmentOnlyResetChangePublishesRunChanged()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        Assert.Equal(BridgeEventType.EventTimerStarted,
+            BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5))).Type);
+
+        fixture.State.Run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(9), null);
+        await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var response = await fixture.SendAsync(new Request { GetRun = new GetRunRequest() });
+
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
+        Assert.Equal(reset.EventSequence + 1, changed.EventSequence);
+        Assert.Equal(TimeSpan.FromSeconds(9).Ticks, response.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
+    }
+
+    [Fact]
+    public async Task TimerOnlyRunReplacementDuringResetIsPublishedImmediately()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port));
+        var timer = new TimerModel { CurrentState = fixture.State };
+        timer.Start();
+        var started = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+
+        var timerOnlyRun = new Run(new StandardComparisonGeneratorsFactory());
+        timerOnlyRun.Add(new Segment(string.Empty));
+        fixture.State.Run = timerOnlyRun;
+        timer.Reset();
+
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        var response = await fixture.SendAsync(new Request { GetRun = new GetRunRequest() });
+        Assert.Equal(BridgeEventType.EventTimerStarted, started.Type);
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
+        Assert.Single(response.GetRun.Run.Segments);
+        Assert.Equal(string.Empty, response.GetRun.Run.Segments[0].Name);
+    }
+
     private static async Task<TimeSpan> TryReceiveTimeoutAsync(WebSocketTestClient client)
     {
         try
@@ -138,11 +245,12 @@ public class BridgeRuntimeRpcTests
         public int Port { get; }
         public LiveSplitState State { get; }
 
-        public static async Task<RpcFixture> CreateAsync()
+        public static async Task<RpcFixture> CreateAsync(Action<Run>? configureRun = null)
         {
             var port = BridgeTestEndpoints.GetFreePort();
             var run = new Run(new StandardComparisonGeneratorsFactory()) { GameName = "RPC Game", CategoryName = "Any%" };
             run.Add(new Segment("One"));
+            configureRun?.Invoke(run);
             var state = TestLiveSplitState.Create(run);
             var runtime = new BridgeRuntime(state, port);
             var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
