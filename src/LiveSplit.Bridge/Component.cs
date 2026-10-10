@@ -39,6 +39,8 @@ public sealed class Component : IComponent
         {
             if (status == BridgeRuntimeStatus.Stopped) return;
             if (runtime == null && (status != BridgeRuntimeStatus.Failed || Stopwatch.GetTimestamp() >= retryAt)) TryStartRuntime();
+            try { runtime?.ObserveRunReference(); runtime?.ObserveContextState(); }
+            catch (Exception ex) { Debug.WriteLine($"[LiveSplit.Bridge] Runtime observation failed: {ex}"); }
             UpdateControl();
         }
     }

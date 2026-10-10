@@ -32,6 +32,7 @@ internal static class BridgeTestEndpoints
     }
 
     public static string Rpc(int port) => $"ws://127.0.0.1:{port}/bridge/v3/rpc";
+    public static string Events(int port) => $"ws://127.0.0.1:{port}/bridge/v3/events";
 
     public static string WebSocket(int port) => $"ws://127.0.0.1:{port}";
 
