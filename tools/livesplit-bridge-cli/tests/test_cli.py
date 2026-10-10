@@ -143,9 +143,7 @@ def test_port_environment_parsing_and_cli_precedence(
         assert endpoints == [f"ws://127.0.0.1:{expected_port}/bridge/v3/rpc"]
 
 
-def test_socket_supported_timeout_is_not_limited_by_thread_timeout_max(
-    monkeypatch,
-) -> None:
+def test_socket_supported_timeout_is_passed_to_rpc(monkeypatch) -> None:
     socket = ErrorSocket()
     timeouts: list[float] = []
 
@@ -155,8 +153,7 @@ def test_socket_supported_timeout_is_not_limited_by_thread_timeout_max(
 
     monkeypatch.setattr(client_module.websocket, "create_connection", create_connection)
 
-    # 24 hours is accepted by socket.settimeout on supported platforms and is
-    # intentionally independent of threading.TIMEOUT_MAX.
+    # 24 hours is accepted by socket.settimeout on supported platforms.
     assert main(["--timeout", "86400", "timer-state"]) == 1
     assert timeouts == [86400.0]
 
