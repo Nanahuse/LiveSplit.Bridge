@@ -434,6 +434,77 @@ public class BridgeRuntimeTests
     }
 
     [Fact]
+    public async Task ReplacementRunBuildFinishingAfterResetDoesNotReusePreviousRunTimings()
+    {
+        var state = CreateState(out var runA);
+        runA.GameName = "Run A";
+        runA.Metadata.RunID = "run-a-id";
+        runA[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(7), null);
+        var adapter = new BlockingRunAdapter(state);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(adapter, state, port);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+
+        var runB = new Run(new StandardComparisonGeneratorsFactory())
+        {
+            GameName = "Run B",
+            CategoryName = "Any%",
+        };
+        runB.Add(new Segment("Segment 1"));
+        runB.Add(new Segment("Segment 2"));
+        runB.Add(new Segment("Segment 3"));
+        runB.Metadata.RunID = "run-b-before-reset";
+        runB[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(19), null);
+        state.Run = runB;
+        var staticBuild = Task.Factory.StartNew(
+            state.CallRunManuallyModified,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.True(adapter.FirstManualBuildEntered.Wait(TimeSpan.FromSeconds(5)));
+
+        var timer = new TimerModel { CurrentState = state };
+        timer.Start();
+        Assert.Equal(BridgeEventType.EventTimerStarted,
+            BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5))).Type);
+        runB.Metadata.RunID = null;
+        runB[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(31), null);
+        timer.Reset();
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+
+        adapter.ReleaseFirstManualBuild.Set();
+        await staticBuild;
+        var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        Assert.Equal("Run B", response.GetRun.Run.GameName);
+        Assert.Equal("Any%", response.GetRun.Run.CategoryName);
+        Assert.Equal("Segment 1", response.GetRun.Run.Segments[0].Name);
+        Assert.False(response.GetRun.Run.Metadata.HasRunId);
+        Assert.Equal(TimeSpan.FromSeconds(31).Ticks, response.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
+        Assert.NotEqual(TimeSpan.FromSeconds(7).Ticks, response.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
+    }
+
+    [Fact]
+    public async Task ResetTimerStateCaptureFailureOmitsPayloadAndDoesNotFailReset()
+    {
+        var state = CreateState(out _);
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var runtime = new BridgeRuntime(new FailingAdapter(), state, port);
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(port));
+        var timer = new TimerModel { CurrentState = state };
+
+        timer.Start();
+        timer.Reset();
+        var reset = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
+        Assert.Null(reset.TimerState);
+        Assert.Equal(LiveSplit.Model.TimerPhase.NotRunning, state.CurrentPhase);
+    }
+
+    [Fact]
     public async Task RuntimeDisposeRejectsAnInFlightRunCandidate()
     {
         var state = CreateState(out var run);

@@ -361,7 +361,7 @@ internal sealed class BridgeRuntime : IDisposable
     {
         var currentRun = state!.Run;
         var resetTimingGeneration = Interlocked.Increment(ref timingUpdateGeneration);
-        TimerState timerState;
+        TimerState? timerState = null;
         try
         {
             timerState = adapter.GetTimerState();
@@ -369,7 +369,6 @@ internal sealed class BridgeRuntime : IDisposable
         catch (Exception exception)
         {
             Debug.WriteLine($"[LiveSplit.Bridge] Timer state capture after reset failed: {exception}");
-            timerState = new TimerState();
         }
 
         while (Volatile.Read(ref disposed) == 0)
@@ -536,13 +535,25 @@ internal sealed class BridgeRuntime : IDisposable
             }
             var previous = Volatile.Read(ref publishedRun);
             var withLatestTiming = candidate;
-            if (timingGeneration != capturedTimingGeneration
-                && !LiveSplitAdapter.TryMergeRunTimings(candidate, previous, out withLatestTiming))
+            if (timingGeneration != capturedTimingGeneration)
             {
-                // The latest published timing has a different shape, so this snapshot cannot
-                // safely combine with it. Component.Update will capture the current Run again.
-                Interlocked.Exchange(ref staticRefreshRequested, 1);
-                return;
+                if (ReferenceEquals(runReference, Volatile.Read(ref cachedRunReference)))
+                {
+                    if (!LiveSplitAdapter.TryMergeRunTimings(candidate, previous, out withLatestTiming))
+                    {
+                        // The latest published timing has a different shape, so this snapshot
+                        // cannot safely combine with it. Component.Update recaptures the Run.
+                        Interlocked.Exchange(ref staticRefreshRequested, 1);
+                        return;
+                    }
+                }
+                else if (!adapter.TryUpdateRunTimings(candidate, out withLatestTiming))
+                {
+                    // This candidate belongs to a replacement Run. Refresh it from that Run's
+                    // current timings instead of borrowing data from the previously published Run.
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                    return;
+                }
             }
             var changed = !withLatestTiming.Equals(previous);
             lock (eventGate)
