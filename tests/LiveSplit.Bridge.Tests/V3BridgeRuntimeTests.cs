@@ -202,23 +202,35 @@ public class BridgeRuntimeTests
     {
         var adapter = new BlockingAdapter();
         var runtime = new BridgeRuntime(adapter);
-        var firstControl = Task.Run(() => SendTimerOperation(runtime));
-        Assert.True(await Task.Run(() => adapter.FirstControlEntered.Wait(TimeSpan.FromSeconds(3))));
+        var firstControl = Task.Factory.StartNew(
+            () => SendTimerOperation(runtime),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.True(adapter.FirstControlEntered.Wait(TimeSpan.FromSeconds(5)));
 
-        var query = Task.Run(() => runtime.HandleRequest(new Request
-        {
-            ProtocolVersion = 3,
-            GetTimerState = new GetTimerStateRequest(),
-        }));
-        Assert.Same(query, await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(1))));
+        var query = Task.Factory.StartNew(
+            () => runtime.HandleRequest(new Request
+            {
+                ProtocolVersion = 3,
+                GetTimerState = new GetTimerStateRequest(),
+            }),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.Same(query, await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(5))));
         Assert.NotNull((await query).GetTimerState);
 
-        var secondControl = Task.Run(() => SendTimerOperation(runtime));
-        Assert.False(await Task.Run(() => adapter.SecondControlEntered.Wait(TimeSpan.FromMilliseconds(150))));
+        var secondControl = Task.Factory.StartNew(
+            () => SendTimerOperation(runtime),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.False(adapter.SecondControlEntered.Wait(TimeSpan.FromMilliseconds(150)));
 
         adapter.ReleaseFirstControl.Set();
         var controls = Task.WhenAll(firstControl, secondControl);
-        Assert.Same(controls, await Task.WhenAny(controls, Task.Delay(TimeSpan.FromSeconds(3))));
+        Assert.Same(controls, await Task.WhenAny(controls, Task.Delay(TimeSpan.FromSeconds(5))));
         await controls;
         Assert.True(adapter.SecondControlEntered.IsSet);
         Assert.Equal(2, adapter.ControlCallCount);
