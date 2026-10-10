@@ -5,9 +5,9 @@ from typing import Self
 
 import websocket
 
-from livesplit.bridge.v2 import bridge_pb2
+from livesplit.bridge.v3 import bridge_pb2, common_pb2
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 
 class BridgeClientError(RuntimeError):
@@ -40,7 +40,9 @@ class BridgeClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def request(self, request: bridge_pb2.Request) -> bridge_pb2.Response:
+    def request(
+        self, request: bridge_pb2.Request, expected_body: str
+    ) -> bridge_pb2.Response:
         request_id = self._next_request_id
         self._next_request_id += 1
         request.protocol_version = PROTOCOL_VERSION
@@ -56,66 +58,98 @@ class BridgeClient:
             raise BridgeClientError(f"RPC failed: {error}") from error
         if isinstance(data, str):
             raise BridgeClientError("Bridge returned a text frame; binary expected")
-        response = bridge_pb2.Response.FromString(data)
+
+        try:
+            response = bridge_pb2.Response.FromString(data)
+        except Exception as error:
+            raise BridgeClientError(
+                f"Bridge returned invalid protobuf data: {error}"
+            ) from error
+        if response.protocol_version != PROTOCOL_VERSION:
+            raise BridgeClientError(
+                f"Protocol version mismatch: expected {PROTOCOL_VERSION}, "
+                f"got {response.protocol_version}"
+            )
         if response.request_id != request_id:
             raise BridgeClientError(
                 f"Request ID mismatch: expected {request_id}, got {response.request_id}"
             )
-        if response.HasField("error"):
+        if response.session_id == 0:
+            raise BridgeClientError("Bridge returned an invalid session_id")
+        body = response.WhichOneof("body")
+        if body == "error":
             raise BridgeClientError(
                 f"Bridge error {response.error.code}: {response.error.message}"
             )
+        if body != expected_body:
+            raise BridgeClientError(
+                f"Unexpected response body: expected {expected_body}, "
+                f"got {body or 'none'}"
+            )
         return response
-
-    def attach(self) -> bridge_pb2.Response:
-        return self.request(bridge_pb2.Request(attach=bridge_pb2.AttachRequest()))
 
     def timer_state(self) -> bridge_pb2.Response:
         return self.request(
-            bridge_pb2.Request(get_timer_state=bridge_pb2.GetTimerStateRequest())
+            bridge_pb2.Request(get_timer_state=bridge_pb2.GetTimerStateRequest()),
+            "get_timer_state",
         )
 
     def run(self) -> bridge_pb2.Response:
-        return self.request(bridge_pb2.Request(get_run=bridge_pb2.GetRunRequest()))
+        return self.request(
+            bridge_pb2.Request(get_run=bridge_pb2.GetRunRequest()), "get_run"
+        )
 
     def attempt(self) -> bridge_pb2.Response:
         return self.request(
-            bridge_pb2.Request(get_attempt=bridge_pb2.GetAttemptRequest())
+            bridge_pb2.Request(get_attempt=bridge_pb2.GetAttemptRequest()),
+            "get_attempt",
         )
 
-    def runtime_state(self) -> bridge_pb2.Response:
+    def context(self) -> bridge_pb2.Response:
         return self.request(
-            bridge_pb2.Request(get_runtime_state=bridge_pb2.GetRuntimeStateRequest())
+            bridge_pb2.Request(get_context_state=bridge_pb2.GetContextStateRequest()),
+            "get_context_state",
         )
 
-    def timer(self, operation: str) -> bridge_pb2.Response:
+    def completed_count(self) -> bridge_pb2.Response:
+        return self.request(
+            bridge_pb2.Request(
+                get_completed_count=bridge_pb2.GetCompletedCountRequest()
+            ),
+            "get_completed_count",
+        )
+
+    def timer(self, operation: int) -> bridge_pb2.Response:
         return self.request(
             bridge_pb2.Request(
                 timer_operation=bridge_pb2.TimerOperationRequest(operation=operation)
-            )
+            ),
+            "operation",
         )
 
     def game_time(
-        self, operation: str, ticks: int | None = None
+        self, operation: int, ticks: int | None = None
     ) -> bridge_pb2.Response:
         request = bridge_pb2.GameTimeOperationRequest(operation=operation)
         if ticks is not None:
             request.ticks = ticks
-        return self.request(bridge_pb2.Request(game_time_operation=request))
+        return self.request(
+            bridge_pb2.Request(game_time_operation=request), "operation"
+        )
 
 
 TIMER_OPERATIONS = {
-    "start": "TIMER_START",
-    "split": "TIMER_SPLIT",
-    "skip": "TIMER_SKIP",
-    "undo": "TIMER_UNDO",
-    "reset": "TIMER_RESET",
-    "pause": "TIMER_PAUSE",
-    "resume": "TIMER_RESUME",
+    "start": common_pb2.TIMER_START,
+    "split": common_pb2.TIMER_SPLIT,
+    "skip": common_pb2.TIMER_SKIP,
+    "undo": common_pb2.TIMER_UNDO,
+    "reset": common_pb2.TIMER_RESET,
+    "pause": common_pb2.TIMER_PAUSE,
+    "resume": common_pb2.TIMER_RESUME,
 }
 
 GAME_TIME_OPERATIONS = {
-    "initialize": "INITIALIZE",
-    "pause": "GAME_TIME_PAUSE",
-    "resume": "GAME_TIME_RESUME",
+    "initialize": common_pb2.INITIALIZE,
+    "pause": common_pb2.GAME_TIME_PAUSE,
+    "resume": common_pb2.GAME_TIME_RESUME,
 }

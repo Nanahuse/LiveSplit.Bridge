@@ -10,7 +10,7 @@ OUTPUT = Path(__file__).resolve().parents[1] / "src"
 
 
 def main() -> int:
-    proto_files = sorted(PROTO_ROOT.rglob("*.proto"))
+    proto_files = sorted((PROTO_ROOT / "livesplit/bridge/v3").glob("*.proto"))
     if not proto_files:
         print(f"No proto files found below {PROTO_ROOT}", file=sys.stderr)
         return 1
@@ -34,7 +34,7 @@ def main() -> int:
     for directory in [
         OUTPUT / "livesplit",
         OUTPUT / "livesplit/bridge",
-        OUTPUT / "livesplit/bridge/v2",
+        OUTPUT / "livesplit/bridge/v3",
     ]:
         (directory / "__init__.py").touch()
     print(f"Generated {len(proto_files)} protobuf modules in {OUTPUT}")

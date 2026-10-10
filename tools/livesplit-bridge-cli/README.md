@@ -1,40 +1,57 @@
 # LiveSplit.Bridge Debug CLI
 
-LiveSplit.Bridge の RPC とイベントストリームを確認するための Python CLI です。
-Python 3.14以降を使用します。
-
-> [!NOTE]
-> このDebug CLIは現在Protocol v2対応で、v3へ移行中です。v3 Runtimeへ移行した
-> Bridgeとは互換性がありません。CLIのv3対応とBridgeとの統合テストは後続作業で
-> 行います。現時点ではこのCLIをv3 Bridgeへの接続に使用できません。
+Python CLIでLiveSplit.Bridge Protocol v3のRPCとEventsを確認できます。Python 3.14以降と
+[uv](https://docs.astral.sh/uv/)を使用します。
 
 ## セットアップ
 
-リポジトリルートから実行します。
-
 ```powershell
 cd tools/livesplit-bridge-cli
-uv sync
+uv sync --locked
 uv run python scripts/generate_proto.py
 ```
 
-`generate_proto.py` は本体の
-`proto` を入力として、実行時に必要な
-`*_pb2.py` と型チェック用の `*_pb2.pyi` を同時に生成します。これらは生成物のため
-Gitには含めません。`.proto` を変更した場合や、クリーンチェックアウト後には再生成して
-ください。
+生成スクリプトはリポジトリのProtocol v3 `.proto`から実行時用の`*_pb2.py`と型チェック用の
+`*_pb2.pyi`を作成します。生成物はGit管理されません。スクリプトを再実行すれば生成し直せます。
 
-品質チェックは次のコマンドで実行できます。
+## コマンド
+
+Bridgeの既定ポートは`54000`です。`--port`でポート、`--timeout`でRPC timeout秒数、`--json`で
+受信ProtobufメッセージのJSON表示を指定できます。`LIVESPLIT_BRIDGE_WEBSOCKET_PORT`
+環境変数も既定ポートを変更します。
+
+```powershell
+uv run livesplit-bridge timer-state
+uv run livesplit-bridge run
+uv run livesplit-bridge attempt
+uv run livesplit-bridge context
+uv run livesplit-bridge completed-count
+
+uv run livesplit-bridge timer start
+uv run livesplit-bridge timer split
+uv run livesplit-bridge timer skip
+uv run livesplit-bridge timer undo
+uv run livesplit-bridge timer reset
+uv run livesplit-bridge timer pause
+uv run livesplit-bridge timer resume
+
+uv run livesplit-bridge game-time initialize
+uv run livesplit-bridge game-time set 12.345
+uv run livesplit-bridge game-time pause
+uv run livesplit-bridge game-time resume
+
+uv run livesplit-bridge events --count 5
+uv run livesplit-bridge --port 54001 --timeout 5 --json timer-state
+```
+
+`events`はEvent種別とsequenceを表示し、EventにTimerStateが含まれる場合はその値も表示
+します。HeartbeatはProtocol v3にありません。RPCエラーや接続エラーでは内容を標準エラーへ
+出力し、終了コード1を返します。
+
+## 開発チェック
 
 ```powershell
 uv run ruff check src tests scripts
-uv run ty check src tests scripts
+uv run ruff format --check src tests scripts
 uv run pytest
 ```
-
-## 自動テスト
-
-`uv run pytest` はCLI自身のプロトコル非依存テストを実行します。Bridgeとの
-統合テストは、CLIのv3対応が完了した後に追加します。GitHub Actionsでは.NET
-テスト、CLIのlint、およびCLIテストをWindows環境で実行します。
-

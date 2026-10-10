@@ -55,8 +55,14 @@ jobs:
           uv run ruff check src tests scripts
           uv run ruff format --check src tests scripts
 
+      - name: Restore .NET projects
+        run: dotnet restore LiveSplit.Bridge.slnx --nologo
+
+      - name: Build .NET projects
+        run: dotnet build LiveSplit.Bridge.slnx --configuration Release --no-restore --nologo
+
       - name: Test .NET projects
-        run: dotnet test LiveSplit.Bridge.slnx --configuration Release --nologo
+        run: dotnet test LiveSplit.Bridge.slnx --configuration Release --no-build --no-restore --nologo
 
       - name: Test CLI
         working-directory: tools/livesplit-bridge-cli
