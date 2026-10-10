@@ -298,6 +298,7 @@ internal sealed class BridgeRuntime : IDisposable
             return;
         }
         RunStateBuildCandidate candidate;
+        var capturedTimingGeneration = Interlocked.Read(ref timingUpdateGeneration);
         try
         {
             candidate = adapter.CaptureRunState();
@@ -307,7 +308,7 @@ internal sealed class BridgeRuntime : IDisposable
                 ClearRequestedRunReference(runReference, generation);
                 return;
             }
-            _ = Task.Run(() => BuildAndPublishRunCandidate(candidate, runReference, generation));
+            _ = Task.Run(() => BuildAndPublishRunCandidate(candidate, runReference, generation, capturedTimingGeneration));
         }
         catch (Exception exception)
         {
@@ -436,8 +437,9 @@ internal sealed class BridgeRuntime : IDisposable
         }
         try
         {
+            var capturedTimingGeneration = Interlocked.Read(ref timingUpdateGeneration);
             var candidate = adapter.GetRunState();
-            PublishRunCandidate(candidate, runReference, generation);
+            PublishRunCandidate(candidate, runReference, generation, capturedTimingGeneration);
         }
         catch
         {
@@ -446,9 +448,9 @@ internal sealed class BridgeRuntime : IDisposable
         }
     }
 
-    private void BuildAndPublishRunCandidate(RunStateBuildCandidate candidate, object? runReference, long generation)
+    private void BuildAndPublishRunCandidate(RunStateBuildCandidate candidate, object? runReference, long generation, long capturedTimingGeneration)
     {
-        try { PublishRunCandidate(candidate.Build(), runReference, generation); }
+        try { PublishRunCandidate(candidate.Build(), runReference, generation, capturedTimingGeneration); }
         catch (Exception exception)
         {
             ClearRequestedRunReference(runReference, generation);
@@ -463,7 +465,7 @@ internal sealed class BridgeRuntime : IDisposable
             if (generation == staticUpdateGeneration && ReferenceEquals(requestedRunReference, runReference)) requestedRunReference = null;
     }
 
-    private void PublishRunCandidate(RunState candidate, object? runReference, long generation)
+    private void PublishRunCandidate(RunState candidate, object? runReference, long generation, long capturedTimingGeneration)
     {
         if (state == null) return;
         while (Volatile.Read(ref disposed) == 0)
@@ -475,10 +477,17 @@ internal sealed class BridgeRuntime : IDisposable
             }
             if (!ReferenceEquals(runReference, state.Run)) return;
             var timingGeneration = Interlocked.Read(ref timingUpdateGeneration);
-            if (!adapter.TryUpdateRunTimings(candidate, out var withLatestTiming))
+            var timingsUpdated = adapter.TryUpdateRunTimings(candidate, out var withLatestTiming);
+            if (!timingsUpdated)
             {
-                Interlocked.Exchange(ref staticRefreshRequested, 1);
-                return;
+                // A complete static candidate can carry a changed segment/comparison layout.
+                // Use it only if no Reset occurred since it captured its own timing and Run ID.
+                if (timingGeneration != capturedTimingGeneration)
+                {
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                    return;
+                }
+                withLatestTiming = candidate;
             }
             var previous = Volatile.Read(ref publishedRun);
             var changed = !withLatestTiming.Equals(previous);
@@ -487,7 +496,9 @@ internal sealed class BridgeRuntime : IDisposable
                 if (Volatile.Read(ref disposed) != 0
                     || generation != staticUpdateGeneration
                     || !ReferenceEquals(runReference, state.Run)) return;
-                if (Volatile.Read(ref resetPublicationDepth) != 0 || timingGeneration != Interlocked.Read(ref timingUpdateGeneration))
+                if (Volatile.Read(ref resetPublicationDepth) != 0
+                    || timingGeneration != Interlocked.Read(ref timingUpdateGeneration)
+                    || (!timingsUpdated && timingGeneration != capturedTimingGeneration))
                 {
                     Thread.Yield();
                     continue;
