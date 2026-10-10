@@ -1,8 +1,11 @@
 #nullable enable
 using System;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Threading;
+using System.Threading.Tasks;
+using Google.Protobuf;
 using LiveSplit.Bridge.Protocol.V3;
 using WebSocketSharp.Server;
 
@@ -11,10 +14,13 @@ namespace LiveSplit.Bridge;
 internal sealed class WebSocketTransport : IDisposable
 {
     internal const string RpcPath = "/bridge/v3/rpc";
+    internal const string EventsPath = "/bridge/v3/events";
     private readonly int port;
     private readonly Func<Request, Response> requestHandler;
     private WebSocketServer? server;
     private int disposed;
+    private readonly BlockingCollection<BridgeEvent> eventQueue = new();
+    private Task? publisher;
 
     public WebSocketTransport(int port, Func<Request, Response> requestHandler)
     {
@@ -34,7 +40,9 @@ internal sealed class WebSocketTransport : IDisposable
         {
             server = new WebSocketServer(IPAddress.Loopback, port) { KeepClean = false };
             server.AddWebSocketService<WebSocketRpcBehavior>(RpcPath, () => new WebSocketRpcBehavior(requestHandler));
+            server.AddWebSocketService<WebSocketEventBehavior>(EventsPath);
             server.Start();
+            publisher = Task.Run(PublishEvents);
         }
         catch (Exception exception)
         {
@@ -53,6 +61,9 @@ internal sealed class WebSocketTransport : IDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         StopServer();
+        eventQueue.CompleteAdding();
+        try { publisher?.Wait(TimeSpan.FromSeconds(2)); }
+        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Event publisher stop failed: {exception.Message}"); }
     }
 
     private void StopServer()
@@ -60,5 +71,21 @@ internal sealed class WebSocketTransport : IDisposable
         try { server?.Stop(); }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] WebSocket server stop failed: {exception.Message}"); }
         finally { server = null; }
+    }
+
+    internal void Publish(BridgeEvent bridgeEvent)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        try { eventQueue.Add(bridgeEvent); }
+        catch (InvalidOperationException) { }
+    }
+
+    private void PublishEvents()
+    {
+        foreach (var bridgeEvent in eventQueue.GetConsumingEnumerable())
+        {
+            try { server?.WebSocketServices[EventsPath].Sessions.Broadcast(bridgeEvent.ToByteArray()); }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Event broadcast failed: {exception.Message}"); }
+        }
     }
 }

@@ -243,11 +243,17 @@ public class BridgeRuntimeTests
     }
 
     [Fact]
-    public void RecognizedButDeferredQueriesReturnAnEnvelopeError()
+    public void RunAndContextQueriesReturnInitialSnapshots()
     {
-        var runtime = new BridgeRuntime(CreateState(out _));
+        var state = CreateState(out var initialRun);
+        initialRun.GameName = "Game";
+        initialRun.CategoryName = "Any%";
+        initialRun[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(9), null);
+        initialRun.Metadata.CustomVariables["route"] = new LiveSplit.Model.CustomVariable("left", false);
+        state.CurrentComparison = "Personal Best";
+        var runtime = new BridgeRuntime(state);
 
-        var run = runtime.HandleRequest(new Request
+        var runResponse = runtime.HandleRequest(new Request
         {
             ProtocolVersion = 3,
             GetRun = new GetRunRequest(),
@@ -258,8 +264,14 @@ public class BridgeRuntimeTests
             GetContextState = new GetContextStateRequest(),
         });
 
-        Assert.Equal(BridgeErrorCode.OperationFailed, run.Error.Code);
-        Assert.Equal(BridgeErrorCode.OperationFailed, context.Error.Code);
+        Assert.Equal("Game", runResponse.GetRun.Run.GameName);
+        Assert.Equal("Any%", runResponse.GetRun.Run.CategoryName);
+        Assert.Equal(3, runResponse.GetRun.Run.Segments.Count);
+        Assert.Equal(TimeSpan.FromSeconds(9).Ticks, runResponse.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
+        Assert.Equal("Personal Best", context.GetContextState.ContextState.CurrentComparison);
+        Assert.Equal("left", context.GetContextState.ContextState.CustomVariables["route"]);
+        Assert.Equal(runtime.SessionId, runResponse.SessionId);
+        Assert.Equal(runtime.SessionId, context.SessionId);
     }
 
     private static LiveSplitState CreateState(out Run run)
@@ -331,6 +343,9 @@ public class BridgeRuntimeTests
         public TimerState GetTimerState() => new();
         public AttemptState GetAttempt() => new();
         public CompletedCount GetCompletedCount() => new();
+        public RunState GetRunState() => new();
+        public RunState UpdateRunTimings(RunState published) => published.Clone();
+        public ContextState GetContextState() => new();
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) { }
 
         public void ExecuteTimerOperation(TimerOperationType operation)
@@ -368,6 +383,9 @@ public class BridgeRuntimeTests
         public TimerState GetTimerState() => throw new InvalidOperationException("query failure");
         public AttemptState GetAttempt() => new();
         public CompletedCount GetCompletedCount() => new();
+        public RunState GetRunState() => new();
+        public RunState UpdateRunTimings(RunState published) => published.Clone();
+        public ContextState GetContextState() => new();
         public void ExecuteTimerOperation(TimerOperationType operation) => throw new InvalidOperationException("control failure");
         public void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks) => throw new InvalidOperationException("control failure");
     }

@@ -1,7 +1,14 @@
+#nullable enable
 using System;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
+using Google.Protobuf;
 using LiveSplit.Bridge.Protocol.V3;
 using LiveSplit.Model;
+using LiveSplit.Model.Comparisons;
+using ModelTimingMethod = LiveSplit.Model.TimingMethod;
+using ProtocolTimingMethod = LiveSplit.Bridge.Protocol.V3.TimingMethod;
 using ProtocolTimerPhase = LiveSplit.Bridge.Protocol.V3.TimerPhase;
 
 namespace LiveSplit.Bridge;
@@ -11,6 +18,9 @@ internal interface ILiveSplitAdapter
     TimerState GetTimerState();
     AttemptState GetAttempt();
     CompletedCount GetCompletedCount();
+    RunState GetRunState();
+    RunState UpdateRunTimings(RunState published);
+    ContextState GetContextState();
     void ExecuteTimerOperation(TimerOperationType operation);
     void ExecuteGameTimeOperation(GameTimeOperationType operation, long? ticks);
 }
@@ -61,6 +71,101 @@ internal sealed class LiveSplitAdapter : ILiveSplitAdapter
     {
         var attempts = state.Run?.AttemptHistory;
         return new CompletedCount { CompletedCount_ = attempts == null ? 0U : (uint)attempts.Count(attempt => attempt.Time.RealTime != null) };
+    }
+
+    public RunState GetRunState()
+    {
+        var run = state.Run;
+        var result = new RunState
+        {
+            GameName = run?.GameName ?? string.Empty,
+            CategoryName = run?.CategoryName ?? string.Empty,
+            OffsetTicks = run?.Offset.Ticks ?? 0,
+        };
+        if (run == null) return result;
+        result.Metadata = new LiveSplit.Bridge.Protocol.V3.RunMetadata();
+        if (!string.IsNullOrEmpty(run.FilePath)) result.FilePath = run.FilePath;
+        if (!string.IsNullOrEmpty(run.LayoutPath)) result.LayoutPath = run.LayoutPath;
+        var metadata = run.Metadata;
+        if (metadata != null)
+        {
+            if (!string.IsNullOrEmpty(metadata.RunID)) result.Metadata.RunId = metadata.RunID;
+            if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
+            if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
+            result.Metadata.UsesEmulator = metadata.UsesEmulator;
+            // RunState.variables describe VariableValueNames, not current values.
+            if (metadata.VariableValueNames != null)
+                foreach (var pair in metadata.VariableValueNames) result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
+        }
+        result.Comparisons.Add((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
+        var gameIcon = MapImage(run.GameIcon);
+        if (gameIcon != null) result.GameIcon = gameIcon;
+        for (var index = 0; index < run.Count; index++)
+        {
+            var segment = run[index];
+            var info = new SegmentInfo { Index = (uint)index, Name = segment.Name ?? string.Empty };
+            foreach (var comparison in result.Comparisons)
+            {
+                info.Comparisons.Add(new ComparisonTime { Name = comparison, Time = MapTime(segment.Comparisons, comparison) });
+            }
+            info.BestSegmentTime = MapTime(segment.BestSegmentTime);
+            var icon = MapImage(segment.Icon);
+            if (icon != null) info.Icon = icon;
+            result.Segments.Add(info);
+        }
+        return result;
+    }
+
+    public ContextState GetContextState()
+    {
+        var result = new ContextState
+        {
+            CurrentTimingMethod = state.CurrentTimingMethod switch
+            {
+                ModelTimingMethod.RealTime => ProtocolTimingMethod.RealTime,
+                ModelTimingMethod.GameTime => ProtocolTimingMethod.GameTime,
+                _ => ProtocolTimingMethod.Unspecified,
+            },
+            CurrentComparison = state.CurrentComparison ?? string.Empty,
+        };
+        var variables = state.Run?.Metadata?.CustomVariables;
+        if (variables != null)
+            foreach (var pair in variables) result.CustomVariables[pair.Key] = pair.Value?.Value ?? string.Empty;
+        return result;
+    }
+
+    public RunState UpdateRunTimings(RunState published)
+    {
+        var run = state.Run;
+        if (run == null || published.Segments.Count != run.Count) return GetRunState();
+        var result = published.Clone();
+        var comparisons = result.Comparisons;
+        for (var index = 0; index < run.Count; index++)
+        {
+            var source = run[index];
+            var target = result.Segments[index];
+            target.BestSegmentTime = MapTime(source.BestSegmentTime);
+            for (var comparisonIndex = 0; comparisonIndex < target.Comparisons.Count; comparisonIndex++)
+            {
+                var name = comparisonIndex < comparisons.Count ? comparisons[comparisonIndex] : target.Comparisons[comparisonIndex].Name;
+                target.Comparisons[comparisonIndex].Time = MapTime(source.Comparisons, name);
+            }
+        }
+        return result;
+    }
+
+    private static TimeValue MapTime(IComparisons comparisons, string name)
+    {
+        return comparisons != null && comparisons.TryGetValue(name, out var time) ? MapTime(time) : new TimeValue();
+    }
+
+    private static Image? MapImage(System.Drawing.Image image)
+    {
+        if (image == null) return null;
+        // Encode synchronously while the owning LiveSplit object is known to be alive.
+        using var stream = new MemoryStream();
+        image.Save(stream, ImageFormat.Png);
+        return new Image { MimeType = "image/png", Data = ByteString.CopyFrom(stream.ToArray()), Width = (uint)image.Width, Height = (uint)image.Height };
     }
 
     public void ExecuteTimerOperation(TimerOperationType operation)
