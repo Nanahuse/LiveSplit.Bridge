@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package livesplit.bridge.v3;
+
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V3";
+
+enum TimerPhase {
+  TIMER_PHASE_UNSPECIFIED = 0;
+  NOT_RUNNING = 1;
+  RUNNING = 2;
+  PAUSED = 3;
+  ENDED = 4;
+}
+
+enum TimingMethod {
+  TIMING_METHOD_UNSPECIFIED = 0;
+  REAL_TIME = 1;
+  GAME_TIME = 2;
+}
+
+enum TimerOperationType {
+  TIMER_OPERATION_UNSPECIFIED = 0;
+  TIMER_START = 1;
+  TIMER_SPLIT = 2;
+  TIMER_SKIP = 3;
+  TIMER_UNDO = 4;
+  TIMER_RESET = 5;
+  TIMER_PAUSE = 6;
+  TIMER_RESUME = 7;
+}
+
+enum GameTimeOperationType {
+  GAME_TIME_OPERATION_UNSPECIFIED = 0;
+  INITIALIZE = 1;
+  SET = 2;
+  GAME_TIME_PAUSE = 3;
+  GAME_TIME_RESUME = 4;
+}
+
+enum BridgeEventType {
+  BRIDGE_EVENT_UNSPECIFIED = 0;
+
+  EVENT_TIMER_STARTED = 1;
+  EVENT_TIMER_SPLIT = 2;
+  EVENT_TIMER_SKIPPED = 3;
+  EVENT_TIMER_UNDO = 4;
+  EVENT_TIMER_RESET = 5;
+  EVENT_TIMER_PHASE_CHANGED = 6;
+
+  EVENT_RUN_CHANGED = 20;
+  EVENT_CONTEXT_CHANGED = 21;
+}
+
+enum BridgeErrorCode {
+  BRIDGE_ERROR_CODE_UNSPECIFIED = 0;
+  UNSUPPORTED_PROTOCOL_VERSION = 1;
+  INVALID_REQUEST = 2;
+  INVALID_ARGUMENT = 3;
+  OPERATION_FAILED = 4;
+  INTERNAL_ERROR = 5;
+}
+
+message TimeValue {
+  optional sint64 real_time_ticks = 1;
+  optional sint64 game_time_ticks = 2;
+}
+
+message TimerState {
+  TimerPhase phase = 1;
+  int32 split_index = 2;
+  sint64 real_time_ticks = 3;
+  optional sint64 game_time_ticks = 4;
+  bool is_game_time_initialized = 5;
+  bool is_game_time_paused = 6;
+}
+
+message AttemptState {
+  uint32 attempt_count = 1;
+  repeated AttemptSegment segments = 2;
+}
+
+message AttemptSegment {
+  uint32 index = 1;
+  TimeValue split_time = 2;
+  map<string, string> custom_variables = 3;
+}
+
+message CompletedCount {
+  uint32 completed_count = 1;
+}
+
+message ContextState {
+  TimingMethod current_timing_method = 1;
+  string current_comparison = 2;
+  map<string, string> custom_variables = 3;
+}
+
+message OperationResponse {}
+
+message BridgeError {
+  BridgeErrorCode code = 1;
+  string message = 2;
+}
+
+message BridgeEvent {
+  uint64 session_id = 1;
+  uint64 event_sequence = 2;
+  BridgeEventType type = 3;
+  optional TimerState timer_state = 4;
+}

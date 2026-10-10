@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package livesplit.bridge.v3;
+
+option csharp_namespace = "LiveSplit.Bridge.Protocol.V3";
+
+import "livesplit/bridge/v3/common.proto";
+import "livesplit/bridge/v3/run.proto";
+
+message Request {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;
+
+  oneof body {
+    GetTimerStateRequest get_timer_state = 10;
+    GetAttemptRequest get_attempt = 11;
+    GetRunRequest get_run = 12;
+    GetContextStateRequest get_context_state = 13;
+    GetCompletedCountRequest get_completed_count = 14;
+
+    TimerOperationRequest timer_operation = 20;
+    GameTimeOperationRequest game_time_operation = 21;
+  }
+}
+
+message Response {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;
+  uint64 session_id = 3;
+
+  oneof body {
+    BridgeError error = 10;
+
+    GetTimerStateResponse get_timer_state = 20;
+    GetAttemptResponse get_attempt = 21;
+    GetRunResponse get_run = 22;
+    GetContextStateResponse get_context_state = 23;
+    GetCompletedCountResponse get_completed_count = 24;
+
+    OperationResponse operation = 30;
+  }
+}
+
+message GetTimerStateRequest {}
+
+message GetTimerStateResponse {
+  TimerState timer_state = 1;
+}
+
+message GetAttemptRequest {}
+
+message GetAttemptResponse {
+  AttemptState attempt = 1;
+}
+
+message GetRunRequest {}
+
+message GetRunResponse {
+  RunState run = 1;
+}
+
+message GetContextStateRequest {}
+
+message GetContextStateResponse {
+  ContextState context_state = 1;
+}
+
+message GetCompletedCountRequest {}
+
+message GetCompletedCountResponse {
+  CompletedCount completed_count = 1;
+}
+
+message TimerOperationRequest {
+  TimerOperationType operation = 1;
+}
+
+message GameTimeOperationRequest {
+  GameTimeOperationType operation = 1;
+  optional sint64 ticks = 2;
+}

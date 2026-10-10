@@ -1,225 +1,249 @@
 from __future__ import annotations
 
 import json
-import os
 import queue
 import socket
 import subprocess
 import sys
 import threading
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-import websocket
 
-from livesplit.bridge.v2 import common_pb2
-
-REPOSITORY_ROOT = Path(__file__).parents[3]
-TEST_HOST_PROJECT = (
-    REPOSITORY_ROOT
+ROOT = Path(__file__).resolve().parents[3]
+HOST_EXE = (
+    ROOT
     / "tests"
     / "LiveSplit.Bridge.TestHost"
-    / "LiveSplit.Bridge.TestHost.csproj"
-)
-TEST_HOST = (
-    TEST_HOST_PROJECT.parent
     / "bin"
-    / "Debug"
+    / "Release"
     / "net4.8.1"
     / "LiveSplit.Bridge.TestHost.exe"
 )
-CLI = Path(sys.executable).with_name(
-    "livesplit-bridge.exe" if os.name == "nt" else "livesplit-bridge"
-)
 
 
-def unused_tcp_port() -> int:
+def free_port() -> int:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return listener.getsockname()[1]
 
 
-def events_endpoint(port: int) -> str:
-    return f"ws://127.0.0.1:{port}/bridge/v2/events"
+def enqueue_lines(stream: object, lines: queue.Queue[str]) -> None:
+    for line in stream:  # type: ignore[attr-defined]
+        lines.put(line.rstrip())
 
 
-@pytest.fixture(scope="session")
-def build_test_host() -> None:
-    subprocess.run(
-        ["dotnet", "build", str(TEST_HOST_PROJECT), "--nologo"],
-        check=True,
-        cwd=REPOSITORY_ROOT,
-        timeout=120,
-    )
+@dataclass
+class BridgeTestHost:
+    process: subprocess.Popen[str]
+    port: int
+
+    def cli(
+        self, *args: str, json_output: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        command = [
+            sys.executable,
+            "-m",
+            "livesplit_bridge_cli.cli",
+            "--port",
+            str(self.port),
+            "--timeout",
+            "5",
+        ]
+        if json_output:
+            command.append("--json")
+        return subprocess.run(
+            [*command, *args],
+            cwd=ROOT / "tools" / "livesplit-bridge-cli",
+            text=True,
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            try:
+                self.process.stdin.write("\n")
+                self.process.stdin.flush()
+            except OSError:
+                pass
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                self.process.wait(timeout=5)
 
 
 @pytest.fixture
-def bridge_port(build_test_host: None) -> Iterator[int]:
-    port = unused_tcp_port()
-    environment = os.environ.copy()
-    environment["LIVESPLIT_BRIDGE_WEBSOCKET_PORT"] = str(port)
+def test_host() -> Iterator[BridgeTestHost]:
+    assert HOST_EXE.exists(), f"TestHost was not built: {HOST_EXE}"
+    port = free_port()
     process = subprocess.Popen(
-        [str(TEST_HOST)],
-        env=environment,
+        [str(HOST_EXE), "--port", str(port)],
+        cwd=ROOT,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
+        bufsize=1,
     )
-    stdout = process.stdout
-    assert stdout is not None
-    ready: queue.Queue[str] = queue.Queue()
-    threading.Thread(target=lambda: ready.put(stdout.readline()), daemon=True).start()
-    assert ready.get(timeout=10).strip() == "READY"
+    lines: queue.Queue[str] = queue.Queue()
+    threading.Thread(
+        target=enqueue_lines, args=(process.stdout, lines), daemon=True
+    ).start()
     try:
-        yield port
+        line = lines.get(timeout=20)
+    except queue.Empty:
+        process.terminate()
+        output = process.communicate(timeout=5)[0]
+        pytest.fail(
+            f"TestHost did not become ready (exit={process.returncode}): {output}"
+        )
+    if line != "READY":
+        process.terminate()
+        process.wait(timeout=5)
+        pytest.fail(f"TestHost failed to start: {line}")
+    host = BridgeTestHost(process, port)
+    try:
+        yield host
     finally:
-        process.communicate("\n", timeout=10)
+        host.close()
 
 
-def run_cli(port: int, *arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(CLI), "--port", str(port), "--timeout", "3", *arguments],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=10,
-    )
-
-
-def connect_events(port: int) -> websocket.WebSocket:
-    return websocket.create_connection(events_endpoint(port), timeout=4)
-
-
-def receive_heartbeat(subscriber: websocket.WebSocket) -> common_pb2.BridgeEvent:
-    while True:
-        data = subscriber.recv()
-        assert isinstance(data, bytes)
-        event = common_pb2.BridgeEvent.FromString(data)
-        if event.type == common_pb2.EVENT_HEARTBEAT:
-            return event
-
-
-def test_cli_controls_bridge_timer(bridge_port: int) -> None:
-    initial = run_cli(bridge_port, "--json", "timer-state")
-    no_op = run_cli(bridge_port, "--json", "timer", "pause")
-    started = run_cli(bridge_port, "--json", "timer", "start")
-    state = run_cli(bridge_port, "--json", "timer-state")
-
-    assert initial.returncode == 0, initial.stderr
-    initial_state = json.loads(initial.stdout)["get_timer_state"]["timer_state"]
-    assert initial_state["phase"] == "NOT_RUNNING"
-    assert no_op.returncode == 0, no_op.stderr
-    no_op_state = json.loads(no_op.stdout)["operation"]["timer_state"]
-    assert no_op_state["state_revision"] == initial_state["state_revision"]
-    assert started.returncode == 0, started.stderr
-    started_state = json.loads(started.stdout)["operation"]["timer_state"]
-    assert int(started_state["state_revision"]) == (
-        int(initial_state["state_revision"]) + 1
-    )
-    assert state.returncode == 0, state.stderr
-    running = json.loads(state.stdout)["get_timer_state"]["timer_state"]
-    assert running["phase"] == "RUNNING"
-    assert "split_index" not in running  # proto3 omits the default value (zero).
-
-
-def test_cli_gets_current_run(bridge_port: int) -> None:
-    result = run_cli(bridge_port, "--json", "run")
-
-    assert result.returncode == 0, result.stderr
-    run = json.loads(result.stdout)["get_run"]["run"]
-    assert run["run_revision"] == "1"
-    assert [segment["name"] for segment in run["segments"]] == ["First", "Second"]
-    assert [segment.get("index", 0) for segment in run["segments"]] == [0, 1]
-    assert run["comparisons"] == [
-        "Personal Best",
-        "Best Segments",
-        "Average Segments",
-    ]
-    # Run metadata no longer carries the current custom variable values.
-    assert "custom_variables" not in run.get("metadata", {})
-
-
-def test_cli_gets_runtime_custom_variables(bridge_port: int) -> None:
-    result = run_cli(bridge_port, "--json", "runtime")
-
-    assert result.returncode == 0, result.stderr
-    runtime_state = json.loads(result.stdout)["get_runtime_state"]["runtime_state"]
-    assert runtime_state["custom_variables"] == {"host_var": "host-value"}
-
-
-def test_cli_gets_attempt_and_runtime_state(bridge_port: int) -> None:
-    attempt = run_cli(bridge_port, "--json", "attempt")
-    runtime = run_cli(bridge_port, "--json", "runtime")
-
-    assert attempt.returncode == 0, attempt.stderr
-    attempt_state = json.loads(attempt.stdout)["get_attempt"]["attempt"]
-    assert attempt_state["attempt_revision"] == "1"
-    assert [segment.get("index", 0) for segment in attempt_state["segments"]] == [0, 1]
-
-    assert runtime.returncode == 0, runtime.stderr
-    runtime_state = json.loads(runtime.stdout)["get_runtime_state"]["runtime_state"]
-    assert runtime_state["runtime_revision"] == "1"
-
-
-def test_cli_gets_run_revision_from_timer_state(bridge_port: int) -> None:
-    result = run_cli(bridge_port, "--json", "timer-state")
-
-    assert result.returncode == 0, result.stderr
-    state = json.loads(result.stdout)["get_timer_state"]["timer_state"]
-    assert state["run_revision"] == "1"
-    assert state["attempt_revision"] == "1"
-    assert state["runtime_revision"] == "1"
-
-
-def test_cli_sets_bridge_game_time(bridge_port: int) -> None:
-    result = run_cli(bridge_port, "--json", "game-time", "set", "12.345")
-    no_op = run_cli(bridge_port, "--json", "game-time", "set", "12.345")
-
-    assert result.returncode == 0, result.stderr
-    operation = json.loads(result.stdout)["operation"]
-    assert no_op.returncode == 0, no_op.stderr
-    no_op_operation = json.loads(no_op.stdout)["operation"]
-    assert operation["success"] is True
-    assert operation["timer_state"]["game_time_ticks"] == "123450000"
-    assert operation["timer_state"]["is_game_time_initialized"] is True
-    assert (
-        no_op_operation["timer_state"]["state_revision"]
-        == operation["timer_state"]["state_revision"]
-    )
-
-
-def test_bridge_publishes_heartbeat_without_advancing_sequence(
-    bridge_port: int,
+def test_queries_return_v3_timer_run_attempt_context_and_completed_count(
+    test_host: BridgeTestHost,
 ) -> None:
-    subscriber = connect_events(bridge_port)
+    timer = test_host.cli("timer-state")
+    run = test_host.cli("run")
+    attempt = test_host.cli("attempt")
+    context = test_host.cli("context")
+    completed = test_host.cli("completed-count")
 
-    try:
-        initial_heartbeat = receive_heartbeat(subscriber)
-        repeated_heartbeat = receive_heartbeat(subscriber)
-        started = run_cli(bridge_port, "timer", "start")
-        assert started.returncode == 0, started.stderr
+    assert timer.returncode == 0, timer.stderr
+    assert "phase=NOT_RUNNING" in timer.stdout
+    assert "revision=" not in timer.stdout
+    assert run.returncode == 0, run.stderr
+    assert "game=Bridge Test Game category=Any%" in run.stdout
+    assert "Personal Best" in run.stdout
+    assert "[0] First" in run.stdout and "[1] Second" in run.stdout
+    assert "Personal Best:" in run.stdout
+    assert attempt.returncode == 0, attempt.stderr
+    assert "attempt_count=0" in attempt.stdout
+    assert "[0] real_time=- game_time=-" in attempt.stdout
+    assert context.returncode == 0, context.stderr
+    assert "timing_method=REAL_TIME" in context.stdout
+    assert "current_comparison=Personal Best" in context.stdout
+    assert "custom_variable host_var=host-value" in context.stdout
+    assert completed.returncode == 0, completed.stderr
+    assert "completed_count=0" in completed.stdout
 
-        while True:
-            data = subscriber.recv()
-            assert isinstance(data, bytes)
-            timer_event = common_pb2.BridgeEvent.FromString(data)
-            if timer_event.type == common_pb2.EVENT_TIMER_STARTED:
-                break
+    json_response = test_host.cli("timer-state", json_output=True)
+    parsed = json.loads(json_response.stdout)
+    assert parsed["protocol_version"] == 3
+    assert int(parsed["session_id"]) > 0
+    assert "get_timer_state" in parsed
 
-        next_heartbeat = receive_heartbeat(subscriber)
 
-        assert initial_heartbeat.session_id != 0
-        assert initial_heartbeat.event_sequence == 0
-        assert not initial_heartbeat.HasField("timer_state")
-        assert repeated_heartbeat.session_id == initial_heartbeat.session_id
-        assert repeated_heartbeat.event_sequence == initial_heartbeat.event_sequence
-        assert not repeated_heartbeat.HasField("timer_state")
-        assert timer_event.event_sequence == 1
-        assert timer_event.HasField("timer_state")
-        assert next_heartbeat.session_id == initial_heartbeat.session_id
-        assert next_heartbeat.event_sequence == timer_event.event_sequence
-        assert not next_heartbeat.HasField("timer_state")
-    finally:
-        subscriber.close()
+def test_timer_and_game_time_controls_change_observed_state(
+    test_host: BridgeTestHost,
+) -> None:
+    started = test_host.cli("timer", "start")
+    assert started.returncode == 0, started.stderr
+    assert "phase=RUNNING" in test_host.cli("timer-state").stdout
+
+    assert test_host.cli("timer", "pause").returncode == 0
+    assert "phase=PAUSED" in test_host.cli("timer-state").stdout
+    assert test_host.cli("timer", "resume").returncode == 0
+    assert "phase=RUNNING" in test_host.cli("timer-state").stdout
+
+    split = test_host.cli("timer", "split")
+    assert split.returncode == 0, split.stderr
+    assert "split_index=1" in test_host.cli("timer-state").stdout
+    assert test_host.cli("timer", "skip").returncode == 0
+    assert test_host.cli("timer", "undo").returncode == 0
+
+    initialized = test_host.cli("game-time", "initialize")
+    assert initialized.returncode == 0, initialized.stderr
+    assert test_host.cli("game-time", "pause").returncode == 0
+    set_time = test_host.cli("game-time", "set", "12.345")
+    assert set_time.returncode == 0, set_time.stderr
+    timer = test_host.cli("timer-state")
+    assert "game_time=0:00:12.345" in timer.stdout
+    assert "game_time_initialized=True" in timer.stdout
+    assert "game_time_paused=True" in test_host.cli("timer-state").stdout
+    assert test_host.cli("game-time", "resume").returncode == 0
+    assert "game_time_paused=False" in test_host.cli("timer-state").stdout
+
+    reset = test_host.cli("timer", "reset")
+    assert reset.returncode == 0, reset.stderr
+    assert "phase=NOT_RUNNING" in test_host.cli("timer-state").stdout
+
+
+def test_events_cli_receives_types_and_increasing_sequences(
+    test_host: BridgeTestHost,
+) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "livesplit_bridge_cli.cli",
+        "--port",
+        str(test_host.port),
+        "events",
+        "--count",
+        "3",
+    ]
+    events = subprocess.Popen(
+        command,
+        cwd=ROOT / "tools" / "livesplit-bridge-cli",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    connected: queue.Queue[str] = queue.Queue()
+    threading.Thread(
+        target=enqueue_lines, args=(events.stderr, connected), daemon=True
+    ).start()
+    assert connected.get(timeout=5).startswith("Monitoring ")
+
+    for operation in ("start", "split", "reset"):
+        result = test_host.cli("timer", operation)
+        assert result.returncode == 0, result.stderr
+
+    output, error = events.communicate(timeout=8)
+    assert events.returncode == 0, error
+    rows = [line for line in output.splitlines() if line.startswith("[")]
+    assert [row.split("] ", 1)[1] for row in rows] == [
+        "EVENT_TIMER_STARTED",
+        "EVENT_TIMER_SPLIT",
+        "EVENT_TIMER_RESET",
+    ]
+    sequences = [int(row[1:].split("]", 1)[0]) for row in rows]
+    assert sequences == sorted(sequences)
+    assert len(set(sequences)) == 3
+
+
+def test_connection_failure_returns_nonzero_and_error(
+    test_host: BridgeTestHost,
+) -> None:
+    test_host.close()
+    result = test_host.cli("timer-state")
+    assert result.returncode != 0
+    assert "error:" in result.stderr
+    assert "Failed to connect" in result.stderr
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_testhost_rejects_invalid_port(port: str) -> None:
+    result = subprocess.run(
+        [str(HOST_EXE), "--port", port],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "Usage:" in result.stderr

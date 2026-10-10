@@ -4,6 +4,11 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 コンポーネントです。対応する外部アプリケーションから、タイマーの状態確認や操作、
 ゲーム内時間の制御ができるようになります。
 
+現在の`main`ブランチはProtocol v3の開発版です。公開Releaseは別のバージョンとして
+管理されており、開発版の説明と公開Releaseの対応状況を混同しないでください。
+Protocol v3はv2以前と通信互換性がありません。v3対応クライアントにはv3対応Bridgeを
+使用してください。
+
 このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
 外部アプリケーションと組み合わせて使用してください。
 
@@ -43,8 +48,9 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 |---|---:|
 | WebSocketポート | `54000` |
 
-RPCは`ws://127.0.0.1:<port>/bridge/v2/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v2/events`で接続します。通常は既定値のまま使用できます。
+RPCは`ws://127.0.0.1:<port>/bridge/v3/rpc`、イベントは
+`ws://127.0.0.1:<port>/bridge/v3/events`で接続します。Protocol v3はProtobufのBinary
+WebSocket Messageを使用します。通常は既定値のまま使用できます。
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 
@@ -75,3 +81,5 @@ RPCは`ws://127.0.0.1:<port>/bridge/v2/rpc`、イベントは
 
 - Bridgeへ接続するアプリケーションを作る方:
   [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
+- 同梱のDebug CLIを使う方:
+  [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)

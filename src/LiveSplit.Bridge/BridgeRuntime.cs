@@ -1,492 +1,236 @@
+#nullable enable
 using System;
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Threading;
-using LiveSplit.Bridge.Protocol.V2;
-using LiveSplit.Model;
+using System.Threading.Tasks;
+using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge;
 
 internal sealed class BridgeRuntime : IDisposable
 {
-    private const uint ProtocolVersion = 2;
-    internal static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(1);
+    private const uint ProtocolVersion = 3;
 
-    private readonly LiveSplitAdapter adapter;
-    private readonly WebSocketTransport transport;
-    private readonly EventSequence eventSequence = new();
-    private readonly object sequenceLock = new();
-    private readonly object observedStateLock = new();
-    private readonly LiveSplitState state;
+    private readonly object controlGate = new();
+    private readonly ILiveSplitAdapter adapter;
+    private readonly LiveSplit.Model.LiveSplitState? state;
     private readonly ulong sessionId;
-    private long stateRevision;
-    private long runRevision;
-    private long attemptRevision;
-    private long runtimeRevision;
-    private GameTimeRevisionState observedGameTimeState;
-    private RuntimeRevisionState observedRuntimeState;
-    private int runtimeChangePending;
+    private WebSocketTransport? transport;
+    private RunState publishedRun;
+    private ContextState publishedContext;
+    private object? cachedRunReference;
+    private object? requestedRunReference;
+    private bool runRefreshRequested;
+    private long staticUpdateGeneration;
+    private long timingUpdateGeneration;
+    private long timingPublicationGeneration;
+    private int staticRefreshRequested;
+    private long lastContextObservation;
+    private long eventSequence;
+    private readonly object eventGate = new();
     private int disposed;
 
-    public BridgeRuntime(LiveSplitState state, int webSocketPort)
+    public BridgeRuntime(LiveSplit.Model.LiveSplitState state)
+        : this(new LiveSplitAdapter(state), state, attachStateEvents: true)
     {
-        this.state = state ?? throw new ArgumentNullException(nameof(state));
-        adapter = new LiveSplitAdapter(state);
-        observedGameTimeState = adapter.CaptureGameTimeRevisionState();
-        observedRuntimeState = adapter.CaptureRuntimeRevisionState();
-
-        var port = GetPort("LIVESPLIT_BRIDGE_WEBSOCKET_PORT", webSocketPort);
-        sessionId = GenerateSessionId();
-        stateRevision = 1;
-        runRevision = 1;
-        attemptRevision = 1;
-        runtimeRevision = 1;
-
-        transport = new WebSocketTransport(
-            port,
-            HeartbeatInterval,
-            HandleRequest,
-            CreateHeartbeatEvent,
-            OnEventSettled);
-
-        transport.Start();
-        AttachStateEvents();
     }
+
+    public BridgeRuntime(LiveSplit.Model.LiveSplitState state, int port)
+        : this(new LiveSplitAdapter(state), state, port)
+    {
+    }
+
+    internal BridgeRuntime(ILiveSplitAdapter adapter)
+        : this(adapter, null, attachStateEvents: true)
+    {
+    }
+
+    internal BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState state)
+        : this(adapter, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true)
+    {
+    }
+
+    private BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState? state, bool attachStateEvents)
+    {
+        this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+        this.state = state;
+        sessionId = GenerateSessionId();
+        publishedRun = adapter.GetRunState();
+        publishedContext = adapter.GetContextState();
+        cachedRunReference = state?.Run;
+        lastContextObservation = Stopwatch.GetTimestamp();
+        if (attachStateEvents) AttachStateEvents();
+    }
+
+    internal BridgeRuntime(ILiveSplitAdapter adapter, LiveSplit.Model.LiveSplitState state, int port) : this(adapter, state, attachStateEvents: true)
+    {
+        try
+        {
+            transport = new WebSocketTransport(port, HandleRequest);
+            transport.Start();
+        }
+        catch
+        {
+            DetachStateEvents();
+            transport?.Dispose();
+            transport = null;
+            Interlocked.Exchange(ref disposed, 1);
+            throw;
+        }
+    }
+
+    internal ulong SessionId => sessionId;
+    internal string? Endpoint => transport?.Endpoint;
+    internal bool IsListening => transport?.IsListening ?? false;
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref disposed, 1) != 0)
-        {
-            return;
-        }
-
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         DetachStateEvents();
-        transport.Dispose();
-    }
-
-    private void AttachStateEvents()
-    {
-        state.OnStart += StateOnStart;
-        state.OnSplit += StateOnSplit;
-        state.OnSkipSplit += StateOnSkipSplit;
-        state.OnUndoSplit += StateOnUndoSplit;
-        state.OnReset += StateOnReset;
-        state.OnPause += StateOnPause;
-        state.OnResume += StateOnResume;
-        state.RunManuallyModified += StateRunManuallyModified;
-        state.ComparisonRenamed += StateComparisonRenamed;
-        state.OnSwitchComparisonNext += StateComparisonSwitched;
-        state.OnSwitchComparisonPrevious += StateComparisonSwitched;
-        adapter.GameTimeChanged += AdapterGameTimeChanged;
-    }
-
-    private void DetachStateEvents()
-    {
-        state.OnStart -= StateOnStart;
-        state.OnSplit -= StateOnSplit;
-        state.OnSkipSplit -= StateOnSkipSplit;
-        state.OnUndoSplit -= StateOnUndoSplit;
-        state.OnReset -= StateOnReset;
-        state.OnPause -= StateOnPause;
-        state.OnResume -= StateOnResume;
-        state.RunManuallyModified -= StateRunManuallyModified;
-        state.ComparisonRenamed -= StateComparisonRenamed;
-        state.OnSwitchComparisonNext -= StateComparisonSwitched;
-        state.OnSwitchComparisonPrevious -= StateComparisonSwitched;
-        adapter.GameTimeChanged -= AdapterGameTimeChanged;
+        transport?.Dispose();
+        transport = null;
     }
 
     internal Response HandleRequest(Request request)
     {
-        if (request.ProtocolVersion != ProtocolVersion)
+        if (request == null)
         {
-            return MakeErrorResponse(request, 100, $"Unsupported protocol version {request.ProtocolVersion}");
+            return MakeErrorResponse(0, BridgeErrorCode.InvalidRequest, "Request is required.");
         }
 
+        if (request.ProtocolVersion != ProtocolVersion)
+        {
+            return MakeErrorResponse(
+                request.RequestId,
+                BridgeErrorCode.UnsupportedProtocolVersion,
+                $"Unsupported protocol version {request.ProtocolVersion}.");
+        }
+
+        switch (request.BodyCase)
+        {
+            case Request.BodyOneofCase.GetTimerState:
+                return HandleQuery(request, () => new Response
+                {
+                    GetTimerState = new GetTimerStateResponse { TimerState = adapter.GetTimerState() },
+                });
+            case Request.BodyOneofCase.GetAttempt:
+                return HandleQuery(request, () => new Response
+                {
+                    GetAttempt = new GetAttemptResponse { Attempt = adapter.GetAttempt() },
+                });
+            case Request.BodyOneofCase.GetCompletedCount:
+                return HandleQuery(request, () => new Response
+                {
+                    GetCompletedCount = new GetCompletedCountResponse
+                    {
+                        CompletedCount = adapter.GetCompletedCount(),
+                    },
+                });
+            case Request.BodyOneofCase.TimerOperation:
+                return HandleTimerOperation(request);
+            case Request.BodyOneofCase.GameTimeOperation:
+                return HandleGameTimeOperation(request);
+            case Request.BodyOneofCase.GetRun:
+                return HandleQuery(request, () => new Response { GetRun = new GetRunResponse { Run = Volatile.Read(ref publishedRun) } });
+            case Request.BodyOneofCase.GetContextState:
+                return HandleQuery(request, () => new Response { GetContextState = new GetContextStateResponse { ContextState = Volatile.Read(ref publishedContext) } });
+            default:
+                return MakeErrorResponse(
+                    request.RequestId,
+                    BridgeErrorCode.InvalidRequest,
+                    "Request body is missing or unsupported.");
+        }
+    }
+
+    private Response HandleQuery(Request request, Func<Response> query)
+    {
         try
         {
-            return adapter.InvokeOnUiThread(() => HandleRequestOnUiThread(request));
+            return MakeSuccessResponse(request.RequestId, query());
         }
         catch (Exception exception)
         {
-            return MakeErrorResponse(request, 102, exception.Message);
+            return MakeErrorResponse(request.RequestId, BridgeErrorCode.InternalError, exception.Message);
         }
     }
 
-    private Response HandleRequestOnUiThread(Request request)
+    private Response HandleTimerOperation(Request request)
     {
-        if (request.Attach != null)
+        var operation = request.TimerOperation.Operation;
+        if (operation is not (TimerOperationType.TimerStart
+            or TimerOperationType.TimerSplit
+            or TimerOperationType.TimerSkip
+            or TimerOperationType.TimerUndo
+            or TimerOperationType.TimerReset
+            or TimerOperationType.TimerPause
+            or TimerOperationType.TimerResume))
         {
-            return new Response
-            {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                Attach = new AttachResponse
-                {
-                    SessionId = sessionId,
-                    TimerState = BuildCurrentTimerState()
-                }
-            };
+            return MakeErrorResponse(request.RequestId, BridgeErrorCode.InvalidArgument, "Timer operation is invalid.");
         }
 
-        if (request.GetTimerState != null)
+        lock (controlGate)
         {
-            return new Response
+            try
             {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                GetTimerState = new GetTimerStateResponse
-                {
-                    TimerState = BuildCurrentTimerState()
-                }
-            };
-        }
-
-        if (request.GetRun != null)
-        {
-            return new Response
-            {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                GetRun = new GetRunResponse
-                {
-                    Run = adapter.BuildRunState(ReadRunRevision(), sessionId)
-                }
-            };
-        }
-
-        if (request.GetAttempt != null)
-        {
-            return new Response
-            {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                GetAttempt = new GetAttemptResponse
-                {
-                    Attempt = adapter.BuildAttemptState(ReadAttemptRevision(), sessionId)
-                }
-            };
-        }
-
-        if (request.GetRuntimeState != null)
-        {
-            return new Response
-            {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                GetRuntimeState = new GetRuntimeStateResponse
-                {
-                    RuntimeState = adapter.BuildRuntimeState(ReadRuntimeRevision(), sessionId)
-                }
-            };
-        }
-
-        if (request.TimerOperation != null)
-        {
-            var result = adapter.ExecuteTimerOperation(request.TimerOperation.Operation);
-            if (result.Success)
-            {
-                result.TimerState = BuildCurrentTimerState();
+                adapter.ExecuteTimerOperation(operation);
+                return MakeSuccessResponse(request.RequestId, new Response { Operation = new OperationResponse() });
             }
-
-            return new Response
+            catch (Exception exception)
             {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                Operation = result
-            };
-        }
-
-        if (request.GameTimeOperation != null)
-        {
-            var execution = adapter.ExecuteGameTimeOperation(
-                request.GameTimeOperation.Operation,
-                request.GameTimeOperation.HasTicks ? (long?)request.GameTimeOperation.Ticks : null);
-
-            if (execution.Response.Success)
-            {
-                execution.Response.TimerState = BuildCurrentTimerState();
+                return MakeErrorResponse(request.RequestId, BridgeErrorCode.OperationFailed, exception.Message);
             }
+        }
+    }
 
-            return new Response
-            {
-                ProtocolVersion = ProtocolVersion,
-                RequestId = request.RequestId,
-                Operation = execution.Response
-            };
+    private Response HandleGameTimeOperation(Request request)
+    {
+        var operation = request.GameTimeOperation.Operation;
+        if (operation is not (GameTimeOperationType.Initialize
+            or GameTimeOperationType.Set
+            or GameTimeOperationType.GameTimePause
+            or GameTimeOperationType.GameTimeResume))
+        {
+            return MakeErrorResponse(request.RequestId, BridgeErrorCode.InvalidArgument, "Game time operation is invalid.");
         }
 
-        return MakeErrorResponse(request, 101, "Unknown request type.");
-    }
-
-    private TimerState BuildCurrentTimerState()
-    {
-        return adapter.BuildTimerState(
-            ReadStateRevision(),
-            sessionId,
-            ReadRunRevision(),
-            ReadAttemptRevision(),
-            ReadRuntimeRevision());
-    }
-
-    private bool UpdateObservedRuntimeState(RuntimeRevisionState captured, out ulong revision)
-    {
-        lock (observedStateLock)
+        if (operation == GameTimeOperationType.Set && !request.GameTimeOperation.HasTicks)
         {
-            if (observedRuntimeState.Equals(captured))
+            return MakeErrorResponse(request.RequestId, BridgeErrorCode.InvalidArgument, "SET requires ticks.");
+        }
+
+        lock (controlGate)
+        {
+            try
             {
-                revision = ReadRuntimeRevision();
-                return false;
+                adapter.ExecuteGameTimeOperation(
+                    operation,
+                    request.GameTimeOperation.HasTicks ? request.GameTimeOperation.Ticks : (long?)null);
+                return MakeSuccessResponse(request.RequestId, new Response { Operation = new OperationResponse() });
             }
-
-            observedRuntimeState = captured;
-            revision = unchecked((ulong)Interlocked.Increment(ref runtimeRevision));
-            return true;
-        }
-    }
-
-    internal LiveSplitAdapter Adapter => adapter;
-
-    internal ulong StateRevision => ReadStateRevision();
-
-    internal ulong RunRevision => ReadRunRevision();
-
-    internal ulong AttemptRevision => ReadAttemptRevision();
-
-    internal ulong RuntimeRevision => ReadRuntimeRevision();
-
-    private void PublishGameTimeEvent(GameTimeOperationType operation)
-    {
-        var eventType = operation switch
-        {
-            GameTimeOperationType.Initialize => BridgeEventType.EventGameTimeInitialized,
-            GameTimeOperationType.Set => BridgeEventType.EventGameTimeSet,
-            GameTimeOperationType.GameTimePause => BridgeEventType.EventGameTimePaused,
-            GameTimeOperationType.GameTimeResume => BridgeEventType.EventGameTimeResumed,
-            _ => BridgeEventType.EventGameTimeSet,
-        };
-
-        PublishStateChangeEvent(eventType);
-    }
-
-    // Only fields without comprehensive LiveSplit events need lightweight observation.
-    internal void ObserveExternalState()
-    {
-        DetectGameTimeChange();
-        SyncRuntimeStateAndPublish();
-    }
-
-    private void DetectGameTimeChange()
-    {
-        var current = adapter.CaptureGameTimeRevisionState();
-        GameTimeRevisionState previous;
-
-        lock (observedStateLock)
-        {
-            if (observedGameTimeState.Equals(current))
+            catch (Exception exception)
             {
-                return;
+                return MakeErrorResponse(request.RequestId, BridgeErrorCode.OperationFailed, exception.Message);
             }
-
-            previous = observedGameTimeState;
-            observedGameTimeState = current;
-        }
-
-        var eventType = current.IsInitialized != previous.IsInitialized
-            ? (current.IsInitialized
-                ? BridgeEventType.EventGameTimeInitialized
-                : BridgeEventType.EventGameTimeSet)
-            : current.IsPaused != previous.IsPaused
-                ? (current.IsPaused
-                    ? BridgeEventType.EventGameTimePaused
-                    : BridgeEventType.EventGameTimeResumed)
-                : BridgeEventType.EventGameTimeSet;
-
-        PublishStateChangeEvent(eventType);
-    }
-
-    private void RecordCurrentGameTimeState()
-    {
-        var current = adapter.CaptureGameTimeRevisionState();
-        lock (observedStateLock)
-        {
-            observedGameTimeState = current;
         }
     }
 
-    private bool SyncRuntimeState()
+    private Response MakeSuccessResponse(ulong requestId, Response response)
     {
-        return UpdateObservedRuntimeState(adapter.CaptureRuntimeRevisionState(), out _);
+        response.ProtocolVersion = ProtocolVersion;
+        response.RequestId = requestId;
+        response.SessionId = sessionId;
+        return response;
     }
 
-    private void SyncRuntimeStateAndPublish()
-    {
-        if (SyncRuntimeState())
-        {
-            PublishEvent(BridgeEventType.EventRuntimeChanged);
-        }
-    }
-
-    private void PublishStateChangeEvent(BridgeEventType type)
-    {
-        RecordCurrentGameTimeState();
-
-        IncrementStateRevision();
-        PublishEvent(type);
-    }
-
-    private void PublishAttemptEvent(BridgeEventType type)
-    {
-        Interlocked.Increment(ref attemptRevision);
-        PublishStateChangeEvent(type);
-    }
-
-    private void PublishEvent(BridgeEventType type)
-    {
-        var timerState = BuildCurrentTimerState();
-
-        lock (sequenceLock)
-        {
-            var sequence = eventSequence.Begin();
-
-            var bridgeEvent = new BridgeEvent
-            {
-                SessionId = sessionId,
-                EventSequence = sequence,
-                Type = type,
-                TimerState = timerState
-            };
-
-            transport.Publish(bridgeEvent);
-        }
-    }
-
-    private BridgeEvent CreateHeartbeatEvent()
-    {
-        return new BridgeEvent
-        {
-            SessionId = sessionId,
-            EventSequence = eventSequence.LastSettled,
-            Type = BridgeEventType.EventHeartbeat
-        };
-    }
-
-    private void OnEventSettled(ulong sequence)
-    {
-        eventSequence.Settle(sequence);
-    }
-
-    private ulong ReadStateRevision()
-    {
-        return unchecked((ulong)Interlocked.Read(ref stateRevision));
-    }
-
-    private void IncrementStateRevision()
-    {
-        Interlocked.Increment(ref stateRevision);
-    }
-
-    private ulong ReadRunRevision()
-    {
-        return unchecked((ulong)Interlocked.Read(ref runRevision));
-    }
-
-    private ulong ReadAttemptRevision()
-    {
-        return unchecked((ulong)Interlocked.Read(ref attemptRevision));
-    }
-
-    private ulong ReadRuntimeRevision()
-    {
-        return unchecked((ulong)Interlocked.Read(ref runtimeRevision));
-    }
-
-    private void AdapterGameTimeChanged(GameTimeOperationType operation)
-    {
-        PublishGameTimeEvent(operation);
-    }
-
-    private void StateOnStart(object sender, EventArgs args)
-    {
-        PublishAttemptEvent(BridgeEventType.EventTimerStarted);
-    }
-
-    private void StateOnSplit(object sender, EventArgs args)
-    {
-        PublishAttemptEvent(BridgeEventType.EventTimerSplit);
-    }
-
-    private void StateOnSkipSplit(object sender, EventArgs args)
-    {
-        PublishAttemptEvent(BridgeEventType.EventTimerSkipped);
-    }
-
-    private void StateOnUndoSplit(object sender, EventArgs args)
-    {
-        PublishAttemptEvent(BridgeEventType.EventTimerUndo);
-    }
-
-    private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
-    {
-        PublishAttemptEvent(BridgeEventType.EventTimerReset);
-        // OnReset precedes FixSplits. Always publish the run generation on the next
-        // UI turn, for both RPC resets and resets initiated by LiveSplit itself.
-        state.Form.BeginInvoke((Action)(() =>
-        {
-            if (Volatile.Read(ref disposed) == 0)
-            {
-                PublishRunChange();
-            }
-        }));
-    }
-
-    private void StateOnPause(object sender, EventArgs args)
-    {
-        PublishStateChangeEvent(BridgeEventType.EventTimerPaused);
-    }
-
-    private void StateOnResume(object sender, EventArgs args)
-    {
-        PublishStateChangeEvent(BridgeEventType.EventTimerResumed);
-    }
-
-    private void PublishRunChange()
-    {
-        Interlocked.Increment(ref runRevision);
-        PublishEvent(BridgeEventType.EventRunChanged);
-    }
-
-    private void StateRunManuallyModified(object sender, EventArgs args)
-    {
-        PublishRunChange();
-
-        // ComparisonRenamed precedes RunManuallyModified. When the rename also
-        // changed the current comparison, synchronize RuntimeState in this same
-        // call stack so RUN_CHANGED is always published before RUNTIME_CHANGED.
-        if (Interlocked.Exchange(ref runtimeChangePending, 0) != 0)
-        {
-            SyncRuntimeStateAndPublish();
-        }
-    }
-
-    private void StateComparisonRenamed(object sender, EventArgs args)
-    {
-        // RunEdited raises RunManuallyModified after ComparisonRenamed. Remember
-        // the pending runtime check and let that event synchronize RuntimeState.
-        Interlocked.Exchange(ref runtimeChangePending, 1);
-    }
-
-    private void StateComparisonSwitched(object sender, EventArgs args)
-    {
-        SyncRuntimeStateAndPublish();
-    }
-
-    private static Response MakeErrorResponse(Request request, int code, string message)
+    private Response MakeErrorResponse(ulong requestId, BridgeErrorCode code, string message)
     {
         return new Response
         {
             ProtocolVersion = ProtocolVersion,
-            RequestId = request.RequestId,
-            Error = new BridgeError { Code = code, Message = message }
+            RequestId = requestId,
+            SessionId = sessionId,
+            Error = new BridgeError { Code = code, Message = message ?? string.Empty },
         };
     }
 
@@ -495,7 +239,6 @@ internal sealed class BridgeRuntime : IDisposable
         var buffer = new byte[8];
         using var rng = RandomNumberGenerator.Create();
         ulong value;
-
         do
         {
             rng.GetBytes(buffer);
@@ -506,11 +249,363 @@ internal sealed class BridgeRuntime : IDisposable
         return value;
     }
 
-    private static int GetPort(string name, int defaultValue)
+    internal void ObserveContextState()
     {
-        var value = Environment.GetEnvironmentVariable(name);
-        return int.TryParse(value, out var port) && port >= 1 && port <= 65535
-            ? port
-            : defaultValue;
+        if (Volatile.Read(ref disposed) != 0) return;
+        var now = Stopwatch.GetTimestamp();
+        if (now - Interlocked.Read(ref lastContextObservation) < Stopwatch.Frequency / 10) return;
+        Interlocked.Exchange(ref lastContextObservation, now);
+        try
+        {
+            var next = adapter.GetContextState();
+            var previous = Volatile.Read(ref publishedContext);
+            if (next.Equals(previous)) return;
+            Interlocked.Exchange(ref publishedContext, next);
+            QueueEvent(BridgeEventType.EventContextChanged, null);
+        }
+        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Context observation failed: {exception}"); }
+    }
+
+    internal void ObserveRunReference()
+    {
+        if (state == null || Volatile.Read(ref disposed) != 0) return;
+        var current = state.Run;
+        long generation;
+        lock (eventGate)
+        {
+            var forceRefresh = Interlocked.Exchange(ref staticRefreshRequested, 0) != 0;
+            if (ReferenceEquals(current, cachedRunReference) && !forceRefresh) return;
+            if (!forceRefresh && runRefreshRequested && ReferenceEquals(current, requestedRunReference)) return;
+            requestedRunReference = current;
+            runRefreshRequested = true;
+            generation = Interlocked.Increment(ref staticUpdateGeneration);
+        }
+        CaptureAndQueueRunCandidate(current, generation, "Run replacement observation");
+    }
+
+    private void CaptureAndQueueRunCandidate(object? runReference, long generation, string operation)
+    {
+        RunStateBuildCandidate? candidate = null;
+        try
+        {
+            if (state == null || Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)) return;
+            if (!ReferenceEquals(runReference, state.Run))
+            {
+                ClearRequestedRunReference(runReference, generation);
+                return;
+            }
+            var capturedTimingGeneration = Interlocked.Read(ref timingUpdateGeneration);
+            candidate = adapter.CaptureRunState();
+            if (Volatile.Read(ref disposed) != 0
+                || generation != Interlocked.Read(ref staticUpdateGeneration)
+                || !ReferenceEquals(runReference, state.Run))
+            {
+                candidate.Dispose();
+                candidate = null;
+                ClearRequestedRunReference(runReference, generation);
+                return;
+            }
+            var queuedCandidate = candidate!;
+            _ = Task.Run(() => BuildAndPublishRunCandidate(queuedCandidate, runReference, generation, capturedTimingGeneration));
+            candidate = null;
+        }
+        catch (Exception exception)
+        {
+            candidate?.Dispose();
+            ClearRequestedRunReference(runReference, generation);
+            Interlocked.Exchange(ref staticRefreshRequested, 1);
+            Debug.WriteLine($"[LiveSplit.Bridge] {operation} failed: {exception}");
+        }
+        finally { candidate?.Dispose(); }
+    }
+
+    private void AttachStateEvents()
+    {
+        if (state == null) return;
+        state.OnStart += StateOnStart;
+        state.OnSplit += StateOnSplit;
+        state.OnSkipSplit += StateOnSkipSplit;
+        state.OnUndoSplit += StateOnUndoSplit;
+        state.OnReset += StateOnReset;
+        state.OnPause += StateOnPhaseChanged;
+        state.OnResume += StateOnPhaseChanged;
+        state.RunManuallyModified += StateRunManuallyModified;
+    }
+
+    private void DetachStateEvents()
+    {
+        if (state == null) return;
+        state.OnStart -= StateOnStart;
+        state.OnSplit -= StateOnSplit;
+        state.OnSkipSplit -= StateOnSkipSplit;
+        state.OnUndoSplit -= StateOnUndoSplit;
+        state.OnReset -= StateOnReset;
+        state.OnPause -= StateOnPhaseChanged;
+        state.OnResume -= StateOnPhaseChanged;
+        state.RunManuallyModified -= StateRunManuallyModified;
+    }
+
+    private void StateOnStart(object sender, EventArgs args) => PublishTimerEvent(BridgeEventType.EventTimerStarted);
+    private void StateOnSplit(object sender, EventArgs args) => PublishTimerEvent(BridgeEventType.EventTimerSplit);
+    private void StateOnSkipSplit(object sender, EventArgs args) => PublishTimerEvent(BridgeEventType.EventTimerSkipped);
+    private void StateOnUndoSplit(object sender, EventArgs args) => PublishTimerEvent(BridgeEventType.EventTimerUndo);
+    private void StateOnPhaseChanged(object sender, EventArgs args) => PublishTimerEvent(BridgeEventType.EventTimerPhaseChanged);
+
+    private void StateOnReset(object sender, LiveSplit.Model.TimerPhase previousPhase)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        StateOnResetCore();
+    }
+
+    private void StateOnResetCore()
+    {
+        var currentRun = state!.Run;
+        var resetTimingGeneration = Interlocked.Increment(ref timingUpdateGeneration);
+        TimerState? timerState = null;
+        try
+        {
+            timerState = adapter.GetTimerState();
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"[LiveSplit.Bridge] Timer state capture after reset failed: {exception}");
+        }
+
+        while (Volatile.Read(ref disposed) == 0)
+        {
+            var basis = Volatile.Read(ref publishedRun);
+            RunState? resetCandidate = null;
+            var candidateForReplacement = false;
+            var timingUpdateCompatible = false;
+            try
+            {
+                if (!ReferenceEquals(currentRun, Volatile.Read(ref cachedRunReference)))
+                {
+                    if (adapter.IsTimerOnlyRun())
+                    {
+                        var candidate = adapter.GetRunState();
+                        if (adapter.TryUpdateRunTimings(candidate, out var latest))
+                        {
+                            resetCandidate = latest;
+                            candidateForReplacement = true;
+                            timingUpdateCompatible = true;
+                        }
+                    }
+                }
+                else if (adapter.TryUpdateRunTimings(basis, out var updated))
+                {
+                    resetCandidate = updated;
+                    timingUpdateCompatible = true;
+                }
+            }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Run timing update after reset failed: {exception}"); }
+
+            var runChanged = resetCandidate != null && !resetCandidate.Equals(basis);
+            var retry = false;
+            lock (eventGate)
+            {
+                if (Volatile.Read(ref disposed) != 0) return;
+                if (!ReferenceEquals(currentRun, state.Run))
+                {
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                }
+                else if (resetCandidate != null && ReferenceEquals(basis, publishedRun)
+                    && (candidateForReplacement || ReferenceEquals(currentRun, cachedRunReference)))
+                {
+                    if (runChanged) Interlocked.Exchange(ref publishedRun, resetCandidate);
+                    if (candidateForReplacement) cachedRunReference = currentRun;
+                    if (runRefreshRequested && ReferenceEquals(requestedRunReference, currentRun))
+                    {
+                        requestedRunReference = null;
+                        runRefreshRequested = false;
+                    }
+                    Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
+                    EnqueueEventLocked(BridgeEventType.EventTimerReset, timerState);
+                    if (runChanged) EnqueueEventLocked(BridgeEventType.EventRunChanged, null);
+                    return;
+                }
+                else if (resetCandidate != null && !ReferenceEquals(basis, publishedRun))
+                {
+                    retry = true;
+                }
+                else
+                {
+                    if (ReferenceEquals(currentRun, cachedRunReference) && !timingUpdateCompatible)
+                    {
+                        // An in-flight candidate with the old layout cannot be paired with the
+                        // Run after a structural edit. Invalidate it and recapture next Update.
+                        Interlocked.Increment(ref staticUpdateGeneration);
+                        requestedRunReference = null;
+                        runRefreshRequested = false;
+                    }
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                }
+
+                if (retry) continue;
+                Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
+                EnqueueEventLocked(BridgeEventType.EventTimerReset, timerState);
+                return;
+            }
+        }
+    }
+
+    private void StateRunManuallyModified(object sender, EventArgs args)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        // Some Comparison Generator changes made in LiveSplit settings do not raise this event.
+        // We intentionally avoid scanning/comparing the run on every update to preserve timer latency.
+        try
+        {
+            RequestRunRefresh(state!.Run);
+        }
+        catch (Exception exception)
+        {
+            lock (eventGate)
+            {
+                requestedRunReference = null;
+                runRefreshRequested = false;
+            }
+            Interlocked.Exchange(ref staticRefreshRequested, 1);
+            Debug.WriteLine($"[LiveSplit.Bridge] Run cache update failed: {exception}");
+        }
+    }
+
+    private void RequestRunRefresh(object? runReference)
+    {
+        long generation;
+        lock (eventGate)
+        {
+            generation = Interlocked.Increment(ref staticUpdateGeneration);
+            requestedRunReference = runReference;
+            runRefreshRequested = true;
+            Interlocked.Exchange(ref staticRefreshRequested, 0);
+        }
+        CaptureAndQueueRunCandidate(runReference, generation, "Run cache capture");
+    }
+
+    private void BuildAndPublishRunCandidate(RunStateBuildCandidate candidate, object? runReference, long generation, long capturedTimingGeneration)
+    {
+        try
+        {
+            if (Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)) return;
+            if (!ReferenceEquals(runReference, state?.Run))
+            {
+                ClearRequestedRunReference(runReference, generation);
+                Interlocked.Exchange(ref staticRefreshRequested, 1);
+                return;
+            }
+            PublishRunCandidate(candidate.Build(), runReference, generation, capturedTimingGeneration);
+        }
+        catch (Exception exception)
+        {
+            ClearRequestedRunReference(runReference, generation);
+            Interlocked.Exchange(ref staticRefreshRequested, 1);
+            Debug.WriteLine($"[LiveSplit.Bridge] Background Run cache build failed: {exception}");
+        }
+        finally { candidate.Dispose(); }
+    }
+
+    private void ClearRequestedRunReference(object? runReference, long generation)
+    {
+        lock (eventGate)
+            if (generation == staticUpdateGeneration && runRefreshRequested && ReferenceEquals(requestedRunReference, runReference))
+            {
+                requestedRunReference = null;
+                runRefreshRequested = false;
+            }
+    }
+
+    private void PublishRunCandidate(RunState candidate, object? runReference, long generation, long capturedTimingGeneration)
+    {
+        if (state == null) return;
+        while (Volatile.Read(ref disposed) == 0)
+        {
+            if (!ReferenceEquals(runReference, state.Run))
+            {
+                ClearRequestedRunReference(runReference, generation);
+                Interlocked.Exchange(ref staticRefreshRequested, 1);
+                return;
+            }
+            var timingGeneration = Interlocked.Read(ref timingUpdateGeneration);
+            if (timingGeneration != capturedTimingGeneration
+                && timingGeneration != Interlocked.Read(ref timingPublicationGeneration))
+            {
+                Interlocked.Exchange(ref staticRefreshRequested, 1);
+                return;
+            }
+            var previous = Volatile.Read(ref publishedRun);
+            var withLatestTiming = candidate;
+            if (timingGeneration != capturedTimingGeneration)
+            {
+                if (ReferenceEquals(runReference, Volatile.Read(ref cachedRunReference)))
+                {
+                    if (!LiveSplitAdapter.TryMergeRunTimings(candidate, previous, out withLatestTiming))
+                    {
+                        // The latest published timing has a different shape, so this snapshot
+                        // cannot safely combine with it. Component.Update recaptures the Run.
+                        Interlocked.Exchange(ref staticRefreshRequested, 1);
+                        return;
+                    }
+                }
+                else if (!adapter.TryUpdateRunTimings(candidate, out withLatestTiming))
+                {
+                    // This candidate belongs to a replacement Run. Refresh it from that Run's
+                    // current timings instead of borrowing data from the previously published Run.
+                    Interlocked.Exchange(ref staticRefreshRequested, 1);
+                    return;
+                }
+            }
+            var changed = !withLatestTiming.Equals(previous);
+            lock (eventGate)
+            {
+                if (Volatile.Read(ref disposed) != 0
+                    || generation != staticUpdateGeneration
+                    || !ReferenceEquals(runReference, state.Run)) return;
+                if (timingGeneration != Interlocked.Read(ref timingUpdateGeneration)
+                    || (timingGeneration != capturedTimingGeneration
+                        && timingGeneration != Interlocked.Read(ref timingPublicationGeneration))
+                    || !ReferenceEquals(previous, publishedRun))
+                {
+                    continue;
+                }
+                if (changed)
+                {
+                    Interlocked.Exchange(ref publishedRun, withLatestTiming);
+                    EnqueueEventLocked(BridgeEventType.EventRunChanged, null);
+                }
+                cachedRunReference = runReference;
+                if (runRefreshRequested && ReferenceEquals(requestedRunReference, runReference))
+                {
+                    requestedRunReference = null;
+                    runRefreshRequested = false;
+                }
+                return;
+            }
+        }
+    }
+
+    private void PublishTimerEvent(BridgeEventType type)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        try { QueueEvent(type, adapter.GetTimerState()); }
+        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Timer event callback failed: {exception}"); }
+    }
+
+    private void QueueEvent(BridgeEventType type, TimerState? timerState)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        lock (eventGate)
+        {
+            if (Volatile.Read(ref disposed) != 0) return;
+            EnqueueEventLocked(type, timerState);
+        }
+    }
+
+    private void EnqueueEventLocked(BridgeEventType type, TimerState? timerState)
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        var bridgeEvent = new BridgeEvent { SessionId = sessionId, EventSequence = unchecked((ulong)++eventSequence), Type = type };
+        if (timerState != null) bridgeEvent.TimerState = timerState;
+        transport?.Publish(bridgeEvent);
     }
 }

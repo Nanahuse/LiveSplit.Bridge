@@ -29,7 +29,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.ruff]
-extend-exclude = ["src/livesplit/bridge/v1/*_pb2.*"]
+extend-exclude = ["src/livesplit/bridge/v1/*_pb2.*", "src/livesplit/bridge/v3/*_pb2.*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "PYI"]
