@@ -1,4 +1,3 @@
-using System.Net.WebSockets;
 using LiveSplit.Bridge.Protocol.V3;
 
 namespace LiveSplit.Bridge.Tests;
@@ -31,54 +30,38 @@ public class WebSocketOriginTests
         Assert.False(WebSocketOriginValidator.IsAllowed(origin));
     }
 
-    [Fact]
-    public async Task ServerAcceptsConnectionWithoutOrigin()
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("http://localhost", true)]
+    [InlineData("null", false)]
+    [InlineData("http://absolute", false)]
+    [InlineData("http://example.com", false)]
+    public async Task RpcAcceptsEveryOriginAndCapturesControlPermission(string? origin, bool expectedPermission)
     {
         var port = BridgeTestEndpoints.GetFreePort();
-        using var transport = CreateTransport(port);
+        var permission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var transport = CreateTransport(port, allowControl => permission.TrySetResult(allowControl));
         transport.Start();
 
-        using var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
+        using var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port), origin);
+        var response = await client.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 3,
+            RequestId = 11,
+            GetTimerState = new GetTimerStateRequest(),
+        }, TimeSpan.FromSeconds(5));
 
+        Assert.Equal(11UL, response.RequestId);
+        Assert.Equal(expectedPermission, await permission.Task);
         Assert.True(transport.IsListening);
     }
 
-    [Fact]
-    public async Task ServerAcceptsLoopbackOrigin()
+    private static WebSocketTransport CreateTransport(int port, Action<bool> onRequest)
     {
-        var port = BridgeTestEndpoints.GetFreePort();
-        using var transport = CreateTransport(port);
-        transport.Start();
-
-        using var client = await WebSocketTestClient.ConnectAsync(
-            BridgeTestEndpoints.Rpc(port),
-            $"http://localhost:{port}");
-    }
-
-    [Fact]
-    public async Task ServerRejectsForeignOrigin()
-    {
-        var port = BridgeTestEndpoints.GetFreePort();
-        using var transport = CreateTransport(port);
-        transport.Start();
-
-        await Assert.ThrowsAsync<WebSocketException>(
-            () => WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port), "http://example.com"));
-    }
-
-    [Fact]
-    public async Task ServerRejectsNullOrigin()
-    {
-        var port = BridgeTestEndpoints.GetFreePort();
-        using var transport = CreateTransport(port);
-        transport.Start();
-
-        await Assert.ThrowsAsync<WebSocketException>(
-            () => WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port), "null"));
-    }
-
-    private static WebSocketTransport CreateTransport(int port)
-    {
-        return new WebSocketTransport(port, _ => new Response { ProtocolVersion = 3 });
+        return new WebSocketTransport(port, (request, allowControl) =>
+        {
+            onRequest(allowControl);
+            return new Response { ProtocolVersion = 3, RequestId = request.RequestId };
+        });
     }
 }

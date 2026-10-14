@@ -54,6 +54,14 @@ WebSocket Messageを使用します。通常は既定値のまま使用できま
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 
+WebSocketサーバーは引き続きloopbackだけで待ち受けます。Eventsと読み取り専用のQuery RPCは
+Originに関係なく利用できます。OBSのブラウザソースでは、ローカルHTMLから追加のHTTPサーバー
+なしでQueryとEventsを利用できます。TimerやGame Timeを操作するControl RPCは従来のOrigin
+制限に従い、Originヘッダーなし、または`localhost`、`127.0.0.1`、`::1`のHTTP/HTTPS Origin
+からのみ許可されます。それ以外のOriginからControlを要求すると`PERMISSION_DENIED`が返り、
+WebSocket接続は維持されます。Origin制限はブラウザ由来の要求を制限する仕組みであり、完全な
+認証ではありません。
+
 ## 更新
 
 1. LiveSplitを終了します。

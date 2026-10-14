@@ -93,7 +93,7 @@ internal sealed class BridgeRuntime : IDisposable
         transport = null;
     }
 
-    internal Response HandleRequest(Request request)
+    internal Response HandleRequest(Request request, bool allowControl)
     {
         if (request == null)
         {
@@ -129,8 +129,16 @@ internal sealed class BridgeRuntime : IDisposable
                     },
                 });
             case Request.BodyOneofCase.TimerOperation:
+                if (!allowControl)
+                {
+                    return MakeErrorResponse(request.RequestId, BridgeErrorCode.PermissionDenied, "Control permission is required.");
+                }
                 return HandleTimerOperation(request);
             case Request.BodyOneofCase.GameTimeOperation:
+                if (!allowControl)
+                {
+                    return MakeErrorResponse(request.RequestId, BridgeErrorCode.PermissionDenied, "Control permission is required.");
+                }
                 return HandleGameTimeOperation(request);
             case Request.BodyOneofCase.GetRun:
                 return HandleQuery(request, () => new Response { GetRun = new GetRunResponse { Run = Volatile.Read(ref publishedRun) } });

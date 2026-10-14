@@ -58,6 +58,7 @@ enum BridgeErrorCode {
   INVALID_ARGUMENT = 3;
   OPERATION_FAILED = 4;
   INTERNAL_ERROR = 5;
+  PERMISSION_DENIED = 6;
 }
 
 message TimeValue {

@@ -20,6 +20,30 @@ BridgeはloopbackのWebSocketサーバーを既定ポート`54000`で公開し�
 通信内容はProtobufメッセージをWebSocket Binary Messageにしたものです。JSONやテキスト
 フレームは使いません。Bridgeはloopbackだけにbindするため、別のPCからは接続できません。
 
+Originの扱いはエンドポイントとRPCの種類で異なります。Events endpointはOrigin制限なしで
+接続できます。RPC endpointもすべてのOriginから接続できますが、Control要求には既存のOrigin
+制限が適用されます。Originヘッダーがない接続と、`localhost`、`127.0.0.1`、`::1`をhostとする
+HTTP/HTTPS OriginはControlを利用できます。その他のOrigin（`null`や`http://absolute`を含む）では
+Controlが拒否されます。
+
+## QueryとControlの権限
+
+次の読み取りQueryはOriginに関係なく利用できます。
+
+- `get_timer_state`
+- `get_run`
+- `get_attempt`
+- `get_context_state`
+- `get_completed_count`
+
+`timer_operation`と`game_time_operation`はControl要求です。権限がない接続から送ると、Bridgeは
+`error.code = PERMISSION_DENIED`を含むResponseを返します。Responseの`protocol_version`、
+`request_id`、`session_id`も通常どおり設定されます。拒否後も同じWebSocket接続でQueryを続けられます。
+
+OBSのブラウザソースではローカルHTMLからQueryとEventsを読み取り専用で利用できます。OBS向けの
+Origin許可ルールはなく、Control要求は許可されません。Origin制限は完全な認証ではないため、
+loopbackで待ち受けていることも含めて接続先を信頼できる環境で利用してください。
+
 ## RPC RequestとResponse
 
 各`Request`には`protocol_version: 3`、要求ごとの`request_id`、1つのRequest bodyを設定

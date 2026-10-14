@@ -45,12 +45,17 @@ internal static class WebSocketOriginValidator
 
 internal sealed class WebSocketRpcBehavior : WebSocketBehavior
 {
-    private readonly Func<Request, Response> requestHandler;
+    private readonly Func<Request, bool, Response> requestHandler;
+    private bool allowControl;
 
-    public WebSocketRpcBehavior(Func<Request, Response> requestHandler)
+    public WebSocketRpcBehavior(Func<Request, bool, Response> requestHandler)
     {
         this.requestHandler = requestHandler ?? throw new ArgumentNullException(nameof(requestHandler));
-        OriginValidator = WebSocketOriginValidator.IsAllowed;
+    }
+
+    protected override void OnOpen()
+    {
+        allowControl = WebSocketOriginValidator.IsAllowed(Context.Origin);
     }
 
     protected override void OnMessage(MessageEventArgs e)
@@ -71,7 +76,7 @@ internal sealed class WebSocketRpcBehavior : WebSocketBehavior
             return;
         }
 
-        var response = requestHandler(request);
+        var response = requestHandler(request, allowControl);
 
         try
         {
@@ -86,6 +91,5 @@ internal sealed class WebSocketRpcBehavior : WebSocketBehavior
 
 internal sealed class WebSocketEventBehavior : WebSocketBehavior
 {
-    public WebSocketEventBehavior() => OriginValidator = WebSocketOriginValidator.IsAllowed;
 }
 
