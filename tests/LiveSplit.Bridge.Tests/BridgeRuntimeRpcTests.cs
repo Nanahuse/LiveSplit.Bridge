@@ -41,43 +41,114 @@ public class BridgeRuntimeRpcTests
     [Fact]
     public async Task DeniedControlReturnsPermissionErrorWithoutChangingStateAndQueriesContinue()
     {
-        using var fixture = await RpcFixture.CreateAsync(rpcOrigin: "http://example.com");
+        using var fixture = await RpcFixture.CreateAsync(
+            run => run.Add(new Segment("Two")),
+            rpcOrigin: "http://example.com");
+        using var control = await WebSocketTestClient.ConnectAsync(
+            BridgeTestEndpoints.Rpc(fixture.Port),
+            "http://localhost");
 
-        var deniedRequests = new[]
+        var deniedStart = await fixture.SendAsync(new Request
         {
-            new Request { RequestId = 21, TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart } },
-            new Request { RequestId = 22, TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset } },
-            new Request { RequestId = 23, GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Set, Ticks = TimeSpan.FromSeconds(8).Ticks } },
-        };
-
-        foreach (var request in deniedRequests)
-        {
-            var response = await fixture.SendAsync(request);
-            Assert.Equal(BridgeErrorCode.PermissionDenied, response.Error.Code);
-            AssertEnvelope(response, fixture.Runtime, request.RequestId);
-        }
-
+            RequestId = 21,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        AssertDenied(deniedStart, 21);
         Assert.Equal(LiveSplit.Model.TimerPhase.NotRunning, fixture.State.CurrentPhase);
         Assert.Equal(0, fixture.State.Run.AttemptCount);
-        Assert.False(fixture.State.IsGameTimeInitialized);
-        Assert.Null(fixture.State.CurrentTime.GameTime);
 
-        var timer = await fixture.SendAsync(new Request { RequestId = 24, GetTimerState = new GetTimerStateRequest() });
-        var run = await fixture.SendAsync(new Request { RequestId = 25, GetRun = new GetRunRequest() });
-        var attempt = await fixture.SendAsync(new Request { RequestId = 26, GetAttempt = new GetAttemptRequest() });
-        var context = await fixture.SendAsync(new Request { RequestId = 27, GetContextState = new GetContextStateRequest() });
-        var completed = await fixture.SendAsync(new Request { RequestId = 28, GetCompletedCount = new GetCompletedCountRequest() });
+        await SendControlAsync(22, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        Assert.Equal(1, fixture.State.Run.AttemptCount);
+
+        await SendControlAsync(23, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerSplit },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        var splitIndexBeforeReset = fixture.State.CurrentSplitIndex;
+        var attemptCountBeforeReset = fixture.State.Run.AttemptCount;
+        Assert.Equal(1, splitIndexBeforeReset);
+
+        var deniedReset = await fixture.SendAsync(new Request
+        {
+            RequestId = 24,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        AssertDenied(deniedReset, 24);
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        Assert.Equal(splitIndexBeforeReset, fixture.State.CurrentSplitIndex);
+        Assert.Equal(attemptCountBeforeReset, fixture.State.Run.AttemptCount);
+
+        await SendControlAsync(25, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.NotRunning, fixture.State.CurrentPhase);
+
+        await SendControlAsync(26, new Request
+        {
+            GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Initialize },
+        });
+        await SendControlAsync(27, new Request
+        {
+            GameTimeOperation = new GameTimeOperationRequest
+            {
+                Operation = GameTimeOperationType.Set,
+                Ticks = TimeSpan.FromSeconds(3).Ticks,
+            },
+        });
+        Assert.True(fixture.State.IsGameTimeInitialized);
+        Assert.Equal(TimeSpan.FromSeconds(3), fixture.State.CurrentTime.GameTime);
+
+        var deniedGameTimeSet = await fixture.SendAsync(new Request
+        {
+            RequestId = 28,
+            GameTimeOperation = new GameTimeOperationRequest
+            {
+                Operation = GameTimeOperationType.Set,
+                Ticks = TimeSpan.FromSeconds(8).Ticks,
+            },
+        });
+        AssertDenied(deniedGameTimeSet, 28);
+        Assert.True(fixture.State.IsGameTimeInitialized);
+        Assert.Equal(TimeSpan.FromSeconds(3), fixture.State.CurrentTime.GameTime);
+
+        var timer = await fixture.SendAsync(new Request { RequestId = 29, GetTimerState = new GetTimerStateRequest() });
+        var run = await fixture.SendAsync(new Request { RequestId = 30, GetRun = new GetRunRequest() });
+        var attempt = await fixture.SendAsync(new Request { RequestId = 31, GetAttempt = new GetAttemptRequest() });
+        var context = await fixture.SendAsync(new Request { RequestId = 32, GetContextState = new GetContextStateRequest() });
+        var completed = await fixture.SendAsync(new Request { RequestId = 33, GetCompletedCount = new GetCompletedCountRequest() });
 
         Assert.NotNull(timer.GetTimerState);
         Assert.NotNull(run.GetRun);
         Assert.NotNull(attempt.GetAttempt);
         Assert.NotNull(context.GetContextState);
         Assert.NotNull(completed.GetCompletedCount);
-        AssertEnvelope(timer, fixture.Runtime, 24);
-        AssertEnvelope(run, fixture.Runtime, 25);
-        AssertEnvelope(attempt, fixture.Runtime, 26);
-        AssertEnvelope(context, fixture.Runtime, 27);
-        AssertEnvelope(completed, fixture.Runtime, 28);
+        AssertEnvelope(timer, fixture.Runtime, 29);
+        AssertEnvelope(run, fixture.Runtime, 30);
+        AssertEnvelope(attempt, fixture.Runtime, 31);
+        AssertEnvelope(context, fixture.Runtime, 32);
+        AssertEnvelope(completed, fixture.Runtime, 33);
+
+        async Task<Response> SendControlAsync(ulong requestId, Request request)
+        {
+            request.ProtocolVersion = 3;
+            request.RequestId = requestId;
+            var response = await control.SendRequestAsync(request, TimeSpan.FromSeconds(5));
+            Assert.NotNull(response.Operation);
+            AssertEnvelope(response, fixture.Runtime, requestId);
+            return response;
+        }
+
+        void AssertDenied(Response response, ulong requestId)
+        {
+            Assert.Equal(BridgeErrorCode.PermissionDenied, response.Error.Code);
+            AssertEnvelope(response, fixture.Runtime, requestId);
+        }
     }
 
     [Theory]
