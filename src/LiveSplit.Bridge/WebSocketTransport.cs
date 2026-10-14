@@ -16,13 +16,13 @@ internal sealed class WebSocketTransport : IDisposable
     internal const string RpcPath = "/bridge/v3/rpc";
     internal const string EventsPath = "/bridge/v3/events";
     private readonly int port;
-    private readonly Func<Request, Response> requestHandler;
+    private readonly Func<Request, bool, Response> requestHandler;
     private WebSocketServer? server;
     private int disposed;
     private readonly BlockingCollection<BridgeEvent> eventQueue = new();
     private Task? publisher;
 
-    public WebSocketTransport(int port, Func<Request, Response> requestHandler)
+    public WebSocketTransport(int port, Func<Request, bool, Response> requestHandler)
     {
         if (port < 1 || port > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         this.port = port;

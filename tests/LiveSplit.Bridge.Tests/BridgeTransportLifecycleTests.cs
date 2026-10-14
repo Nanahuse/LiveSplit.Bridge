@@ -34,7 +34,7 @@ public class BridgeTransportLifecycleTests
     [Fact]
     public void StartDisablesInactiveSessionCleanup()
     {
-        using var transport = new WebSocketTransport(BridgeTestEndpoints.GetFreePort(), _ => new Response { ProtocolVersion = 3 });
+        using var transport = new WebSocketTransport(BridgeTestEndpoints.GetFreePort(), (_, _) => new Response { ProtocolVersion = 3 });
         transport.Start();
         Assert.True(transport.IsListening);
         Assert.False(transport.IsInactiveSessionCleanupEnabled);
@@ -49,7 +49,7 @@ public class BridgeTransportLifecycleTests
         blocker.Start();
         try
         {
-            using var transport = new WebSocketTransport(port, _ => new Response { ProtocolVersion = 3 });
+            using var transport = new WebSocketTransport(port, (_, _) => new Response { ProtocolVersion = 3 });
             var exception = Assert.Throws<BridgeTransportStartException>(() => transport.Start());
             Assert.Equal($"ws://127.0.0.1:{port}", exception.Endpoint);
         }

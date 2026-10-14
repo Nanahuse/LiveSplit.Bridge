@@ -22,13 +22,13 @@ public class BridgeRuntimeTests
             ProtocolVersion = 3,
             RequestId = 41,
             GetTimerState = new GetTimerStateRequest(),
-        });
+        }, allowControl: true);
         var second = runtime.HandleRequest(new Request
         {
             ProtocolVersion = 3,
             RequestId = 42,
             GetCompletedCount = new GetCompletedCountRequest(),
-        });
+        }, allowControl: true);
 
         Assert.Equal(3U, first.ProtocolVersion);
         Assert.Equal(41UL, first.RequestId);
@@ -56,7 +56,7 @@ public class BridgeRuntimeTests
             ProtocolVersion = 3,
             RequestId = 9,
             GetAttempt = new GetAttemptRequest(),
-        });
+        }, allowControl: true);
         var attempt = response.GetAttempt.Attempt;
         Assert.Equal(3, attempt.Segments.Count);
         var segment = attempt.Segments[0];
@@ -83,7 +83,7 @@ public class BridgeRuntimeTests
         {
             ProtocolVersion = 3,
             GetCompletedCount = new GetCompletedCountRequest(),
-        });
+        }, allowControl: true);
 
         Assert.Equal(2U, response.GetCompletedCount.CompletedCount.CompletedCount_);
     }
@@ -157,7 +157,7 @@ public class BridgeRuntimeTests
             ProtocolVersion = 3,
             RequestId = 3,
             GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Set },
-        });
+        }, allowControl: true);
 
         Assert.Equal(BridgeErrorCode.InvalidArgument, response.Error.Code);
         AssertEnvelope(response, runtime, 3);
@@ -172,12 +172,12 @@ public class BridgeRuntimeTests
         {
             ProtocolVersion = 3,
             TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerOperationUnspecified },
-        });
+        }, allowControl: true);
         var gameTime = runtime.HandleRequest(new Request
         {
             ProtocolVersion = 3,
             GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.GameTimeOperationUnspecified },
-        });
+        }, allowControl: true);
 
         Assert.Equal(BridgeErrorCode.InvalidArgument, timer.Error.Code);
         Assert.Equal(BridgeErrorCode.InvalidArgument, gameTime.Error.Code);
@@ -188,8 +188,8 @@ public class BridgeRuntimeTests
     {
         var runtime = new BridgeRuntime(CreateState(out _));
 
-        var unsupported = runtime.HandleRequest(new Request { ProtocolVersion = 2, RequestId = 7 });
-        var invalid = runtime.HandleRequest(new Request { ProtocolVersion = 3, RequestId = 8 });
+        var unsupported = runtime.HandleRequest(new Request { ProtocolVersion = 2, RequestId = 7 }, allowControl: true);
+        var invalid = runtime.HandleRequest(new Request { ProtocolVersion = 3, RequestId = 8 }, allowControl: true);
 
         Assert.Equal(BridgeErrorCode.UnsupportedProtocolVersion, unsupported.Error.Code);
         Assert.Equal(BridgeErrorCode.InvalidRequest, invalid.Error.Code);
@@ -214,7 +214,7 @@ public class BridgeRuntimeTests
             {
                 ProtocolVersion = 3,
                 GetTimerState = new GetTimerStateRequest(),
-            }),
+            }, allowControl: false),
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
@@ -248,7 +248,7 @@ public class BridgeRuntimeTests
         {
             ProtocolVersion = 3,
             GetTimerState = new GetTimerStateRequest(),
-        });
+        }, allowControl: false);
 
         Assert.Equal(BridgeErrorCode.OperationFailed, control.Error.Code);
         Assert.Equal(BridgeErrorCode.InternalError, query.Error.Code);
@@ -269,12 +269,12 @@ public class BridgeRuntimeTests
         {
             ProtocolVersion = 3,
             GetRun = new GetRunRequest(),
-        });
+        }, allowControl: true);
         var context = runtime.HandleRequest(new Request
         {
             ProtocolVersion = 3,
             GetContextState = new GetContextStateRequest(),
-        });
+        }, allowControl: true);
 
         Assert.Equal("Game", runResponse.GetRun.Run.GameName);
         Assert.Equal("Any%", runResponse.GetRun.Run.CategoryName);
@@ -355,7 +355,7 @@ public class BridgeRuntimeTests
         adapter.ReleaseFirstManualBuild.Set();
         await olderBuild;
 
-        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Newer edit", response.GetRun.Run.GameName);
     }
@@ -386,7 +386,7 @@ public class BridgeRuntimeTests
         adapter.ReleaseFirstManualBuild.Set();
         await buildA;
 
-        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Run B", response.GetRun.Run.GameName);
         Assert.Equal("Replacement", response.GetRun.Run.Segments[0].Name);
@@ -422,14 +422,14 @@ public class BridgeRuntimeTests
         var resetChanged = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(BridgeEventType.EventTimerReset, reset.Type);
         Assert.Equal(BridgeEventType.EventRunChanged, resetChanged.Type);
-        var resetResponse = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var resetResponse = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.False(resetResponse.GetRun.Run.Metadata.HasRunId);
         Assert.Equal(TimeSpan.FromSeconds(11).Ticks, resetResponse.GetRun.Run.Segments[0].BestSegmentTime.RealTimeTicks);
         adapter.ReleaseFirstManualBuild.Set();
         await staticBuild;
 
         var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
-        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
         Assert.Equal("Edited during build", response.GetRun.Run.GameName);
         Assert.False(response.GetRun.Run.Metadata.HasRunId);
@@ -481,7 +481,7 @@ public class BridgeRuntimeTests
         await staticBuild;
         var changed = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(BridgeEventType.EventRunChanged, changed.Type);
-        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.Equal("Run B", response.GetRun.Run.GameName);
         Assert.Equal("Any%", response.GetRun.Run.CategoryName);
         Assert.Equal("Segment 1", response.GetRun.Run.Segments[0].Name);
@@ -527,7 +527,7 @@ public class BridgeRuntimeTests
         adapter.ReleaseFirstManualBuild.Set();
         await update;
 
-        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() });
+        var response = runtime.HandleRequest(new Request { ProtocolVersion = 3, GetRun = new GetRunRequest() }, allowControl: true);
         Assert.Equal(string.Empty, response.GetRun.Run.GameName);
     }
 
@@ -554,7 +554,7 @@ public class BridgeRuntimeTests
             ProtocolVersion = 3,
             RequestId = 17,
             TimerOperation = new TimerOperationRequest { Operation = operation },
-        });
+        }, allowControl: true);
     }
 
     private static void AssertGameTimeSuccess(BridgeRuntime runtime, GameTimeOperationType operation, long? ticks = null)
@@ -569,7 +569,7 @@ public class BridgeRuntimeTests
         {
             ProtocolVersion = 3,
             GameTimeOperation = request,
-        });
+        }, allowControl: true);
 
         Assert.NotNull(response.Operation);
         AssertEnvelope(response, runtime);

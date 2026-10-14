@@ -39,6 +39,168 @@ public class BridgeRuntimeRpcTests
     }
 
     [Fact]
+    public async Task DeniedControlReturnsPermissionErrorWithoutChangingStateAndQueriesContinue()
+    {
+        using var fixture = await RpcFixture.CreateAsync(
+            run => run.Add(new Segment("Two")),
+            rpcOrigin: "http://example.com");
+        using var control = await WebSocketTestClient.ConnectAsync(
+            BridgeTestEndpoints.Rpc(fixture.Port),
+            "http://localhost");
+
+        var deniedStart = await fixture.SendAsync(new Request
+        {
+            RequestId = 21,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        AssertDenied(deniedStart, 21);
+        Assert.Equal(LiveSplit.Model.TimerPhase.NotRunning, fixture.State.CurrentPhase);
+        Assert.Equal(0, fixture.State.Run.AttemptCount);
+
+        await SendControlAsync(22, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        Assert.Equal(1, fixture.State.Run.AttemptCount);
+
+        await SendControlAsync(23, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerSplit },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        var splitIndexBeforeReset = fixture.State.CurrentSplitIndex;
+        var attemptCountBeforeReset = fixture.State.Run.AttemptCount;
+        Assert.Equal(1, splitIndexBeforeReset);
+
+        var deniedReset = await fixture.SendAsync(new Request
+        {
+            RequestId = 24,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        AssertDenied(deniedReset, 24);
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+        Assert.Equal(splitIndexBeforeReset, fixture.State.CurrentSplitIndex);
+        Assert.Equal(attemptCountBeforeReset, fixture.State.Run.AttemptCount);
+
+        await SendControlAsync(25, new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerReset },
+        });
+        Assert.Equal(LiveSplit.Model.TimerPhase.NotRunning, fixture.State.CurrentPhase);
+
+        await SendControlAsync(26, new Request
+        {
+            GameTimeOperation = new GameTimeOperationRequest { Operation = GameTimeOperationType.Initialize },
+        });
+        await SendControlAsync(27, new Request
+        {
+            GameTimeOperation = new GameTimeOperationRequest
+            {
+                Operation = GameTimeOperationType.Set,
+                Ticks = TimeSpan.FromSeconds(3).Ticks,
+            },
+        });
+        Assert.True(fixture.State.IsGameTimeInitialized);
+        Assert.Equal(TimeSpan.FromSeconds(3), fixture.State.CurrentTime.GameTime);
+
+        var deniedGameTimeSet = await fixture.SendAsync(new Request
+        {
+            RequestId = 28,
+            GameTimeOperation = new GameTimeOperationRequest
+            {
+                Operation = GameTimeOperationType.Set,
+                Ticks = TimeSpan.FromSeconds(8).Ticks,
+            },
+        });
+        AssertDenied(deniedGameTimeSet, 28);
+        Assert.True(fixture.State.IsGameTimeInitialized);
+        Assert.Equal(TimeSpan.FromSeconds(3), fixture.State.CurrentTime.GameTime);
+
+        var timer = await fixture.SendAsync(new Request { RequestId = 29, GetTimerState = new GetTimerStateRequest() });
+        var run = await fixture.SendAsync(new Request { RequestId = 30, GetRun = new GetRunRequest() });
+        var attempt = await fixture.SendAsync(new Request { RequestId = 31, GetAttempt = new GetAttemptRequest() });
+        var context = await fixture.SendAsync(new Request { RequestId = 32, GetContextState = new GetContextStateRequest() });
+        var completed = await fixture.SendAsync(new Request { RequestId = 33, GetCompletedCount = new GetCompletedCountRequest() });
+
+        Assert.NotNull(timer.GetTimerState);
+        Assert.NotNull(run.GetRun);
+        Assert.NotNull(attempt.GetAttempt);
+        Assert.NotNull(context.GetContextState);
+        Assert.NotNull(completed.GetCompletedCount);
+        AssertEnvelope(timer, fixture.Runtime, 29);
+        AssertEnvelope(run, fixture.Runtime, 30);
+        AssertEnvelope(attempt, fixture.Runtime, 31);
+        AssertEnvelope(context, fixture.Runtime, 32);
+        AssertEnvelope(completed, fixture.Runtime, 33);
+
+        async Task<Response> SendControlAsync(ulong requestId, Request request)
+        {
+            request.ProtocolVersion = 3;
+            request.RequestId = requestId;
+            var response = await control.SendRequestAsync(request, TimeSpan.FromSeconds(5));
+            Assert.NotNull(response.Operation);
+            AssertEnvelope(response, fixture.Runtime, requestId);
+            return response;
+        }
+
+        void AssertDenied(Response response, ulong requestId)
+        {
+            Assert.Equal(BridgeErrorCode.PermissionDenied, response.Error.Code);
+            AssertEnvelope(response, fixture.Runtime, requestId);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("http://localhost")]
+    [InlineData("null")]
+    [InlineData("http://absolute")]
+    [InlineData("https://external.example")]
+    public async Task EventsAcceptEveryOriginAndBroadcastTimerEvents(string? origin)
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+        using var events = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Events(fixture.Port), origin);
+        EventsSubscriptionTestHelper.WaitForCount(fixture.Runtime, 1);
+
+        var started = await fixture.SendAsync(new Request
+        {
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        });
+        var bridgeEvent = BridgeEvent.Parser.ParseFrom(await events.ReceiveBinaryAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.NotNull(started.Operation);
+        Assert.Equal(BridgeEventType.EventTimerStarted, bridgeEvent.Type);
+        Assert.Equal(fixture.Runtime.SessionId, bridgeEvent.SessionId);
+        Assert.Equal(1UL, bridgeEvent.EventSequence);
+    }
+
+    [Fact]
+    public async Task ControlPermissionIsIndependentForConcurrentConnections()
+    {
+        using var fixture = await RpcFixture.CreateAsync();
+        using var readOnly = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(fixture.Port), "http://external.example");
+        using var control = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(fixture.Port), "https://localhost");
+
+        var denied = await readOnly.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 3,
+            RequestId = 31,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        }, TimeSpan.FromSeconds(5));
+        var allowed = await control.SendRequestAsync(new Request
+        {
+            ProtocolVersion = 3,
+            RequestId = 32,
+            TimerOperation = new TimerOperationRequest { Operation = TimerOperationType.TimerStart },
+        }, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(BridgeErrorCode.PermissionDenied, denied.Error.Code);
+        Assert.NotNull(allowed.Operation);
+        Assert.Equal(LiveSplit.Model.TimerPhase.Running, fixture.State.CurrentPhase);
+    }
+
+    [Fact]
     public async Task TimerEventsUseLiveSplitCallbacksAndBroadcastInSequence()
     {
         using var fixture = await RpcFixture.CreateAsync();
@@ -259,7 +421,7 @@ public class BridgeRuntimeRpcTests
         public int Port { get; }
         public LiveSplitState State { get; }
 
-        public static async Task<RpcFixture> CreateAsync(Action<Run>? configureRun = null)
+        public static async Task<RpcFixture> CreateAsync(Action<Run>? configureRun = null, string? rpcOrigin = null)
         {
             var port = BridgeTestEndpoints.GetFreePort();
             var run = new Run(new StandardComparisonGeneratorsFactory()) { GameName = "RPC Game", CategoryName = "Any%" };
@@ -267,7 +429,7 @@ public class BridgeRuntimeRpcTests
             configureRun?.Invoke(run);
             var state = TestLiveSplitState.Create(run);
             var runtime = new BridgeRuntime(state, port);
-            var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port));
+            var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port), rpcOrigin);
             return new RpcFixture(runtime, client, port, state);
         }
 
