@@ -1,0 +1,110 @@
+[
+  {
+    "schema": "request",
+    "name": "get timer state",
+    "valid": true,
+    "data": { "request_id": 1, "method": "get_timer_state" }
+  },
+  {
+    "schema": "request",
+    "name": "timer operation",
+    "valid": true,
+    "data": { "request_id": 2, "method": "timer_operation", "params": { "operation": "split" } }
+  },
+  {
+    "schema": "request",
+    "name": "unknown method",
+    "valid": false,
+    "data": { "request_id": 3, "method": "unknown" }
+  },
+  {
+    "schema": "request",
+    "name": "params do not match get_timer_state",
+    "valid": false,
+    "data": { "request_id": 4, "method": "get_timer_state", "params": {} }
+  },
+  {
+    "schema": "request",
+    "name": "missing timer_operation params",
+    "valid": false,
+    "data": { "request_id": 5, "method": "timer_operation" }
+  },
+  {
+    "schema": "request",
+    "name": "null timer_operation params",
+    "valid": false,
+    "data": { "request_id": 6, "method": "timer_operation", "params": null }
+  },
+  {
+    "schema": "request",
+    "name": "unknown operation",
+    "valid": false,
+    "data": { "request_id": 7, "method": "timer_operation", "params": { "operation": "teleport" } }
+  },
+  {
+    "schema": "request",
+    "name": "unknown request property",
+    "valid": false,
+    "data": { "request_id": 8, "method": "get_timer_state", "extra": true }
+  },
+  {
+    "schema": "response",
+    "name": "query success",
+    "valid": true,
+    "data": { "result": { "phase": "running", "split_index": 4, "real_time_ticks": 9000 }, "request_id": 1, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "control success with null result",
+    "valid": true,
+    "data": { "result": null, "request_id": 2, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "error response",
+    "valid": true,
+    "data": { "error": { "code": "operation_failed", "message": "The operation failed." }, "request_id": 3, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "result and error together",
+    "valid": false,
+    "data": { "result": null, "error": { "code": "operation_failed", "message": "failed" }, "request_id": 4, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "neither result nor error",
+    "valid": false,
+    "data": { "request_id": 5, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "control result true",
+    "valid": false,
+    "data": { "result": true, "request_id": 6, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "null error",
+    "valid": false,
+    "data": { "error": null, "request_id": 7, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "missing required request_id",
+    "valid": false,
+    "data": { "result": null, "session_id": 123 }
+  },
+  {
+    "schema": "response",
+    "name": "zero session id",
+    "valid": false,
+    "data": { "result": null, "request_id": 9, "session_id": 0 }
+  },
+  {
+    "schema": "response",
+    "name": "maximum uint32 session id",
+    "valid": true,
+    "data": { "result": null, "request_id": 10, "session_id": 4294967295 }
+  }
+]

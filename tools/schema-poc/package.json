@@ -1,0 +1,10 @@
+{
+  "name": "livesplit-bridge-schema-poc-validation",
+  "private": true,
+  "scripts": {
+    "validate": "node validate-schemas.cjs"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
+  }
+}

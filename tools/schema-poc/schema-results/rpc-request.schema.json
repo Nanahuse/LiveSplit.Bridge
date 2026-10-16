@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "required": [
+    "method"
+  ],
+  "anyOf": [
+    {
+      "properties": {
+        "method": {
+          "const": "get_timer_state"
+        },
+        "request_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "timer_operation"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": [
+                "start",
+                "split",
+                "skip",
+                "undo",
+                "reset",
+                "pause",
+                "resume"
+              ]
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "additionalProperties": false
+        },
+        "request_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "params",
+        "request_id"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
