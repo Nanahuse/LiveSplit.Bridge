@@ -17,7 +17,7 @@ public sealed class SchemaConstNullAttribute : Attribute { }
 public abstract class RpcRequest
 {
     [JsonRequired]
-    public ulong RequestId { get; set; }
+    public uint RequestId { get; set; }
 }
 
 public sealed class GetTimerStateRequest : RpcRequest { }
@@ -81,7 +81,7 @@ public sealed class GameTimeResumeParams : GameTimeOperationParams { }
 public abstract class RpcResponse
 {
     [JsonRequired]
-    public ulong RequestId { get; set; }
+    public uint RequestId { get; set; }
 
     [JsonRequired]
     public uint SessionId { get; set; }
@@ -148,7 +148,7 @@ public sealed class JsonNullValueConverter : JsonConverter<JsonNullValue>
 public abstract class BridgeEvent
 {
     [JsonRequired] public uint SessionId { get; set; }
-    [JsonRequired] public ulong EventSequence { get; set; }
+    [JsonRequired] public uint EventSequence { get; set; }
 }
 
 public abstract class TimerBridgeEvent : BridgeEvent

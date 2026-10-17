@@ -47,23 +47,28 @@ Eventは`type`を判別子にします。`timer_started`、`timer_split`、`time
 
 ## Schema補完とSerializerの差
 
-ExporterはC#整数型の上下限をSchemaに自動出力しないため、`TransformSchemaNode`で`uint`、`int`、`long`の境界を追加します。確定済みSession IDは`uint`で`1..4294967295`を表します。Controlのnull固定も局所的に`const: null`で補います。
+ExporterはC#整数型の上下限をSchemaに自動出力しないため、`TransformSchemaNode`で`uint`、`int`、`long`の境界を追加します。全IDを`uint`とし、共通補完で`0..4294967295`、Session IDとEvent sequenceだけは`minimum: 1`を重ねます。Controlのnull固定も局所的に`const: null`で補います。
 
-- System.Text.JsonはSession IDの`0`を`uint`として受け入れますが、Schemaは拒否します。送信側で非ゼロを保証する必要があります。
-- PoCでは未確定の`request_id` / `event_sequence`比較用に`ulong`を使い、SchemaをJavaScript安全整数上限`9007199254740991`で制限しています。Serializerはそれより大きい整数とsequence 0を受理します。
-- JSON数値とJavaScript相互運用を優先する場合は、`request_id: 0..2^53-1`、`event_sequence: 1..2^53-1`を推奨します。64-bit全域を保つ必要があれば10進文字列も候補です。どちらも正式仕様ではありません。
+- IDはJSON整数で、32bit符号なしの範囲内にあります。これらの値はJavaScript `Number`で正確に表現できます。
+- System.Text.JsonはSession IDとEvent sequenceの`0`を`uint`として受け入れますが、Schemaは拒否します。Event sequenceの0禁止はEvent生成側で保証します。Request IDのSchemaとSerializerはいずれも0を受け入れます。
 - `List<string>`の要素、`Dictionary<string,string>`の値はSchemaでは非nullですが、System.Text.Json 9.0.4はnull要素・値を受け入れます。型注釈だけでgeneric要素内部のnullは実行時強制できません。
 - Reference DTOのroot `null`もSerializerは受け入れますが、`TreatNullObliviousAsNonNullable = true`のSchema rootは非nullです。
-- 現行`BridgeRuntime.GenerateSessionId()`は非ゼロ64-bit `ulong`です。JSON向けに決まった非ゼロ32-bitと不一致ですが、本番コードは変更していません。
-- 現行`event_sequence`はイベントごとに増加し、同じセッション内の配信順を示します。Reset時に`timer_reset`の後に`run_changed`を送る場合があります。セッション切替やwraparoundは本PoCで実装変更していません。
+- 現行`BridgeRuntime.GenerateSessionId()`は非ゼロ64-bit `ulong`を生成します。JSONの確定仕様は非ゼロ32bitであり、本番生成処理の更新はPhase 3に残しています。
+- Event sequenceは同一セッション内の発行順を示し、1から始まります。`uint.MaxValue`の次は1へ戻り、セッション変更時は新しい系列です。Event連番の生成・循環とクライアント側の連続性判定はPhase 3で実装します。Reset時に`timer_reset`の後に`run_changed`を送る場合があります。
 
 ## ID表現の評価
 
-現行Protobufの`request_id`と`event_sequence`は`uint64`ですが、JSON Schemaの整数精度とJavaScript `Number`の正確な整数範囲は異なります。安全整数に制限すればJavaScriptクライアントで正確に比較できます。64-bit全域を保持するなら文字列で運ぶ必要があります。`request_id`が不透明な相関値、Event sequenceが単調増加値であることを踏まえ、正式な上限とwraparound規則は別途決めてください。
+| ID | C# / JSON | 有効範囲 | 規則 |
+| --- | --- | --- | --- |
+| `request_id` | `uint` / integer | 0..4294967295 | クライアント採番。未完了Request間で一意。未完了Requestと衝突しなければ再利用可能。Responseは同じ値を返す。 |
+| `session_id` | `uint` / integer | 1..4294967295 | BridgeRuntimeセッションID。セッション開始時に非ゼロ乱数から生成する。 |
+| `event_sequence` | `uint` / integer | 1..4294967295 | セッション内Event順序。1から増加し、最大値の次は1。循環を考慮して連続性を判断する。 |
+
+32bit値はJavaScript `Number`で正確に表現できます。Event sequenceはセッション切替で新しい系列になり、連番の循環時は`previous == 4294967295`なら期待値1、それ以外は`previous + 1`です。欠落を検出した場合、クライアントは必要に応じてQueryで状態を再同期します。
 
 ## 検証方法・結果
 
-再検証結果: C#実行時チェック`30/30 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`65/65 PASS`、C#が生成したJSON`33/33 PASS`。Schema固定保存3点は再生成元とSHA-256が一致しました。`pnpm install --frozen-lockfile --ignore-scripts`も成功しました。`dotnet build`は成功しましたが、NuGet vulnerability feedへ接続できず`NU1900`警告が出ています。
+32bit ID更新後の結果: C#実行時チェック`32/32 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`80/80 PASS`、C#生成JSON`33/33 PASS`。Request/Responseのrequest_idは0、1、4294967295をシリアライズ・デシリアライズで確認し、Responseも同じIDを保持します。SchemaではIDごとの32bit範囲と0禁止を検証しました。Schema固定保存3点は再生成元とSHA-256が一致しました。`pnpm install --frozen-lockfile --ignore-scripts`も成功しました。`dotnet restore`とBuildは成功しましたが、NuGet vulnerability feedへ接続できず`NU1900`警告が出ています。
 
 `pnpm run validate`は生成した全3 SchemaをAjv 8.17.1のDraft 2020-12 meta-schemaで検査した後、固定の正常/異常fixtureとC#で実際にシリアライズしたJSONを検証します。C#の実行時チェックの詳細は無視対象の`out/runtime-validation.txt`、Ajvは検証ごとの結果と合計件数を標準出力に出します。content annotationの検査は通常のSchema適合性とは分けています。
 
@@ -73,4 +78,4 @@ ExporterはC#整数型の上下限をSchemaに自動出力しないため、`Tra
 
 ExporterはSchemaファイル間で共通型を共有`$defs`へ分けず、TimerState等が3文書内に重複します。各Schemaは単独で検証可能で、生成処理は単純です。Schema分割だけを目的とする独自参照生成は導入していません。
 
-以上は採用決定ではありません。次にIDの正式表現、Session IDのJSON送信値生成、generic nullability、Base64内容保証を決め、各通信境界の運用ルールを定める必要があります。JSON通信実装、CI/Release、Protobuf削除は対象外です。
+IDのJSON表現と値域は確定しました。Session IDの非ゼロ32bit生成、Event sequenceの32bit採番・wraparound、request_idの対応付けなど、本番通信境界の更新はPhase 3で対応します。Generic nullabilityと画像Base64内容保証は残課題です。JSON通信実装、CI/Release、Protobuf削除は対象外です。

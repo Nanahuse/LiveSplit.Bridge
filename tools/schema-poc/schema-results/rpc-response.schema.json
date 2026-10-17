@@ -53,7 +53,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -270,7 +270,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -356,7 +356,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -403,7 +403,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -437,7 +437,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -460,7 +460,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",
@@ -502,7 +502,7 @@
         "request_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 4294967295
         },
         "session_id": {
           "type": "integer",

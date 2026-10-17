@@ -9,7 +9,6 @@ using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
-const ulong JavaScriptMaxSafeInteger = 9007199254740991UL;
 const string Draft202012 = "https://json-schema.org/draft/2020-12/schema";
 
 var jsonOptions = new JsonSerializerOptions
@@ -30,39 +29,26 @@ var exporterOptions = new JsonSchemaExporterOptions
         var property = context.PropertyInfo;
         if (property != null && schema is JsonObject objectSchema)
         {
-            if (property.Name == "session_id")
-            {
-                objectSchema["minimum"] = 1;
-                objectSchema["maximum"] = uint.MaxValue;
-            }
-            else if (property.Name == "request_id")
+            var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            if (type == typeof(uint))
             {
                 objectSchema["minimum"] = 0;
-                objectSchema["maximum"] = JavaScriptMaxSafeInteger;
+                objectSchema["maximum"] = uint.MaxValue;
             }
-            else if (property.Name == "event_sequence")
+            else if (type == typeof(int))
+            {
+                objectSchema["minimum"] = int.MinValue;
+                objectSchema["maximum"] = int.MaxValue;
+            }
+            else if (type == typeof(long))
+            {
+                objectSchema["minimum"] = long.MinValue;
+                objectSchema["maximum"] = long.MaxValue;
+            }
+
+            if (property.Name is "session_id" or "event_sequence")
             {
                 objectSchema["minimum"] = 1;
-                objectSchema["maximum"] = JavaScriptMaxSafeInteger;
-            }
-            else
-            {
-                var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
-                if (type == typeof(uint))
-                {
-                    objectSchema["minimum"] = 0;
-                    objectSchema["maximum"] = uint.MaxValue;
-                }
-                else if (type == typeof(int))
-                {
-                    objectSchema["minimum"] = int.MinValue;
-                    objectSchema["maximum"] = int.MaxValue;
-                }
-                else if (type == typeof(long))
-                {
-                    objectSchema["minimum"] = long.MinValue;
-                    objectSchema["maximum"] = long.MaxValue;
-                }
             }
 
             if (property.PropertyType == typeof(byte[]))
@@ -104,13 +90,13 @@ var timerOperations = new TimerOperationParams[]
     new TimerResetParams(), new TimerPauseParams(), new TimerResumeParams(),
 };
 foreach (var operation in timerOperations)
-    requestSamples.Add(new TimerOperationRequest { RequestId = (ulong)requestSamples.Count + 1, Params = operation });
+    requestSamples.Add(new TimerOperationRequest { RequestId = (uint)requestSamples.Count + 1, Params = operation });
 var gameTimeOperations = new GameTimeOperationParams[]
 {
     new GameTimeInitializeParams(), new GameTimeSetParams { Ticks = -123456 }, new GameTimePauseParams(), new GameTimeResumeParams(),
 };
 foreach (var operation in gameTimeOperations)
-    requestSamples.Add(new GameTimeOperationRequest { RequestId = (ulong)requestSamples.Count + 1, Params = operation });
+    requestSamples.Add(new GameTimeOperationRequest { RequestId = (uint)requestSamples.Count + 1, Params = operation });
 foreach (var request in requestSamples) AddSerializedCase("request", request.GetType().Name, JsonSerializer.Serialize<RpcRequest>(request, jsonOptions));
 
 var emptyRun = new RunState
@@ -264,9 +250,34 @@ Check("run/context changed events emit and accept only explicit null timer_state
         && Rejects(() => JsonSerializer.Deserialize<BridgeEvent>(json.Replace("\"timer_state\":null", "\"timer_state\":{}"), jsonOptions));
 }));
 Check("unknown properties are rejected on requests and state DTOs", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\",\"request_id\":1,\"extra\":1}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":\"running\",\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false,\"extra\":1}", jsonOptions)));
-Check("session_id uint32 accepts zero in serializer but rejects values above uint32", () => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":0}", jsonOptions)?.SessionId == 0 && Rejects(() => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":4294967296}", jsonOptions)));
-Check("ulong request_id accepts integers larger than JavaScript safe integer", () => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\",\"request_id\":9007199254740992}", jsonOptions) is GetRunRequest);
-Check("ulong event_sequence accepts zero and values larger than JavaScript safe integer", () => JsonSerializer.Deserialize<RunChangedEvent>("{\"session_id\":1,\"event_sequence\":0,\"timer_state\":null}", jsonOptions)?.EventSequence == 0 && JsonSerializer.Deserialize<RunChangedEvent>("{\"session_id\":1,\"event_sequence\":9007199254740992,\"timer_state\":null}", jsonOptions)?.EventSequence == 9007199254740992UL);
+Check("request and response request_id round-trip zero, one, and uint32 maximum", () => new[] { 0u, 1u, uint.MaxValue }.All(id =>
+{
+    var request = new GetRunRequest { RequestId = id };
+    var requestJson = JsonSerializer.Serialize<RpcRequest>(request, jsonOptions);
+    var requestRoundTrip = JsonSerializer.Deserialize<RpcRequest>(requestJson, jsonOptions);
+    var response = new ControlSuccessResponse { RequestId = id, SessionId = uint.MaxValue };
+    var responseJson = JsonSerializer.Serialize<RpcResponse>(response, jsonOptions);
+    var responseRoundTrip = JsonSerializer.Deserialize<ControlSuccessResponse>(responseJson, jsonOptions);
+    return requestRoundTrip?.RequestId == id && responseRoundTrip is not null && responseRoundTrip.RequestId == id && responseRoundTrip.SessionId == uint.MaxValue;
+}));
+Check("request_id rejects overflow, negative, null, and omission in Request and Response", () =>
+{
+    var invalidValues = new[] { "4294967296", "-1", "null" };
+    return invalidValues.All(value => Rejects(() => JsonSerializer.Deserialize<RpcRequest>($"{{\"method\":\"get_run\",\"request_id\":{value}}}", jsonOptions))
+        && Rejects(() => JsonSerializer.Deserialize<ControlSuccessResponse>($"{{\"request_id\":{value},\"session_id\":1,\"result\":null}}", jsonOptions)))
+        && Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\"}", jsonOptions))
+        && Rejects(() => JsonSerializer.Deserialize<ControlSuccessResponse>("{\"session_id\":1,\"result\":null}", jsonOptions));
+});
+Check("event_sequence uint32 accepts zero and maximum in Serializer", () => new[] { 0u, 1u, uint.MaxValue }.All(sequence =>
+{
+    var json = JsonSerializer.Serialize(new RunChangedEvent { SessionId = 1, EventSequence = sequence }, jsonOptions);
+    return JsonSerializer.Deserialize<RunChangedEvent>(json, jsonOptions)?.EventSequence == sequence;
+}));
+Check("event_sequence rejects overflow, negative, null, and omission in Serializer", () => new[] { "4294967296", "-1", "null" }.All(value => Rejects(() => JsonSerializer.Deserialize<RunChangedEvent>($"{{\"session_id\":1,\"event_sequence\":{value},\"timer_state\":null}}", jsonOptions)))
+    && Rejects(() => JsonSerializer.Deserialize<RunChangedEvent>("{\"session_id\":1,\"timer_state\":null}", jsonOptions)));
+Check("session_id uint32 accepts zero and maximum in Serializer but rejects overflow", () => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":0}", jsonOptions)?.SessionId == 0
+    && JsonSerializer.Deserialize<SessionIdProbe>($"{{\"session_id\":{uint.MaxValue}}}", jsonOptions)?.SessionId == uint.MaxValue
+    && Rejects(() => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":4294967296}", jsonOptions)));
 Check("nullable collection elements and dictionary values accept null in System.Text.Json", () => JsonSerializer.Deserialize<RunState>("{\"game_name\":\"\",\"category_name\":\"\",\"offset_ticks\":0,\"file_path\":null,\"layout_path\":null,\"metadata\":{\"run_id\":null,\"platform_name\":null,\"region_name\":null,\"uses_emulator\":false,\"variables\":{\"x\":null}},\"comparisons\":[null],\"segments\":[],\"game_icon\":null}", jsonOptions) is { Comparisons.Count: 1, Metadata.Variables.Count: 1 });
 Check("root null is accepted by System.Text.Json for reference model", () => JsonSerializer.Deserialize<RunState>("null", jsonOptions) == null);
 
