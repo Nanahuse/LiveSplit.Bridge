@@ -8,9 +8,10 @@ using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 using System.Xml;
-using LiveSplit.Model;
+using LiveSplit.Bridge.Json;
 using LiveSplit.UI;
 using LiveSplit.UI.Components;
+using LiveSplitState = LiveSplit.Model.LiveSplitState;
 
 [assembly: ComponentFactory(typeof(Factory))]
 

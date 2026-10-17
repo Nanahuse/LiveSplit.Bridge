@@ -15,8 +15,8 @@
       <HintPath>$(LiveSplitInstallPath)\UpdateManager.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Compile Include="..\schema-poc\Models.cs" Link="Models.cs" />
-    <Compile Include="..\schema-poc\SerializerOptions.cs" Link="SerializerOptions.cs" />
+    <Compile Include="..\..\src\LiveSplit.Bridge.Json\Models.cs" Link="Models.cs" />
+    <Compile Include="..\..\src\LiveSplit.Bridge.Json\SerializerOptions.cs" Link="SerializerOptions.cs" />
     <PackageReference Include="System.Text.Json" Version="9.0.4" />
   </ItemGroup>
   <Target Name="ValidateLiveSplitInstallPath" BeforeTargets="ResolveReferences">

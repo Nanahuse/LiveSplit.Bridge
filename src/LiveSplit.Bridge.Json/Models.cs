@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+namespace LiveSplit.Bridge.Json;
+
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class SchemaConstNullAttribute : Attribute { }
 
