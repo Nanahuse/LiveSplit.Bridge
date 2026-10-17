@@ -290,7 +290,10 @@
           "const": "timer_reset"
         },
         "timer_state": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
             "phase": {
               "enum": [
@@ -430,54 +433,7 @@
           "const": "run_changed"
         },
         "timer_state": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "properties": {
-            "phase": {
-              "enum": [
-                "unspecified",
-                "not_running",
-                "running",
-                "paused",
-                "ended"
-              ]
-            },
-            "split_index": {
-              "type": "integer",
-              "minimum": -2147483648,
-              "maximum": 2147483647
-            },
-            "real_time_ticks": {
-              "type": "integer",
-              "minimum": -9223372036854775808,
-              "maximum": 9223372036854775807
-            },
-            "game_time_ticks": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "minimum": -9223372036854775808,
-              "maximum": 9223372036854775807
-            },
-            "is_game_time_initialized": {
-              "type": "boolean"
-            },
-            "is_game_time_paused": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "phase",
-            "split_index",
-            "real_time_ticks",
-            "game_time_ticks",
-            "is_game_time_initialized",
-            "is_game_time_paused"
-          ],
-          "additionalProperties": false
+          "const": null
         },
         "session_id": {
           "type": "integer",
@@ -503,54 +459,7 @@
           "const": "context_changed"
         },
         "timer_state": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "properties": {
-            "phase": {
-              "enum": [
-                "unspecified",
-                "not_running",
-                "running",
-                "paused",
-                "ended"
-              ]
-            },
-            "split_index": {
-              "type": "integer",
-              "minimum": -2147483648,
-              "maximum": 2147483647
-            },
-            "real_time_ticks": {
-              "type": "integer",
-              "minimum": -9223372036854775808,
-              "maximum": 9223372036854775807
-            },
-            "game_time_ticks": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "minimum": -9223372036854775808,
-              "maximum": 9223372036854775807
-            },
-            "is_game_time_initialized": {
-              "type": "boolean"
-            },
-            "is_game_time_paused": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "phase",
-            "split_index",
-            "real_time_ticks",
-            "game_time_ticks",
-            "is_game_time_initialized",
-            "is_game_time_paused"
-          ],
-          "additionalProperties": false
+          "const": null
         },
         "session_id": {
           "type": "integer",

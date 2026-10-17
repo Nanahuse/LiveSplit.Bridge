@@ -482,8 +482,6 @@
           "properties": {
             "code": {
               "enum": [
-                "unspecified",
-                "unsupported_protocol_version",
                 "invalid_request",
                 "invalid_argument",
                 "operation_failed",

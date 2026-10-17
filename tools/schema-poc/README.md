@@ -32,9 +32,9 @@ Schema生成先はGit無視対象の`tools/schema-poc/out/`です。独立検証
 
 Requestは`JsonPolymorphic` / `JsonDerivedType`で`method`を判別子にし、Paramsを持たないQueryでは`params`を出しません。Timer操作Paramsは`operation`を判別子にします。Game Time操作は`set`だけ`GameTimeSetParams.ticks`を必須にし、他の操作型では未知プロパティ拒否によってticksを拒否します。この制約は派生Params型と標準ポリモーフィズムで表現でき、追加Converterは不要でした。`AllowOutOfOrderMetadataProperties = true`により、`request_id`が`method`より前のJSONも受け入れます。
 
-Responseは型判別子なしの成功型6種とError型に分けます。各成功分岐は`result`、失敗分岐は`error`を必須とし、`additionalProperties: false`で両方の併存と両方の欠落を排除します。Controlの`result: null`はPhase 1の`NullResult` converterを継続し、Schemaへ`const: null`を加えます。Responseを基底型にデシリアライズすることは要件にしていません。
+Responseは型判別子なしの成功型6種とError型に分けます。各成功分岐は`result`、失敗分岐は`error`を必須とし、`additionalProperties: false`で両方の併存と両方の欠落を排除します。Controlの`result: null`とnullのみを持つEventフィールドは共通の`JsonNullValue` converterで出力・読込し、Schemaへ`const: null`を加えます。Responseを基底型にデシリアライズすることは要件にしていません。
 
-Eventは`type`を判別子にします。6つのTimer Eventでは`timer_state`を必須かつ非nullにし、`run_changed`と`context_changed`では必須のnullableプロパティとして明示的な`null`を出します。8種すべてのシリアライズ/デシリアライズを確認します。
+Eventは`type`を判別子にします。`timer_started`、`timer_split`、`timer_skipped`、`timer_undo`、`timer_phase_changed`は必須の非null `TimerState`、`timer_reset`は必須の`TimerState|null`です。`run_changed`と`context_changed`は必須の`timer_state:null`のみを許します。型構成・共通null converter・生成Schema・Ajv fixturesで各制約を確認します。
 
 ## State、時間、画像の確認
 
@@ -42,7 +42,7 @@ Eventは`type`を判別子にします。6つのTimer Eventでは`timer_state`�
 - Attempt / Runの配列と辞書は空の`[]` / `{}`を出します。`AttemptSegment.custom_variables`、`ContextState.custom_variables`、`RunMetadata.variables`は別の値です。LiveSplitAdapterではRunMetadata.variablesは変数名、ContextState.custom_variablesは現在値です。
 - Runの`file_path`、`layout_path`、`metadata`、画像は不在時`null`です。`offset_ticks`は負数を許します。
 - `byte[]?`はSystem.Text.JsonによりBase64文字列または`null`になります。Schemaには`contentEncoding: base64`と`contentMediaType: image/png`を付けました。これはannotationであり、Ajvの既定設定では不正Base64文字列もSchema適合と判定します。一方、System.Text.Jsonのbyte[] readerは不正Base64を拒否します。Bridgeの送信側はbyte[]から常にBase64を生成します。PNG内容検証用Converterは追加していません。
-- Enumはsnake_case文字列で、Protoに定義された`unspecified`を含む値を許容し、未知の値と整数表現は拒否します。Operation discriminatorは実行可能な操作だけを列挙し、Protobufのdefault unspecified操作は含めません。
+- Enumはsnake_case文字列で、未知の値と整数表現は拒否します。JSON向け`BridgeErrorCode`から`unspecified`と`unsupported_protocol_version`を削除しました（独立したprotocol versionはありません）。`TimerPhase`と`TimingMethod`は未知状態をAdapterが`unspecified`へ写像するため値を維持します。Operation discriminatorは実行可能な操作だけを列挙します。Protobuf Enumは変更していません。
 - `[JsonRequired]`で省略と`null`を分け、`RespectNullableAnnotations = true`、`UnmappedMemberHandling = Disallow`を設定しています。
 
 ## Schema補完とSerializerの差
@@ -55,7 +55,6 @@ ExporterはC#整数型の上下限をSchemaに自動出力しないため、`Tra
 - `List<string>`の要素、`Dictionary<string,string>`の値はSchemaでは非nullですが、System.Text.Json 9.0.4はnull要素・値を受け入れます。型注釈だけでgeneric要素内部のnullは実行時強制できません。
 - Reference DTOのroot `null`もSerializerは受け入れますが、`TreatNullObliviousAsNonNullable = true`のSchema rootは非nullです。
 - 現行`BridgeRuntime.GenerateSessionId()`は非ゼロ64-bit `ulong`です。JSON向けに決まった非ゼロ32-bitと不一致ですが、本番コードは変更していません。
-- 現行Reset処理はTimerState取得に失敗すると、`timer_reset`をnull stateで送る可能性があります。PoC Schemaではtimer event stateを必須非nullにしました。
 - 現行`event_sequence`はイベントごとに増加し、同じセッション内の配信順を示します。Reset時に`timer_reset`の後に`run_changed`を送る場合があります。セッション切替やwraparoundは本PoCで実装変更していません。
 
 ## ID表現の評価
@@ -64,7 +63,7 @@ ExporterはC#整数型の上下限をSchemaに自動出力しないため、`Tra
 
 ## 検証方法・結果
 
-実行結果: C#実行時チェック`27/27 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`58/58 PASS`、C#が生成したJSON`32/32 PASS`。Schemaの固定保存3点は生成元`out/`とSHA-256がそれぞれ一致しました。`dotnet build`は成功しましたが、NuGet vulnerability feedに接続できず`NU1900`警告が1件出ています。pnpm lockfileは生成済みで、`pnpm install --frozen-lockfile --ignore-scripts`は成功しました。
+再検証結果: C#実行時チェック`30/30 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`65/65 PASS`、C#が生成したJSON`33/33 PASS`。Schema固定保存3点は再生成元とSHA-256が一致しました。`pnpm install --frozen-lockfile --ignore-scripts`も成功しました。`dotnet build`は成功しましたが、NuGet vulnerability feedへ接続できず`NU1900`警告が1件出ています。
 
 `pnpm run validate`は生成した全3 SchemaをAjv 8.17.1のDraft 2020-12 meta-schemaで検査した後、固定の正常/異常fixtureとC#で実際にシリアライズしたJSONを検証します。C#の実行時チェックの詳細は無視対象の`out/runtime-validation.txt`、Ajvは検証ごとの結果と合計件数を標準出力に出します。content annotationの検査は通常のSchema適合性とは分けています。
 
@@ -74,4 +73,4 @@ ExporterはC#整数型の上下限をSchemaに自動出力しないため、`Tra
 
 ExporterはSchemaファイル間で共通型を共有`$defs`へ分けず、TimerState等が3文書内に重複します。各Schemaは単独で検証可能で、生成処理は単純です。Schema分割だけを目的とする独自参照生成は導入していません。
 
-以上は採用決定ではありません。次にIDの正式表現、Session IDのJSON送信値生成、Reset時timer state、generic nullability、Base64内容保証、全イベント契約を決め、各通信境界の運用ルールを定める必要があります。JSON通信実装、CI/Release、Protobuf削除は対象外です。
+以上は採用決定ではありません。次にIDの正式表現、Session IDのJSON送信値生成、generic nullability、Base64内容保証を決め、各通信境界の運用ルールを定める必要があります。JSON通信実装、CI/Release、Protobuf削除は対象外です。

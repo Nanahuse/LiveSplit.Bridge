@@ -185,10 +185,11 @@ var eventSamples = new BridgeEvent[]
     new TimerUndoEvent { SessionId = 123, EventSequence = 4, TimerState = timerState },
     new TimerResetEvent { SessionId = 123, EventSequence = 5, TimerState = timerState },
     new TimerPhaseChangedEvent { SessionId = 123, EventSequence = 6, TimerState = timerState },
-    new RunChangedEvent { SessionId = 123, EventSequence = 7, TimerState = null },
-    new ContextChangedEvent { SessionId = 123, EventSequence = 8, TimerState = null },
+    new RunChangedEvent { SessionId = 123, EventSequence = 7 },
+    new ContextChangedEvent { SessionId = 123, EventSequence = 8 },
 };
 foreach (var bridgeEvent in eventSamples) AddSerializedCase("event", bridgeEvent.GetType().Name, JsonSerializer.Serialize<BridgeEvent>(bridgeEvent, jsonOptions));
+AddSerializedCase("event", "TimerResetEvent with null timer state", JsonSerializer.Serialize<BridgeEvent>(new TimerResetEvent { SessionId = 123, EventSequence = 9, TimerState = null }, jsonOptions));
 
 var outOfOrderOptions = new JsonSerializerOptions(jsonOptions) { AllowOutOfOrderMetadataProperties = false };
 Check("five query methods deserialize to their declared derived types", () =>
@@ -197,10 +198,24 @@ Check("five query methods deserialize to their declared derived types", () =>
     var expected = new[] { typeof(GetTimerStateRequest), typeof(GetRunRequest), typeof(GetAttemptRequest), typeof(GetContextStateRequest), typeof(GetCompletedCountRequest) };
     return json.Select((method, index) => JsonSerializer.Deserialize<RpcRequest>($"{{\"method\":\"{method}\",\"request_id\":{index + 1}}}", jsonOptions)?.GetType() == expected[index]).All(x => x);
 });
-Check("all seven timer operation variants round-trip with their operation discriminator", () => requestSamples.OfType<TimerOperationRequest>().All(request => JsonSerializer.Deserialize<RpcRequest>(JsonSerializer.Serialize<RpcRequest>(request, jsonOptions), jsonOptions)?.GetType() == typeof(TimerOperationRequest)));
-Check("all four game-time operation variants round-trip with set ticks required", () => requestSamples.OfType<GameTimeOperationRequest>().All(request => JsonSerializer.Deserialize<RpcRequest>(JsonSerializer.Serialize<RpcRequest>(request, jsonOptions), jsonOptions)?.GetType() == typeof(GameTimeOperationRequest)));
+Check("all seven timer operation parameter types survive round-trip", () => requestSamples.OfType<TimerOperationRequest>().All(request =>
+{
+    var roundTrip = JsonSerializer.Deserialize<RpcRequest>(JsonSerializer.Serialize<RpcRequest>(request, jsonOptions), jsonOptions) as TimerOperationRequest;
+    return roundTrip?.Params.GetType() == request.Params.GetType();
+}));
+Check("all four game-time operation parameter types and set ticks survive round-trip", () => requestSamples.OfType<GameTimeOperationRequest>().All(request =>
+{
+    var roundTrip = JsonSerializer.Deserialize<RpcRequest>(JsonSerializer.Serialize<RpcRequest>(request, jsonOptions), jsonOptions) as GameTimeOperationRequest;
+    if (roundTrip?.Params.GetType() != request.Params.GetType()) return false;
+    return request.Params is not GameTimeSetParams originalSet || roundTrip.Params is GameTimeSetParams roundTripSet && roundTripSet.Ticks == originalSet.Ticks;
+}));
+Check("missing operation discriminator is rejected", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"timer_operation\",\"request_id\":1,\"params\":{}}", jsonOptions)));
 Check("game_time_operation set requires ticks", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"set\"}}", jsonOptions)));
-Check("game_time_operation set accepts required signed ticks", () => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"set\",\"ticks\":-1}}", jsonOptions) is GameTimeOperationRequest);
+Check("game_time_operation set accepts signed ticks before its discriminator", () =>
+{
+    var request = JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"ticks\":-123456,\"operation\":\"set\"}}", jsonOptions) as GameTimeOperationRequest;
+    return request?.Params is GameTimeSetParams { Ticks: -123456 };
+});
 Check("unknown timer or game-time operation discriminator is rejected", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"timer_operation\",\"request_id\":1,\"params\":{\"operation\":\"teleport\"}}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"teleport\",\"ticks\":1}}", jsonOptions)));
 Check("null or wrong-typed required game-time ticks are rejected", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"set\",\"ticks\":null}}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"set\",\"ticks\":\"soon\"}}", jsonOptions)));
 Check("non-set game-time operation rejects ticks as unmapped", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"game_time_operation\",\"request_id\":1,\"params\":{\"operation\":\"pause\",\"ticks\":1}}", jsonOptions)));
@@ -210,7 +225,7 @@ Check("missing operation params is rejected", () => Rejects(() => JsonSerializer
 Check("request_id before method is accepted when out-of-order metadata is enabled", () => JsonSerializer.Deserialize<RpcRequest>("{\"request_id\":1,\"method\":\"get_run\"}", jsonOptions) is GetRunRequest);
 Check("request_id before method is rejected when out-of-order metadata is disabled", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"request_id\":1,\"method\":\"get_run\"}", outOfOrderOptions)));
 Check("invalid enum text and numeric enum values are rejected", () => Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":\"flying\",\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":1,\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false}", jsonOptions)));
-Check("control result converter emits and accepts null only", () => JsonSerializer.Serialize<RpcResponse>(new ControlSuccessResponse { RequestId = 1, SessionId = 123 }, jsonOptions).Contains("\"result\":null") && Rejects(() => JsonSerializer.Deserialize<NullResult>("true", jsonOptions)));
+Check("shared explicit-null converter emits and accepts null only", () => JsonSerializer.Serialize<RpcResponse>(new ControlSuccessResponse { RequestId = 1, SessionId = 123 }, jsonOptions).Contains("\"result\":null") && Rejects(() => JsonSerializer.Deserialize<JsonNullValue>("true", jsonOptions)));
 Check("success and error response DTOs serialize mutually exclusive members", () => responses.All(response =>
 {
     using var document = JsonDocument.Parse(JsonSerializer.Serialize<RpcResponse>(response, jsonOptions));
@@ -232,7 +247,22 @@ Check("all eight event types serialize and deserialize with type discriminator",
     var json = JsonSerializer.Serialize<BridgeEvent>(sample, jsonOptions);
     return JsonSerializer.Deserialize<BridgeEvent>(json, jsonOptions)?.GetType() == sample.GetType();
 }));
-Check("run/context changed events preserve explicit timer_state:null", () => eventSamples.Skip(6).All(sample => JsonSerializer.Serialize<BridgeEvent>(sample, jsonOptions).Contains("\"timer_state\":null")));
+Check("timer_reset requires timer_state and accepts object or null", () =>
+{
+    var resetWithState = JsonSerializer.Serialize<BridgeEvent>(new TimerResetEvent { SessionId = 123, EventSequence = 5, TimerState = timerState }, jsonOptions);
+    var resetWithoutState = JsonSerializer.Serialize<BridgeEvent>(new TimerResetEvent { SessionId = 123, EventSequence = 5, TimerState = null }, jsonOptions);
+    return JsonSerializer.Deserialize<BridgeEvent>(resetWithState, jsonOptions) is TimerResetEvent { TimerState: not null }
+        && JsonSerializer.Deserialize<BridgeEvent>(resetWithoutState, jsonOptions) is TimerResetEvent { TimerState: null }
+        && Rejects(() => JsonSerializer.Deserialize<BridgeEvent>("{\"type\":\"timer_reset\",\"session_id\":123,\"event_sequence\":5}", jsonOptions));
+});
+Check("non-reset timer events reject null timer_state", () => Rejects(() => JsonSerializer.Deserialize<BridgeEvent>("{\"type\":\"timer_started\",\"session_id\":123,\"event_sequence\":1,\"timer_state\":null}", jsonOptions)));
+Check("run/context changed events emit and accept only explicit null timer_state", () => eventSamples.Skip(6).All(sample =>
+{
+    var json = JsonSerializer.Serialize<BridgeEvent>(sample, jsonOptions);
+    return json.Contains("\"timer_state\":null")
+        && JsonSerializer.Deserialize<BridgeEvent>(json, jsonOptions)?.GetType() == sample.GetType()
+        && Rejects(() => JsonSerializer.Deserialize<BridgeEvent>(json.Replace("\"timer_state\":null", "\"timer_state\":{}"), jsonOptions));
+}));
 Check("unknown properties are rejected on requests and state DTOs", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\",\"request_id\":1,\"extra\":1}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":\"running\",\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false,\"extra\":1}", jsonOptions)));
 Check("session_id uint32 accepts zero in serializer but rejects values above uint32", () => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":0}", jsonOptions)?.SessionId == 0 && Rejects(() => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":4294967296}", jsonOptions)));
 Check("ulong request_id accepts integers larger than JavaScript safe integer", () => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\",\"request_id\":9007199254740992}", jsonOptions) is GetRunRequest);

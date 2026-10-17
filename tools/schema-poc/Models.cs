@@ -111,29 +111,29 @@ public sealed class ControlSuccessResponse : RpcResponse
 {
     [JsonRequired]
     [SchemaConstNull]
-    public NullResult Result { get; set; } = NullResult.Value;
+    public JsonNullValue Result { get; set; } = JsonNullValue.Value;
 }
 public sealed class ErrorResponse : RpcResponse
 {
     [JsonRequired] public BridgeError Error { get; set; } = new();
 }
 
-[JsonConverter(typeof(NullResultConverter))]
-public sealed class NullResult
+[JsonConverter(typeof(JsonNullValueConverter))]
+public sealed class JsonNullValue
 {
-    public static NullResult Value { get; } = new();
-    private NullResult() { }
+    public static JsonNullValue Value { get; } = new();
+    private JsonNullValue() { }
 }
 
-public sealed class NullResultConverter : JsonConverter<NullResult>
+public sealed class JsonNullValueConverter : JsonConverter<JsonNullValue>
 {
     public override bool HandleNull => true;
-    public override NullResult Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override JsonNullValue Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        if (reader.TokenType != JsonTokenType.Null) throw new JsonException("Control result must be null.");
-        return NullResult.Value;
+        if (reader.TokenType != JsonTokenType.Null) throw new JsonException("Value must be null.");
+        return JsonNullValue.Value;
     }
-    public override void Write(Utf8JsonWriter writer, NullResult value, JsonSerializerOptions options) => writer.WriteNullValue();
+    public override void Write(Utf8JsonWriter writer, JsonNullValue value, JsonSerializerOptions options) => writer.WriteNullValue();
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
@@ -159,19 +159,22 @@ public sealed class TimerStartedEvent : TimerBridgeEvent { }
 public sealed class TimerSplitEvent : TimerBridgeEvent { }
 public sealed class TimerSkippedEvent : TimerBridgeEvent { }
 public sealed class TimerUndoEvent : TimerBridgeEvent { }
-public sealed class TimerResetEvent : TimerBridgeEvent { }
+public sealed class TimerResetEvent : BridgeEvent
+{
+    [JsonRequired] public TimerState? TimerState { get; set; }
+}
 public sealed class TimerPhaseChangedEvent : TimerBridgeEvent { }
 
 public abstract class StateChangedBridgeEvent : BridgeEvent
 {
-    [JsonRequired] public TimerState? TimerState { get; set; }
+    [JsonRequired, SchemaConstNull] public JsonNullValue TimerState { get; set; } = JsonNullValue.Value;
 }
 public sealed class RunChangedEvent : StateChangedBridgeEvent { }
 public sealed class ContextChangedEvent : StateChangedBridgeEvent { }
 
 public enum TimerPhase { Unspecified, NotRunning, Running, Paused, Ended }
 public enum TimingMethod { Unspecified, RealTime, GameTime }
-public enum BridgeErrorCode { Unspecified, UnsupportedProtocolVersion, InvalidRequest, InvalidArgument, OperationFailed, InternalError, PermissionDenied }
+public enum BridgeErrorCode { InvalidRequest, InvalidArgument, OperationFailed, InternalError, PermissionDenied }
 
 public sealed class TimerState
 {
