@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Windows.Forms;
 using System.Xml;
 using LiveSplit.Model;
@@ -20,19 +21,32 @@ public sealed class Factory : IComponentFactory
     public string XMLURL => string.Empty;
     public string UpdateURL => string.Empty;
     public Version Version => new(1, 0, 0);
-    public IComponent Create(LiveSplitState state) => new RuntimeProbeComponent();
+    public IComponent Create(LiveSplitState state)
+    {
+        RuntimeProbeComponent.RecordStage("FACTORY_CREATE");
+        return new RuntimeProbeComponent();
+    }
 }
 
 public sealed class RuntimeProbeComponent : IComponent
 {
+    private static readonly string logPath = CreateLogPath();
+    private static int logWriteFailed;
     private readonly Stopwatch heartbeat = Stopwatch.StartNew();
-    private readonly string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LiveSplit.JsonRuntimeProbe.log");
     private bool heartbeatRecorded;
 
     public RuntimeProbeComponent()
     {
-        WriteHeader();
-        RunJsonChecks();
+        RecordStage("COMPONENT_CONSTRUCTOR");
+        try
+        {
+            WriteHeader();
+            RunJsonChecks();
+        }
+        catch (Exception exception)
+        {
+            Append($"FAIL COMPONENT_CONSTRUCTOR: {exception.GetType().FullName}: {exception.Message}{Environment.NewLine}{exception.StackTrace}");
+        }
     }
 
     public string ComponentName => "LiveSplit JSON Runtime Probe";
@@ -56,7 +70,7 @@ public sealed class RuntimeProbeComponent : IComponent
     {
         if (heartbeatRecorded || heartbeat.Elapsed < TimeSpan.FromSeconds(5)) return;
         heartbeatRecorded = true;
-        Append("PASS LiveSplit update loop remained active for at least five seconds after JSON checks.");
+        Append("UPDATE_HEARTBEAT LiveSplit update loop remained active for at least five seconds after JSON checks.");
     }
 
     public void Dispose() { }
@@ -69,6 +83,7 @@ public sealed class RuntimeProbeComponent : IComponent
             var exePath = process.MainModule?.FileName ?? "unavailable";
             var info = File.Exists(exePath) ? FileVersionInfo.GetVersionInfo(exePath) : null;
             Append($"LiveSplit runtime probe started: {DateTime.UtcNow:O}");
+            Append($"Log path: {logPath}");
             Append($"Process: {exePath}");
             Append($"ProductVersion: {info?.ProductVersion ?? "unavailable"}; FileVersion: {info?.FileVersion ?? "unavailable"}");
             Append($"TargetFramework: {AppDomain.CurrentDomain.SetupInformation.TargetFrameworkName}; CLR: {Environment.Version}");
@@ -81,7 +96,20 @@ public sealed class RuntimeProbeComponent : IComponent
 
     private void RunJsonChecks()
     {
-        var options = BridgeJsonOptions.Create();
+        RecordStage("JSON_OPTIONS_START");
+        JsonSerializerOptions options;
+        try
+        {
+            options = BridgeJsonOptions.Create();
+            RecordStage("JSON_OPTIONS_SUCCESS");
+        }
+        catch (Exception exception)
+        {
+            Append($"FAIL JSON_OPTIONS_INITIALIZATION: {exception.GetType().FullName}: {exception.Message}{Environment.NewLine}{exception.StackTrace}");
+            return;
+        }
+
+        RecordStage("JSON_CHECKS_START");
         var state = new TimerState
         {
             Phase = TimerPhase.Running,
@@ -128,6 +156,7 @@ public sealed class RuntimeProbeComponent : IComponent
         });
 
         RecordLoadedAssemblies();
+        RecordStage("JSON_CHECKS_COMPLETE");
     }
 
     private void Check(string name, Func<bool> check)
@@ -166,5 +195,41 @@ public sealed class RuntimeProbeComponent : IComponent
         }
     }
 
-    private void Append(string line) => File.AppendAllText(logPath, line + Environment.NewLine);
+    public static void RecordStage(string stage) => Append(stage);
+
+    private static string CreateLogPath()
+    {
+        try
+        {
+            var processId = Process.GetCurrentProcess().Id;
+            var runId = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmssfff'Z'");
+            return Path.Combine(Path.GetTempPath(), $"LiveSplit.JsonRuntimeProbe-{processId}-{runId}.log");
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"[LiveSplit.JsonRuntimeProbe] Could not determine temporary log path: {exception}");
+            return string.Empty;
+        }
+    }
+
+    private static void Append(string line)
+    {
+        if (Volatile.Read(ref logWriteFailed) != 0)
+        {
+            Debug.WriteLine($"[LiveSplit.JsonRuntimeProbe] {line}");
+            return;
+        }
+
+        try
+        {
+            if (string.IsNullOrEmpty(logPath)) throw new InvalidOperationException("The temporary log path is unavailable.");
+            File.AppendAllText(logPath, line + Environment.NewLine);
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref logWriteFailed, 1);
+            Debug.WriteLine($"[LiveSplit.JsonRuntimeProbe] Log write failed for '{logPath}': {exception}");
+            Debug.WriteLine($"[LiveSplit.JsonRuntimeProbe] {line}");
+        }
+    }
 }
