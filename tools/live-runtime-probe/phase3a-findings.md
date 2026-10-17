@@ -2,9 +2,19 @@
 
 ## Status
 
-The old startup failure cannot be attributed conclusively from the available records: the earlier disposable copy was not a clean baseline because its `settings.cfg` pointed to the probe layout. In this new run, a fresh official 1.8.37 extraction had a live, responsive process after eight seconds without custom files; the window title was empty, so full UI readiness was not independently established. In Stage B, LiveSplit showed a `LiveSplit` main window but had exited by the next process check before the probe factory produced a log. The Windows Application event in that interval records that `Process.StartWithShellExecuteEx` was canceled inside `FiletypeRegistryHelper.RegisterFileFormatsIfNotAlreadyRegistered()`. This precedes component loading and does not implicate System.Text.Json.
+The previous `Process.StartWithShellExecuteEx` cancellation was confirmed in the Application log inside `FiletypeRegistryHelper.RegisterFileFormatsIfNotAlreadyRegistered()`. LiveSplit 1.8.37 catches the helper failure; there is no evidence that the cancellation itself ended the process. Its actual exit cause in the previous run remains unknown. That run also lacked the required `ComponentFactoryAttribute`, and its test layout had not been validated, so its absence of probe logs did not establish a JSON dependency failure.
 
-Stage B is still blocked on resolving the file-type registration consent in a disposable environment. No probe JSON check or in-process DLL load path was recorded, so runtime compatibility and dependency resolution remain unverified. No production Bridge, WebSocket, Protobuf, deployment setting, or LiveSplit host configuration was changed.
+This rerun added the factory attribute and a repository layout based on the saved LiveSplit layout structure. A fresh Stage A extraction started and remained responsive. A separate Stage B extraction loaded the explicit layout, created the probe factory and component, passed every JSON check, recorded loaded assembly paths, and continued its update loop for at least five seconds. Thus System.Text.Json 9.0.4 works in the LiveSplit 1.8.37 / .NET Framework 4.8.1 process for the exercised DTO operations without adding dependency DLLs or changing host configuration. This proves the probe's runtime compatibility in this host distribution; it does not settle how a future Bridge deployment should handle assembly sharing with other components. No production Bridge, WebSocket, Protobuf, deployment setting, registry entry, or LiveSplit host configuration was changed.
+
+The sandbox denied `Get-WinEvent` access during this rerun. The prior cancellation record remains documented above; no new event-log query result is claimed.
+
+## Factory and layout verification
+
+- The Release DLL was inspected with reflection against the extracted LiveSplit assemblies. It contains one `LiveSplit.UI.Components.ComponentFactoryAttribute` whose constructor argument is `Factory`.
+- `JsonRuntimeProbe.lsl` was derived from the saved layout at `C:\Users\7huse\Documents\test.lsl`; it retains the full `Layout` settings and layout-level elements while replacing `Components` with one probe entry (`Path` = `LiveSplit.JsonRuntimeProbe.dll`). The committed file has no absolute user path and loaded successfully when explicitly passed with `-l`.
+- Stage A used a fresh extraction of the official LiveSplit 1.8.37 archive with no probe or custom layout. Its `LiveSplit` window was responsive after 12 seconds.
+- Stage B used a different fresh extraction of the same ZIP. Only the probe DLL was added to `Components`; the checked-in layout was placed beside `LiveSplit.exe`. No System.Text.Json dependencies were copied and the host config remained unchanged.
+- Both launches ran without elevation. No registry or file association changes were made.
 
 ## Restore and runtime dependencies
 
@@ -23,9 +33,9 @@ The `net481` schema PoC directly references `System.Text.Json` 9.0.4. Its restor
 | System.Threading.Tasks.Extensions 4.5.4 | 4.2.0.1 | Task compatibility APIs |
 | System.ValueTuple 4.5.0 | 4.0.3.0 | Tuple compatibility types |
 
-The package graph is not by itself a deployment list. All nine listed runtime assemblies appeared in the PoC's actual `bin/Release/net481` output. Their presence in build output confirms resolved runtime assets, not that each assembly is loaded by the exercised JSON paths. The portable LiveSplit 1.8.37 directory already contains all nine names, with the same assembly versions observed in the PoC output, including System.Text.Json 9.0.0.4. This is evidence of matching files, not proof of which copy the LiveSplit process binds at runtime. The probe records each loaded assembly's version and `Location` to answer that once the host reaches the component.
+The package graph is not by itself a deployment list. Every listed runtime assembly appeared in the PoC's actual `bin/Release/net481` output. The official LiveSplit 1.8.37 root also contains those dependency DLLs. Their presence is not proof of binding; the Stage B process log below records actual loaded versions and paths. In this run, System.Text.Json and its loaded dependencies resolved from the LiveSplit root, except System.ValueTuple which resolved from the .NET GAC.
 
-The current `BridgeDistributionFiles` are only `LiveSplit.Bridge.dll`, `LiveSplit.Bridge.Protocol.dll`, and `Google.Protobuf.dll`. If the Bridge directly uses System.Text.Json, its deployment declaration would not carry the nine PoC runtime DLLs to `Components`. The LiveSplit root currently has same-version copies, which may satisfy load requests from that host, but `System.Text.Json.dll` resolution from a component path and compatibility with other installed components have not been demonstrated. No unconditional copy/overwrite or binding redirect is recommended from this incomplete evidence. The existing portable `LiveSplit.exe.config` already contains redirects for System.Memory and Unsafe; it was not changed.
+The current `BridgeDistributionFiles` are only `LiveSplit.Bridge.dll`, `LiveSplit.Bridge.Protocol.dll`, and `Google.Protobuf.dll`. The probe demonstrates that a component DLL in `Components` can use System.Text.Json resolved from the official LiveSplit root in this host without additional copies or a config change. It does not establish safe deployment for installations without these root DLLs, or collision behavior with different shared versions. No unconditional copy/overwrite or binding redirect is recommended from this probe. The existing portable `LiveSplit.exe.config` contains redirects for System.Memory and Unsafe; it was not changed.
 
 The production Bridge restore could not include the LiveSplit project references because `external/LiveSplit/src/LiveSplit.Core` and `UpdateManager` are absent in this checkout. Its observed direct/transitive package graph is consequently incomplete for production-build conclusions. The current package list includes WebSocketSharp 1.0.3-rc11, Google.Protobuf 3.24.1, Buffers 4.4.0, Memory 4.5.3, Numerics.Vectors 4.4.0, and Unsafe 4.5.2.
 
@@ -33,20 +43,31 @@ The production Bridge restore could not include the LiveSplit project references
 
 `LiveSplit.JsonRuntimeProbe.csproj` targets `net481`, references the available host's `LiveSplit.Core.dll` and `UpdateManager.dll`, links the Phase 2 DTOs and shared serializer options, and builds successfully. The checks cover Request method and operation resolution, signed Game Time ticks, Query response IDs, Control `result: null`, error response, Timer and reset Events, and null-only run/context Events. The probe also records loaded dependency locations and an update-loop heartbeat.
 
-Clean release and host inventory:
+The official release ZIP was `https://github.com/LiveSplit/LiveSplit/releases/download/1.8.37/LiveSplit_1.8.37.zip`, SHA-256 `14BC8EF8DED9EF4033FB2F0CB6A152386D393127DA18A4DE14F096C5347AA991`. This rerun extracted fresh Stage A and Stage B copies under `.tmp/Phase3A-FactoryLayout-20261017/`. LiveSplit ProductVersion was `1.0.0+683cd60a9f3fe2dc31a5054c6d10f5d71f2e6ae1`; .NET Framework 4.8.1 registry release was `533509` (`4.8.09221`), CLR `4.0.30319.42000`.
 
-- Fresh official release extracted to `C:\Users\7huse\.codex\worktrees\ea11\LiveSplit.Bridge\.tmp\LiveSplitOfficialClean-1.8.37-20261017` from `https://github.com/LiveSplit/LiveSplit/releases/download/1.8.37/LiveSplit_1.8.37.zip`; ZIP SHA-256 `14BC8EF8DED9EF4033FB2F0CB6A152386D393127DA18A4DE14F096C5347AA991`.
-- Stage A executable: `C:\Users\7huse\.codex\worktrees\ea11\LiveSplit.Bridge\.tmp\LiveSplitOfficialClean-1.8.37-20261017\LiveSplit.exe`.
-- ProductVersion: `1.0.0+683cd60a9f3fe2dc31a5054c6d10f5d71f2e6ae1`.
-- .NET Framework registry version: `4.8.09221`, Release `533509`.
-- Stage A had no probe, custom layout, or added dependencies. The process remained alive and responsive for the eight-second observation interval, but its window title was empty; this is evidence the process started, not full UI-readiness proof. No matching `LiveSplit`, `.NET Runtime`, or `Application Error` entry was returned during the immediate query.
-- Stage B used a second extraction of the same ZIP, with only `LiveSplit.JsonRuntimeProbe.dll` added by this task to `Components` and a one-component test layout. The host's existing assemblies and `LiveSplit.exe.config` were unchanged. The process initially showed the `LiveSplit` main window but exited before a PID-specific TEMP log appeared.
-- Windows Application event at `2026-10-17 17:36:25`: Provider `LiveSplit`, Event ID `0`, message `This operation was canceled by the user.` Stack: `System.Diagnostics.Process.StartWithShellExecuteEx(ProcessStartInfo startInfo)` → `LiveSplit.Options.FiletypeRegistryHelper.RegisterFileFormatsIfNotAlreadyRegistered()`. This is the B-run startup exception in the test interval and occurs before the component factory. The event message does not expose an exception type or show a System.Text.Json exception. The earlier turn's startup failure is not timestamp-correlated with this record.
-- No `.NET Runtime` or `Application Error` record was found in the queried interval. A successful component load, JSON run, loaded assembly path, dependency isolation result, and update heartbeat have not yet been recorded.
-- The original prior test copy had `settings.cfg` with `RecentLayouts\LayoutPath` pointing to `JsonRuntimeProbe.lsl`, so launching that copy without command-line arguments still loaded the probe layout. It was not a clean no-probe comparison.
-- No `LiveSplit.exe.config` was edited. All release copies and test layouts are disposable workspace files.
+- Stage A had no probe, custom layout, or added dependencies. After 12 seconds, PID `6684` was alive, its `LiveSplit` window handle was nonzero, and the window was responsive.
+- Stage B ran `LiveSplit.exe -l .\JsonRuntimeProbe.lsl` from a separate fresh extraction. PID `6532` had a responsive `LiveSplit` window after 15 seconds. The host DLLs and `LiveSplit.exe.config` were untouched; no JSON dependency was added.
+- The PID-specific log was `%LOCALAPPDATA%\Packages\sandbox.{b1b6419b-3913-4bcd-a018-500124793b83}\AC\Temp\LiveSplit.JsonRuntimeProbe-6532-20261017T100418115Z.log`. It recorded all required stage markers through `UPDATE_HEARTBEAT` and seven individual JSON `PASS` entries.
+- The seven successful checks covered Request method/Timer Params resolution; Game Time `set` with negative ticks; Request/Response uint32 boundary preservation; Control `result: null`; Error Response; Timer Started and nullable Timer Reset Events; and null-only Run/Context changed Events.
 
-Re-run instructions and the copy-layout limitation are in this directory's `README.md`.
+Loaded assemblies recorded from the actual Stage B process:
+
+| Assembly | Version | Loaded location |
+| --- | --- | --- |
+| `LiveSplit.JsonRuntimeProbe` | 1.0.0.0 | `StageB\Components\LiveSplit.JsonRuntimeProbe.dll` |
+| `System.Text.Json` | 9.0.0.4 | `StageB\System.Text.Json.dll` |
+| `System.Text.Encodings.Web` | 9.0.0.4 | `StageB\System.Text.Encodings.Web.dll` |
+| `Microsoft.Bcl.AsyncInterfaces` | 9.0.0.4 | `StageB\Microsoft.Bcl.AsyncInterfaces.dll` |
+| `System.IO.Pipelines` | 9.0.0.4 | `StageB\System.IO.Pipelines.dll` |
+| `System.Memory` | 4.0.1.2 | `StageB\System.Memory.dll` |
+| `System.Buffers` | 4.0.3.0 | `StageB\System.Buffers.dll` |
+| `System.Numerics.Vectors` | 4.1.4.0 | `StageB\System.Numerics.Vectors.dll` |
+| `System.Runtime.CompilerServices.Unsafe` | 6.0.0.0 | `StageB\System.Runtime.CompilerServices.Unsafe.dll` |
+| `System.Threading.Tasks.Extensions` | 4.2.0.1 | `StageB\System.Threading.Tasks.Extensions.dll` |
+| `System.ValueTuple` | 4.0.0.0 | .NET GAC under `C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\` |
+| `LiveSplit`, `LiveSplit.Core`, `LiveSplit.View` | 1.0.0.0 | Stage B executable and host DLLs in the extraction root |
+
+All JSON dependencies used in the run were already present in the official LiveSplit distribution. `System.ValueTuple` resolved from the GAC. Thus no extra DLL was needed for this probe on this host. This does not guarantee identical binding behavior for all installed components or user installations. The prior file-type registration event confirms a canceled helper launch, but the helper catches the failure; it does not prove process termination. Its actual cause remains unknown. `Get-WinEvent` access was denied in this rerun, so no new event-log result is claimed. The earlier test copy's `settings.cfg` contained a RecentLayouts pointer to the probe layout and was not a clean comparison. No host config, registry, or file association was changed.
 
 ## RPC receive-boundary proposal
 
@@ -102,8 +123,8 @@ dotnet restore tools/live-runtime-probe/LiveSplit.JsonRuntimeProbe.csproj -p:Liv
 dotnet build tools/live-runtime-probe/LiveSplit.JsonRuntimeProbe.csproj --configuration Release --no-restore -p:LiveSplitInstallPath='C:\Users\7huse\Downloads\LiveSplit_1.8.37'
 ```
 
-PoC Release build and run passed (32/32 C# serializer checks); `pnpm run validate` passed (3/3 Draft 2020-12 schemas, 80/80 fixtures, and 33/33 serialized cases). Probe Release build succeeded; NuGet emitted `NU1900` because it could not reach the vulnerability feed. The required `pnpm install --frozen-lockfile --ignore-scripts` re-run stalled at supply-chain policy verification and was interrupted, so the installed lockfile dependencies were used for validation. Production Bridge restore skipped missing LiveSplit project references. `dotnet test tests/LiveSplit.Bridge.Tests/LiveSplit.Bridge.Tests.csproj --configuration Release --no-restore` could not run because the test project's assets file is absent; its restore did not produce one in this checkout. Stage A process observation succeeded but full UI readiness is unconfirmed; Stage B stopped before component factory due canceled file-type registration. No production files were changed.
+PoC Release build and run passed (32/32 C# serializer checks); `pnpm run validate` passed (3/3 Draft 2020-12 schemas, 80/80 fixtures, and 33/33 serialized cases). `pnpm install --frozen-lockfile --ignore-scripts` did not complete within the 30-second command window and remained at supply-chain policy verification; validation used the already-present lockfile dependencies. Probe Release build succeeded; NuGet emitted `NU1900` because it could not reach the vulnerability feed. Production Bridge restore skips missing LiveSplit project references in this checkout. `dotnet test tests/LiveSplit.Bridge.Tests/LiveSplit.Bridge.Tests.csproj --configuration Release --no-restore` remains unavailable because its assets file is absent. Both host stages launched responsively; Stage B reached all component, JSON, assembly-path, and heartbeat milestones. No production files were changed.
 
 ## Decision
 
-The Phase 2 DTOs and System.Text.Json 9.0.4 build against `net481`, and the official LiveSplit archive contains matching dependency assemblies. The clean host starts, but the probe test is blocked before its factory by the canceled file-type registration launch. System.Text.Json is therefore **undetermined** for the production component until registration completes and the probe confirms loaded assembly locations, all JSON checks, and continued timer operation.
+System.Text.Json 9.0.4 is **runtime-compatible for the exercised DTO operations inside LiveSplit 1.8.37 on .NET Framework 4.8.1**: LiveSplit discovered the factory, all seven checks passed, loaded dependency paths were recorded, and the update loop remained active. Only the probe DLL was added to the official distribution. This supports using System.Text.Json in the LiveSplit host. The production Bridge packaging policy still needs to account for shared assemblies and other user installations; this probe does not establish that distribution policy. Phase 3B was not started.

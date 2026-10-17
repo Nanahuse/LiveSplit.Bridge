@@ -1,47 +1,38 @@
 # LiveSplit in-process runtime probe
 
-The component runs the Phase 2 DTOs and shared serializer settings inside LiveSplit. It does not start a WebSocket server or change Bridge behavior. Runtime logs are written to `%TEMP%\LiveSplit.JsonRuntimeProbe-{PID}-{UTC timestamp}.log`, for example `%TEMP%\LiveSplit.JsonRuntimeProbe-1234-20261017T012345678Z.log`. If file output fails, the component records the exception through `Debug.WriteLine` and treats the run as unverified.
+This diagnostic component reuses the Phase 2 DTOs and serializer options inside LiveSplit 1.8.37. It has the assembly-level `ComponentFactoryAttribute` required by LiveSplit's component discovery. It does not change Bridge communication.
+
+The checked-in `JsonRuntimeProbe.lsl` preserves the full `Settings` and layout-level structure from a LiveSplit-saved layout, with its `Components` section reduced to the probe alone. It contains no machine-specific path.
 
 ## Build
 
-Build against an official portable LiveSplit 1.8.37 extraction:
+Extract the official [LiveSplit 1.8.37 release](https://github.com/LiveSplit/LiveSplit/releases/tag/1.8.37), then build against that directory:
 
 ```powershell
 dotnet restore tools/live-runtime-probe/LiveSplit.JsonRuntimeProbe.csproj -p:LiveSplitInstallPath='C:\path\to\LiveSplit_1.8.37'
 dotnet build tools/live-runtime-probe/LiveSplit.JsonRuntimeProbe.csproj --configuration Release --no-restore -p:LiveSplitInstallPath='C:\path\to\LiveSplit_1.8.37'
 ```
 
-## Staged run
+## Stage A and Stage B
 
-Use a fresh extraction of the official [LiveSplit 1.8.37 release](https://github.com/LiveSplit/LiveSplit/releases/tag/1.8.37) for Stage A. Keep the ZIP hash and record the executable path, ProductVersion, .NET Framework version, and startup result. Do not add the probe, its dependencies, a test layout, or other components. Launch `LiveSplit.exe`, confirm it remains responsive, then close it. This release calls its file-type registration helper during startup; if Windows reports that launching the helper was canceled, resolve that consent in a disposable test environment before treating the launch as a clean-start failure or moving on.
+Use two separate fresh extractions of the same official ZIP. Keep the archive's SHA-256, executable path/version, and test time with the results.
 
-For Stage B, make another clean extraction from the same release ZIP. Copy **only** `LiveSplit.JsonRuntimeProbe.dll` from this project's `bin/Release/net481/` to the copied install's `Components` folder. Leave all host DLLs and `LiveSplit.exe.config` untouched. Use a test layout containing only this component and launch it with:
+**Stage A:** add no probe, custom layout, or dependency. Run `LiveSplit.exe` normally, verify the `LiveSplit` window is responsive, then close it.
 
-```powershell
-.\LiveSplit.exe -l .\LiveSplit.JsonRuntimeProbe.lsl
-```
-
-The layout needs a normal `<Layout version="1.6.1">` root, a `<Components>` element, and this component entry:
-
-```xml
-<Component>
-  <Path>LiveSplit.JsonRuntimeProbe.dll</Path>
-  <Settings><Version>1</Version></Settings>
-</Component>
-```
-
-Check the PID-specific `%TEMP%` log. Required stage markers are `FACTORY_CREATE`, `COMPONENT_CONSTRUCTOR`, `JSON_OPTIONS_START`, `JSON_OPTIONS_SUCCESS`, `JSON_CHECKS_START`, `JSON_CHECKS_COMPLETE`, and `UPDATE_HEARTBEAT`. All individual JSON checks must say `PASS`; the log also lists each loaded assembly's identity and file path. A missing log is a failed/incomplete run, not a pass.
-
-## Stage C: only when Stage B reports a missing dependency
-
-Use the assembly load error or startup exception to name the missing DLL. Add only that DLL from the probe's Release output to the disposable install's `Components` folder, without replacing a host copy, then repeat Stage B. Do not add redirects, modify host config, or add custom assembly resolution during this diagnosis.
-
-If startup fails before the component factory runs, inspect the Application event log and LiveSplit error text. For example:
+**Stage B:** in the second extraction, copy only `LiveSplit.JsonRuntimeProbe.dll` from `tools/live-runtime-probe/bin/Release/net481/` into `Components`. Copy this `JsonRuntimeProbe.lsl` beside `LiveSplit.exe`. Do not copy dependency DLLs or change `LiveSplit.exe.config`. Launch from that directory:
 
 ```powershell
-Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-15) } |
-  Where-Object { $_.ProviderName -in @('LiveSplit', '.NET Runtime', 'Application Error') } |
-  Select-Object TimeCreated, ProviderName, Id, Message | Format-List
+.\LiveSplit.exe -l .\JsonRuntimeProbe.lsl
 ```
 
-LiveSplit 1.8.37 logs unhandled startup exceptions through `Options.Log.Error()` before showing its crash dialog. Record the exception type, message, stack, process path/version, and the test stage. Don't attribute a pre-factory startup exception to System.Text.Json without evidence. The current machine produced a `LiveSplit` Application event stating that `Process.StartWithShellExecuteEx` was canceled inside `FiletypeRegistryHelper.RegisterFileFormatsIfNotAlreadyRegistered()`; get the required approval for the registration helper before repeating Stage B.
+Administrator rights and file association or registry changes are not required for this check. The host may log a canceled file-type registration helper launch; that alone is not evidence that LiveSplit exited or that this probe failed.
+
+## Success evidence and diagnosis
+
+Logs are written under `Path.GetTempPath()` as `LiveSplit.JsonRuntimeProbe-{PID}-{UTC timestamp}.log`. On the verification host that resolved to `C:\Users\7huse\AppData\Local\Packages\sandbox.{b1b6419b-3913-4bcd-a018-500124793b83}\AC\Temp`; the component records the exact path in each log. Check the same PID as the launched LiveSplit process. The directory varies by host.
+
+A successful run contains `FACTORY_CREATE`, `COMPONENT_CONSTRUCTOR`, `JSON_OPTIONS_START`, `JSON_OPTIONS_SUCCESS`, `JSON_CHECKS_START`, all individual `PASS` entries, `JSON_CHECKS_COMPLETE`, loaded assembly identities and paths, and `UPDATE_HEARTBEAT`. A missing log or any missing stage/PASS is incomplete.
+
+If no log appears, check in order: that the explicit layout loaded, its single Component `Path` is correct, the built DLL contains `ComponentFactoryAttribute` referencing `Factory`, and LiveSplit's component/assembly load error. Query the Application event log where permissions allow. Do not infer the cause from log absence or the file-type registration cancellation alone. Only add a dependency DLL if a concrete load failure identifies it, and do not replace a host DLL during this probe.
+
+For component source/build details see `RuntimeProbeComponent.cs` and `LiveSplit.JsonRuntimeProbe.csproj`; observed host results and limitations are in `phase3a-findings.md`.

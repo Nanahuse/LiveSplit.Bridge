@@ -12,6 +12,8 @@ using LiveSplit.Model;
 using LiveSplit.UI;
 using LiveSplit.UI.Components;
 
+[assembly: ComponentFactory(typeof(Factory))]
+
 public sealed class Factory : IComponentFactory
 {
     public string ComponentName => "LiveSplit JSON Runtime Probe";
