@@ -63,7 +63,7 @@ ExporterはC#整数型の上下限をSchemaに自動出力しないため、`Tra
 
 ## 検証方法・結果
 
-再検証結果: C#実行時チェック`30/30 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`65/65 PASS`、C#が生成したJSON`33/33 PASS`。Schema固定保存3点は再生成元とSHA-256が一致しました。`pnpm install --frozen-lockfile --ignore-scripts`も成功しました。`dotnet build`は成功しましたが、NuGet vulnerability feedへ接続できず`NU1900`警告が1件出ています。
+再検証結果: C#実行時チェック`30/30 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`65/65 PASS`、C#が生成したJSON`33/33 PASS`。Schema固定保存3点は再生成元とSHA-256が一致しました。`pnpm install --frozen-lockfile --ignore-scripts`も成功しました。`dotnet build`は成功しましたが、NuGet vulnerability feedへ接続できず`NU1900`警告が出ています。
 
 `pnpm run validate`は生成した全3 SchemaをAjv 8.17.1のDraft 2020-12 meta-schemaで検査した後、固定の正常/異常fixtureとC#で実際にシリアライズしたJSONを検証します。C#の実行時チェックの詳細は無視対象の`out/runtime-validation.txt`、Ajvは検証ごとの結果と合計件数を標準出力に出します。content annotationの検査は通常のSchema適合性とは分けています。
 
