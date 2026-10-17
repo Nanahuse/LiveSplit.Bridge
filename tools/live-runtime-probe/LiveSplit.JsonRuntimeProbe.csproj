@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LiveSplit.JsonRuntimeProbe</AssemblyName>
+    <LiveSplitInstallPath Condition="'$(LiveSplitInstallPath)' == ''">$(LIVESPLIT_INSTALL_PATH)</LiveSplitInstallPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="LiveSplit.Core">
+      <HintPath>$(LiveSplitInstallPath)\LiveSplit.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UpdateManager">
+      <HintPath>$(LiveSplitInstallPath)\UpdateManager.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Compile Include="..\schema-poc\Models.cs" Link="Models.cs" />
+    <Compile Include="..\schema-poc\SerializerOptions.cs" Link="SerializerOptions.cs" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
+  </ItemGroup>
+  <Target Name="ValidateLiveSplitInstallPath" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(LiveSplitInstallPath)' == ''" Text="Set LiveSplitInstallPath to the LiveSplit installation directory." />
+    <Error Condition="!Exists('$(LiveSplitInstallPath)\LiveSplit.Core.dll')" Text="LiveSplit.Core.dll was not found under LiveSplitInstallPath." />
+    <Error Condition="!Exists('$(LiveSplitInstallPath)\UpdateManager.dll')" Text="UpdateManager.dll was not found under LiveSplitInstallPath." />
+  </Target>
+</Project>

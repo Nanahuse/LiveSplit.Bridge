@@ -2,6 +2,8 @@
 
 `net481`の独立PoCで、C#通信DTOから`System.Text.Json` 9.0.4の`JsonSchemaExporter`を使いDraft 2020-12 Schemaを生成します。Bridge本体のProtobuf通信は変更せず、JSON方式の採用も決めません。
 
+Serializer設定は`SerializerOptions.cs`の`BridgeJsonOptions.Create()`で共有します。Phase 3Aの`tools/live-runtime-probe/`は同じDTOと設定をLiveSplit内で読み込むための検証コンポーネントです。現環境ではLiveSplitの起動エラーによりプローブが実行されておらず、実機適合の確認完了を意味しません。
+
 ## 実行環境とコマンド
 
 - .NET SDK 10.0.302以上、.NET Framework 4.8.1 Developer/Targeting Pack

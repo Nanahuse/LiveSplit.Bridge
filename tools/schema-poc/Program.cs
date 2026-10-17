@@ -7,19 +7,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 
 const string Draft202012 = "https://json-schema.org/draft/2020-12/schema";
 
-var jsonOptions = new JsonSerializerOptions
-{
-    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-    TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
-    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    AllowOutOfOrderMetadataProperties = true,
-    RespectNullableAnnotations = true,
-};
-jsonOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false));
+var jsonOptions = BridgeJsonOptions.Create();
 
 var exporterOptions = new JsonSchemaExporterOptions
 {
