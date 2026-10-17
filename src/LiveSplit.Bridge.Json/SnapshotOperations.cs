@@ -3,6 +3,11 @@ using System.Collections.Generic;
 
 namespace LiveSplit.Bridge.Json;
 
+/// <summary>
+/// Copies the mutable RunState graph before publishing a timing update. A published
+/// snapshot and its mutable descendants must not be changed; image arrays are shared
+/// and follow the same read-only ownership contract.
+/// </summary>
 internal static class RunSnapshot
 {
     public static RunState CopyForTimingUpdate(RunState source)
