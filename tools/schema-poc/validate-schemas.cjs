@@ -2,26 +2,49 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Ajv2020 = require("ajv/dist/2020").default;
 
-const outputDir = path.resolve(process.argv[2] || path.join(__dirname, "out"));
-const cases = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "samples", "validation-cases.json"), "utf8"),
-);
-const ajv = new Ajv2020({ allErrors: true, strict: true });
-const validators = {
-  request: ajv.compile(JSON.parse(fs.readFileSync(path.join(outputDir, "rpc-request.schema.json"), "utf8"))),
-  response: ajv.compile(JSON.parse(fs.readFileSync(path.join(outputDir, "rpc-response.schema.json"), "utf8"))),
+const root = __dirname;
+const outputDir = path.resolve(process.argv[2] || path.join(root, "out"));
+const schemaFiles = {
+  request: "rpc-request.schema.json",
+  response: "rpc-response.schema.json",
+  event: "bridge-event.schema.json",
 };
+const ajv = new Ajv2020({ allErrors: true, strict: true, validateFormats: false });
+const validators = {};
 
+for (const [kind, filename] of Object.entries(schemaFiles)) {
+  const schema = JSON.parse(fs.readFileSync(path.join(outputDir, filename), "utf8"));
+  if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
+    throw new Error(`${filename} does not declare Draft 2020-12`);
+  }
+  if (!ajv.validateSchema(schema)) {
+    throw new Error(`${filename} failed Draft 2020-12 meta-schema validation: ${JSON.stringify(ajv.errors)}`);
+  }
+  validators[kind] = ajv.compile(schema);
+}
+
+const fixtures = JSON.parse(fs.readFileSync(path.join(root, "samples", "validation-cases.json"), "utf8"));
+const serialized = JSON.parse(fs.readFileSync(path.join(outputDir, "csharp-serialized-cases.json"), "utf8"));
 let failures = 0;
-for (const sample of cases) {
-  const accepted = validators[sample.schema](sample.data);
-  const passed = accepted === sample.valid;
-  console.log(`${passed ? "PASS" : "FAIL"} ${sample.schema}: ${sample.name}`);
+let fixturePasses = 0;
+let serializedPasses = 0;
+
+function check(test, source) {
+  const valid = validators[test.schema](test.data);
+  const passed = valid === test.valid;
+  console.log(`${passed ? "PASS" : "FAIL"} ${source}/${test.schema}: ${test.name}`);
+  if (passed && source === "fixture") fixturePasses += 1;
+  if (passed && source === "csharp") serializedPasses += 1;
   if (!passed) {
     failures += 1;
-    console.error(validators[sample.schema].errors);
+    console.error(validators[test.schema].errors);
   }
 }
 
-console.log(`Ajv Draft 2020-12: ${cases.length - failures}/${cases.length} cases passed`);
+for (const test of fixtures) check(test, "fixture");
+for (const test of serialized) check(test, "csharp");
+
+console.log(`Draft 2020-12 schema documents: ${Object.keys(validators).length}/3 passed meta-schema validation`);
+console.log(`Fixed positive/negative fixtures: ${fixturePasses}/${fixtures.length} passed`);
+console.log(`Actual C# serialized messages: ${serializedPasses}/${serialized.length} passed`);
 if (failures > 0) process.exitCode = 1;

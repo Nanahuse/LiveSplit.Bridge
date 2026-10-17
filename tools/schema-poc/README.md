@@ -1,81 +1,77 @@
-# LiveSplit.Bridge JSON Schema PoC
+# LiveSplit.Bridge C# → JSON Schema PoC
 
-Phase 1の検証基盤です。Bridge本体のProtobuf通信には組み込まず、C# RPC DTOからJSON Schemaを生成する動きを`net481`上で再実行できます。正式なJSON通信仕様やC# → Schema方式の採用を決めるものではありません。
+`net481`の独立PoCで、C#通信DTOから`System.Text.Json` 9.0.4の`JsonSchemaExporter`を使いDraft 2020-12 Schemaを生成します。Bridge本体のProtobuf通信は変更せず、JSON方式の採用も決めません。
 
-## Requirements
+## 実行環境とコマンド
 
-- .NET SDK 10.0.302以上（PoCの実行確認は10.0.302）
-- .NET Framework 4.8.1 Developer Pack / Targeting Pack
-- NuGet接続（`System.Text.Json` 9.0.4の復元用）
-- Draft 2020-12独立検証用: Node.js 20以上、npm
-- npm接続（Ajv 8.17.1の復元用）。`package.json`はAjvのバージョンを固定しています。
+- .NET SDK 10.0.302以上、.NET Framework 4.8.1 Developer/Targeting Pack
+- `System.Text.Json` 9.0.4（NuGet）
+- Node.js 20以上、pnpm 12.9.1、Ajv 8.17.1
 
-## Build and generate schemas
-
-Run from the repository root in PowerShell:
+リポジトリルートから実行します。
 
 ```powershell
 dotnet restore tools/schema-poc/LiveSplit.Bridge.SchemaPoc.csproj
 dotnet build tools/schema-poc/LiveSplit.Bridge.SchemaPoc.csproj --configuration Release --no-restore
 dotnet run --project tools/schema-poc/LiveSplit.Bridge.SchemaPoc.csproj --configuration Release --no-build -- tools/schema-poc/out
+Push-Location tools/schema-poc
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run validate
+Pop-Location
 ```
 
-`JsonSchemaExporter` writes `rpc-request.schema.json`, `rpc-response.schema.json`, `nullability-probe.schema.json`, and `session-id-probe.schema.json` to `tools/schema-poc/out/`. That directory and build outputs are ignored by Git. To refresh the two retained RPC results after generation:
+Schema生成先はGit無視対象の`tools/schema-poc/out/`です。独立検証はそこに生成した3ファイルを読みます。`schema-results/`にはレビュー用の生成物を固定保存します。`out/`、`bin/`、`obj/`、`node_modules/`はGit管理しません。
 
-```powershell
-Copy-Item tools/schema-poc/out/rpc-request.schema.json tools/schema-poc/schema-results/rpc-request.schema.json
-Copy-Item tools/schema-poc/out/rpc-response.schema.json tools/schema-poc/schema-results/rpc-response.schema.json
-```
+## 全通信モデルとSchema
 
-The two files in `schema-results/` are the actual Phase 1 output snapshots for review. They are informational PoC outputs, not the formal communication contract.
+| Schema | C#ルート型 | 収録内容 |
+| --- | --- | --- |
+| `rpc-request.schema.json` | `RpcRequest` | 5 Query、Timer操作、Game Time操作のmethod別anyOf |
+| `rpc-response.schema.json` | `RpcResponse` | 5 Query結果、Controlのnull、BridgeErrorのanyOf |
+| `bridge-event.schema.json` | `BridgeEvent` | 6 Timer Event、Run/Context変更Eventのtype別anyOf |
 
-## Runtime behavior checks
+Requestは`JsonPolymorphic` / `JsonDerivedType`で`method`を判別子にし、Paramsを持たないQueryでは`params`を出しません。Timer操作Paramsは`operation`を判別子にします。Game Time操作は`set`だけ`GameTimeSetParams.ticks`を必須にし、他の操作型では未知プロパティ拒否によってticksを拒否します。この制約は派生Params型と標準ポリモーフィズムで表現でき、追加Converterは不要でした。`AllowOutOfOrderMetadataProperties = true`により、`request_id`が`method`より前のJSONも受け入れます。
 
-The generator runs the C# deserialization and serialization cases and exits non-zero if any assertion fails. The expected current output is 26 PASS lines:
+Responseは型判別子なしの成功型6種とError型に分けます。各成功分岐は`result`、失敗分岐は`error`を必須とし、`additionalProperties: false`で両方の併存と両方の欠落を排除します。Controlの`result: null`はPhase 1の`NullResult` converterを継続し、Schemaへ`const: null`を加えます。Responseを基底型にデシリアライズすることは要件にしていません。
 
-- Request discriminator dispatch, both methods, and `request_id` before `method` with `AllowOutOfOrderMetadataProperties = true`.
-- The same reordered Request is rejected when the setting is false.
-- Unknown method, method/params mismatch, missing or null params, missing or invalid operation, numeric enum, and unknown properties are rejected.
-- The two Request variants serialize without adding a separate discriminator field; `method` is the discriminator. The get-timer request omits `params`.
-- Query success, Control success with `result: null`, and error Response serialize without a type discriminator. The null-only converter rejects non-null input.
-- `[JsonRequired]` distinguishes an omitted nullable property from a present `null`; non-nullable reference `null` is rejected.
-- Root `null`, list `null` elements, and dictionary `null` values are accepted by the serializer despite the generated non-null Schema forms.
-- Unknown properties are rejected.
-- `uint` rejects values above its range but accepts zero. The Schema transform supplies the non-zero constraint.
+Eventは`type`を判別子にします。6つのTimer Eventでは`timer_state`を必須かつ非nullにし、`run_changed`と`context_changed`では必須のnullableプロパティとして明示的な`null`を出します。8種すべてのシリアライズ/デシリアライズを確認します。
 
-## Independent Draft 2020-12 validation
+## State、時間、画像の確認
 
-The fixed cases in `samples/validation-cases.json` cover valid and invalid Request/Response values, including unknown method, method/params mismatch, result/error coexistence or omission, `result: true`, `error: null`, missing required fields, `session_id: 0`, and the maximum uint32 value.
+- `TimerState.real_time_ticks`は現在タイマー値で、LiveSplit側に値がなくても現行Adapterは0を出します。`TimeValue.real_time_ticks` / `game_time_ticks`は未設定を`null`にし、TimerStateのgame timeもnullableです。
+- Attempt / Runの配列と辞書は空の`[]` / `{}`を出します。`AttemptSegment.custom_variables`、`ContextState.custom_variables`、`RunMetadata.variables`は別の値です。LiveSplitAdapterではRunMetadata.variablesは変数名、ContextState.custom_variablesは現在値です。
+- Runの`file_path`、`layout_path`、`metadata`、画像は不在時`null`です。`offset_ticks`は負数を許します。
+- `byte[]?`はSystem.Text.JsonによりBase64文字列または`null`になります。Schemaには`contentEncoding: base64`と`contentMediaType: image/png`を付けました。これはannotationであり、Ajvの既定設定では不正Base64文字列もSchema適合と判定します。一方、System.Text.Jsonのbyte[] readerは不正Base64を拒否します。Bridgeの送信側はbyte[]から常にBase64を生成します。PNG内容検証用Converterは追加していません。
+- Enumはsnake_case文字列で、Protoに定義された`unspecified`を含む値を許容し、未知の値と整数表現は拒否します。Operation discriminatorは実行可能な操作だけを列挙し、Protobufのdefault unspecified操作は含めません。
+- `[JsonRequired]`で省略と`null`を分け、`RespectNullableAnnotations = true`、`UnmappedMemberHandling = Disallow`を設定しています。
 
-Install the pinned validator and validate the freshly generated files:
+## Schema補完とSerializerの差
 
-```powershell
-npm install --prefix tools/schema-poc --ignore-scripts --no-audit --no-fund
-npm --prefix tools/schema-poc run validate
-```
+ExporterはC#整数型の上下限をSchemaに自動出力しないため、`TransformSchemaNode`で`uint`、`int`、`long`の境界を追加します。確定済みSession IDは`uint`で`1..4294967295`を表します。Controlのnull固定も局所的に`const: null`で補います。
 
-`validate-schemas.cjs` uses Ajv's Draft 2020-12 implementation. It compiles the actual `out/rpc-request.schema.json` and `out/rpc-response.schema.json`, which also checks the schema documents against Ajv's Draft 2020-12 meta-schema, then runs every fixed case. Expected result when Ajv is installed: `18/18 cases passed`.
+- System.Text.JsonはSession IDの`0`を`uint`として受け入れますが、Schemaは拒否します。送信側で非ゼロを保証する必要があります。
+- PoCでは未確定の`request_id` / `event_sequence`比較用に`ulong`を使い、SchemaをJavaScript安全整数上限`9007199254740991`で制限しています。Serializerはそれより大きい整数とsequence 0を受理します。
+- JSON数値とJavaScript相互運用を優先する場合は、`request_id: 0..2^53-1`、`event_sequence: 1..2^53-1`を推奨します。64-bit全域を保つ必要があれば10進文字列も候補です。どちらも正式仕様ではありません。
+- `List<string>`の要素、`Dictionary<string,string>`の値はSchemaでは非nullですが、System.Text.Json 9.0.4はnull要素・値を受け入れます。型注釈だけでgeneric要素内部のnullは実行時強制できません。
+- Reference DTOのroot `null`もSerializerは受け入れますが、`TreatNullObliviousAsNonNullable = true`のSchema rootは非nullです。
+- 現行`BridgeRuntime.GenerateSessionId()`は非ゼロ64-bit `ulong`です。JSON向けに決まった非ゼロ32-bitと不一致ですが、本番コードは変更していません。
+- 現行Reset処理はTimerState取得に失敗すると、`timer_reset`をnull stateで送る可能性があります。PoC Schemaではtimer event stateを必須非nullにしました。
+- 現行`event_sequence`はイベントごとに増加し、同じセッション内の配信順を示します。Reset時に`timer_reset`の後に`run_changed`を送る場合があります。セッション切替やwraparoundは本PoCで実装変更していません。
 
-### Result in the Phase 1 environment
+## ID表現の評価
 
-Ajv was not present in the bundled Node modules; Python `jsonschema` was also absent, and no other suitable validator was available in the installed tool/package caches. Network access to package sources was unavailable, so the Ajv install and independent validation command could not be completed in this environment. The 18 Ajv results above are expected results from the designed cases, **not observed results**. The C# runtime checks did run successfully. Draft 2020-12 independent validation remains open.
+現行Protobufの`request_id`と`event_sequence`は`uint64`ですが、JSON Schemaの整数精度とJavaScript `Number`の正確な整数範囲は異なります。安全整数に制限すればJavaScriptクライアントで正確に比較できます。64-bit全域を保持するなら文字列で運ぶ必要があります。`request_id`が不透明な相関値、Event sequenceが単調増加値であることを踏まえ、正式な上限とwraparound規則は別途決めてください。
 
-## Observations and known mismatches
+## 検証方法・結果
 
-- The Request hierarchy produces a method-tagged `anyOf` schema with method-specific params and `additionalProperties: false`. The `request_id` field is `uint` only as a PoC implementation detail; its formal type and upper bound are undecided.
-- The Response hierarchy omits a discriminator and exports three `anyOf` branches. Each branch requires either `result` or `error` and rejects other branch properties. Control's null-only value needs a small converter and `TransformSchemaNode` addition of `const: null`.
-- `TreatNullObliviousAsNonNullable = true` excludes null at the exported root even though the serializer accepts root `null`.
-- Generic nullability differs: `List<string>` items and `Dictionary<string,string>` values are emitted as non-null strings, while the .NET 9 serializer accepts nulls in these generic positions.
-- Nullable `byte[]` is represented as a nullable string. The Schema does not constrain string content to Base64.
-- The `uint` schema is emitted as `integer`; a small property transform adds `minimum: 1` and `maximum: 4294967295`.
-- Existing `BridgeRuntime.GenerateSessionId` creates a non-zero 64-bit `ulong` from eight random bytes; it is not restricted to uint32. The Phase 1 PoC's uint32 model follows the supplied probe requirement and does not change Bridge code.
-- Repeated Schema generation produced identical SHA-256 hashes for all four outputs.
-- Mode A (C# polymorphic hierarchy → full RPC schema) worked for the tested Request and Response shapes. Mode B (separate DTO schemas plus Schema composition) was not built because the Phase 1 condition for it—a structural problem with `JsonPolymorphic`—did not occur.
+実行結果: C#実行時チェック`27/27 PASS`、Ajv Draft 2020-12 meta-schema検査`3/3 PASS`、固定正常/異常fixture`58/58 PASS`、C#が生成したJSON`32/32 PASS`。Schemaの固定保存3点は生成元`out/`とSHA-256がそれぞれ一致しました。`dotnet build`は成功しましたが、NuGet vulnerability feedに接続できず`NU1900`警告が1件出ています。pnpm lockfileは生成済みで、`pnpm install --frozen-lockfile --ignore-scripts`は成功しました。
 
-## Phase 2 questions
+`pnpm run validate`は生成した全3 SchemaをAjv 8.17.1のDraft 2020-12 meta-schemaで検査した後、固定の正常/異常fixtureとC#で実際にシリアライズしたJSONを検証します。C#の実行時チェックの詳細は無視対象の`out/runtime-validation.txt`、Ajvは検証ごとの結果と合計件数を標準出力に出します。content annotationの検査は通常のSchema適合性とは分けています。
 
-- Run Ajv successfully and record actual meta-schema and positive/negative sample results.
-- Decide formal JSON widths and limits for `request_id` and `event_sequence`.
-- Reconcile nullability for root values, collection elements, dictionary values, and image Base64 representation.
-- Determine whether a JSON protocol should preserve the current 64-bit session IDs or adopt a different width. Do not change the existing Protobuf contract in this Phase 1 PoC.
-- Evaluate the complete RPC and Events model only in the next phase. This PoC does not implement a JSON endpoint or establish a final source-of-truth decision.
+## 設計評価と残課題
+
+方式A（C#のポリモーフィック階層から各ルートSchemaを生成）はRequestのmethod/params、Response排他、Event type/stateを表現できました。Game Time `set`条件も派生Params型だけで表現できています。独自Schema生成フレームワークやDTO外の大規模な通信定義は不要で、補完はnull固定・整数境界・ID上限に限られました。
+
+ExporterはSchemaファイル間で共通型を共有`$defs`へ分けず、TimerState等が3文書内に重複します。各Schemaは単独で検証可能で、生成処理は単純です。Schema分割だけを目的とする独自参照生成は導入していません。
+
+以上は採用決定ではありません。次にIDの正式表現、Session IDのJSON送信値生成、Reset時timer state、generic nullability、Base64内容保証、全イベント契約を決め、各通信境界の運用ルールを定める必要があります。JSON通信実装、CI/Release、Protobuf削除は対象外です。

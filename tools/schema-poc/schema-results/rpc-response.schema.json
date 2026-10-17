@@ -7,24 +7,437 @@
           "type": "object",
           "properties": {
             "phase": {
-              "type": "string"
+              "enum": [
+                "unspecified",
+                "not_running",
+                "running",
+                "paused",
+                "ended"
+              ]
             },
             "split_index": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
             },
             "real_time_ticks": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "game_time_ticks": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "is_game_time_initialized": {
+              "type": "boolean"
+            },
+            "is_game_time_paused": {
+              "type": "boolean"
             }
           },
           "required": [
             "phase",
             "split_index",
-            "real_time_ticks"
+            "real_time_ticks",
+            "game_time_ticks",
+            "is_game_time_initialized",
+            "is_game_time_paused"
           ],
           "additionalProperties": false
         },
         "request_id": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "result",
+        "request_id",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "result": {
+          "type": "object",
+          "properties": {
+            "game_name": {
+              "type": "string"
+            },
+            "category_name": {
+              "type": "string"
+            },
+            "offset_ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "file_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "layout_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "metadata": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "run_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "platform_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "region_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "uses_emulator": {
+                  "type": "boolean"
+                },
+                "variables": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "run_id",
+                "platform_name",
+                "region_name",
+                "uses_emulator",
+                "variables"
+              ],
+              "additionalProperties": false
+            },
+            "comparisons": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "comparisons": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "time": {
+                          "type": "object",
+                          "properties": {
+                            "real_time_ticks": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": -9223372036854775808,
+                              "maximum": 9223372036854775807
+                            },
+                            "game_time_ticks": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": -9223372036854775808,
+                              "maximum": 9223372036854775807
+                            }
+                          },
+                          "required": [
+                            "real_time_ticks",
+                            "game_time_ticks"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "time"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "best_segment_time": {
+                    "type": "object",
+                    "properties": {
+                      "real_time_ticks": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      },
+                      "game_time_ticks": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      }
+                    },
+                    "required": [
+                      "real_time_ticks",
+                      "game_time_ticks"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "icon": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "contentEncoding": "base64",
+                    "contentMediaType": "image/png"
+                  }
+                },
+                "required": [
+                  "index",
+                  "name",
+                  "comparisons",
+                  "best_segment_time",
+                  "icon"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "game_icon": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "contentEncoding": "base64",
+              "contentMediaType": "image/png"
+            }
+          },
+          "required": [
+            "game_name",
+            "category_name",
+            "offset_ticks",
+            "file_path",
+            "layout_path",
+            "metadata",
+            "comparisons",
+            "segments",
+            "game_icon"
+          ],
+          "additionalProperties": false
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "result",
+        "request_id",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "result": {
+          "type": "object",
+          "properties": {
+            "attempt_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "split_time": {
+                    "type": "object",
+                    "properties": {
+                      "real_time_ticks": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      },
+                      "game_time_ticks": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      }
+                    },
+                    "required": [
+                      "real_time_ticks",
+                      "game_time_ticks"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "custom_variables": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "index",
+                  "split_time",
+                  "custom_variables"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "attempt_count",
+            "segments"
+          ],
+          "additionalProperties": false
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "result",
+        "request_id",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "result": {
+          "type": "object",
+          "properties": {
+            "current_timing_method": {
+              "enum": [
+                "unspecified",
+                "real_time",
+                "game_time"
+              ]
+            },
+            "current_comparison": {
+              "type": "string"
+            },
+            "custom_variables": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "current_timing_method",
+            "current_comparison",
+            "custom_variables"
+          ],
+          "additionalProperties": false
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "result",
+        "request_id",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "result": {
+          "type": "object",
+          "properties": {
+            "completed_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "required": [
+            "completed_count"
+          ],
+          "additionalProperties": false
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "session_id": {
           "type": "integer",
@@ -45,7 +458,9 @@
           "const": null
         },
         "request_id": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "session_id": {
           "type": "integer",
@@ -66,7 +481,15 @@
           "type": "object",
           "properties": {
             "code": {
-              "type": "string"
+              "enum": [
+                "unspecified",
+                "unsupported_protocol_version",
+                "invalid_request",
+                "invalid_argument",
+                "operation_failed",
+                "internal_error",
+                "permission_denied"
+              ]
             },
             "message": {
               "type": "string"
@@ -79,7 +502,9 @@
           "additionalProperties": false
         },
         "request_id": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "session_id": {
           "type": "integer",
