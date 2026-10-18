@@ -13,13 +13,15 @@ using ModelTimingMethod = LiveSplit.Model.TimingMethod;
 namespace LiveSplit.Bridge;
 
 /// <summary>Maps LiveSplit state directly to the JSON protocol DTOs.</summary>
-internal sealed class JsonLiveSplitAdapter
+internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
 {
     private readonly LiveSplitState state;
+    private readonly TimerModel timerModel;
 
     public JsonLiveSplitAdapter(LiveSplitState state)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
+        timerModel = new TimerModel { CurrentState = state };
     }
 
     public Json.TimerState GetTimerState()
@@ -95,7 +97,7 @@ internal sealed class JsonLiveSplitAdapter
         return candidate.Build();
     }
 
-    public JsonRunStateBuildCandidate CaptureRunState()
+    public IJsonRunStateCandidate CaptureRunState()
     {
         var run = state.Run;
         var result = new Json.RunState
@@ -197,6 +199,45 @@ internal sealed class JsonLiveSplitAdapter
         return true;
     }
 
+    public bool IsTimerOnlyRun()
+    {
+        var run = state.Run;
+        return run != null
+            && run.Count == 1
+            && string.IsNullOrEmpty(run.GameName)
+            && string.IsNullOrEmpty(run.CategoryName)
+            && string.IsNullOrEmpty(run[0].Name)
+            && run.GameIcon == null
+            && run[0].Icon == null;
+    }
+
+    public void ExecuteTimerOperation(Json.TimerOperationParams operation)
+    {
+        switch (operation)
+        {
+            case Json.TimerStartParams: timerModel.Start(); break;
+            case Json.TimerSplitParams: timerModel.Split(); break;
+            case Json.TimerSkipParams: timerModel.SkipSplit(); break;
+            case Json.TimerUndoParams: timerModel.UndoSplit(); break;
+            case Json.TimerResetParams: timerModel.Reset(); break;
+            case Json.TimerPauseParams:
+            case Json.TimerResumeParams: timerModel.Pause(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported timer operation.");
+        }
+    }
+
+    public void ExecuteGameTimeOperation(Json.GameTimeOperationParams operation)
+    {
+        switch (operation)
+        {
+            case Json.GameTimeInitializeParams: timerModel.InitializeGameTime(); break;
+            case Json.GameTimeSetParams set: state.SetGameTime(TimeSpan.FromTicks(set.Ticks)); break;
+            case Json.GameTimePauseParams: state.IsGameTimePaused = true; break;
+            case Json.GameTimeResumeParams: state.IsGameTimePaused = false; break;
+            default: throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported game time operation.");
+        }
+    }
+
     private static bool MatchesRunStructure(Json.RunState published, IRun run)
     {
         var comparisons = (run.Comparisons ?? Enumerable.Empty<string>()).Distinct().ToArray();
@@ -258,7 +299,7 @@ internal sealed class JsonLiveSplitAdapter
     };
 }
 
-internal sealed class JsonRunStateBuildCandidate : IDisposable
+internal sealed class JsonRunStateBuildCandidate : IJsonRunStateCandidate
 {
     private readonly List<Bitmap?> images;
     private bool disposed;
@@ -271,7 +312,7 @@ internal sealed class JsonRunStateBuildCandidate : IDisposable
 
     internal Json.RunState State { get; }
 
-    internal Json.RunState Build()
+    public Json.RunState Build()
     {
         if (disposed) throw new ObjectDisposedException(nameof(JsonRunStateBuildCandidate));
         try
