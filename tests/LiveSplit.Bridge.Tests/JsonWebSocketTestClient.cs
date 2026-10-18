@@ -57,7 +57,21 @@ internal sealed class JsonWebSocketTestClient : IDisposable
         {
             var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation.Token);
             if (received.MessageType == WebSocketMessageType.Close)
+            {
+                if (socket.State == WebSocketState.CloseReceived)
+                {
+                    try
+                    {
+                        await socket.CloseOutputAsync(socket.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
+                            socket.CloseStatusDescription ?? string.Empty, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (WebSocketException)
+                    {
+                        // The server may dispose immediately after receiving the close reply.
+                    }
+                }
                 return (WebSocketMessageType.Close, Array.Empty<byte>());
+            }
             data.Write(buffer, 0, received.Count);
             if (received.EndOfMessage) return (received.MessageType, data.ToArray());
         }

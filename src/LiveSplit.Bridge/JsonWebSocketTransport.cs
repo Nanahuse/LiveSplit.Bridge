@@ -309,7 +309,8 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
     private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string description)
     {
         if (socket.State != WebSocketState.Open && socket.State != WebSocketState.CloseReceived) return;
-        try { await socket.CloseOutputAsync(status, description, CancellationToken.None).ConfigureAwait(false); }
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        try { await socket.CloseAsync(status, description, timeout.Token).ConfigureAwait(false); }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON socket close failed: {exception.Message}"); }
     }
 
