@@ -1,33 +1,33 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from livesplit.bridge.v3 import bridge_pb2, common_pb2
 from livesplit_bridge_cli import client as client_module
 from livesplit_bridge_cli.cli import TICKS_PER_SECOND, format_ticks, main
 
 CLI_ROOT = Path(__file__).resolve().parents[1]
 
 
-class ErrorSocket:
-    request: bridge_pb2.Request
-    response: bridge_pb2.Response
+class JsonSocket:
+    def __init__(self, error: dict[str, str] | None = None) -> None:
+        self.error = error
+        self.request: dict[str, object] | None = None
+        self.response: dict[str, object] = {}
 
-    def send_binary(self, data: bytes) -> None:
-        self.request = bridge_pb2.Request.FromString(data)
-        self.response = bridge_pb2.Response(
-            protocol_version=3,
-            request_id=self.request.request_id,
-            session_id=17,
-            error=common_pb2.BridgeError(
-                code=common_pb2.OPERATION_FAILED, message="timer unavailable"
-            ),
-        )
+    def send(self, data: str) -> None:
+        self.request = json.loads(data)
+        self.response = {
+            "request_id": self.request["request_id"],
+            "session_id": 17,
+            "error": self.error
+            or {"code": "operation_failed", "message": "timer unavailable"},
+        }
 
-    def recv(self) -> bytes:
-        return self.response.SerializeToString()
+    def recv(self) -> str:
+        return json.dumps(self.response)
 
     def close(self) -> None:
         pass
@@ -39,7 +39,7 @@ def test_format_ticks() -> None:
 
 
 def test_rpc_error_is_reported_and_returns_nonzero(monkeypatch, capsys) -> None:
-    socket = ErrorSocket()
+    socket = JsonSocket()
     monkeypatch.setattr(
         client_module.websocket, "create_connection", lambda *a, **k: socket
     )
@@ -47,8 +47,13 @@ def test_rpc_error_is_reported_and_returns_nonzero(monkeypatch, capsys) -> None:
     result = main(["timer", "start"])
     captured = capsys.readouterr()
     assert result == 1
-    assert "Bridge error" in captured.err
+    assert "Bridge error operation_failed" in captured.err
     assert "timer unavailable" in captured.err
+    assert socket.request == {
+        "request_id": 1,
+        "method": "timer_operation",
+        "params": {"operation": "start"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -83,14 +88,7 @@ def test_invalid_arguments_fail_before_connecting(
     arguments: list[str], message: str
 ) -> None:
     result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "livesplit_bridge_cli.cli",
-            "--port",
-            "1",
-            *arguments,
-        ],
+        [sys.executable, "-m", "livesplit_bridge_cli.cli", "--port", "1", *arguments],
         cwd=CLI_ROOT,
         text=True,
         capture_output=True,
@@ -123,9 +121,9 @@ def test_port_environment_parsing_and_cli_precedence(
 
     endpoints: list[str] = []
 
-    def create_connection(endpoint: str, **kwargs: object) -> ErrorSocket:
+    def create_connection(endpoint: str, **kwargs: object) -> JsonSocket:
         endpoints.append(endpoint)
-        return ErrorSocket()
+        return JsonSocket()
 
     monkeypatch.setattr(client_module.websocket, "create_connection", create_connection)
 
@@ -137,23 +135,20 @@ def test_port_environment_parsing_and_cli_precedence(
         assert message in captured.err
         assert endpoints == []
     else:
-        # The fake RPC returns an operation error after connection, proving the
-        # parsed port reached the normal connection path.
         assert main([*arguments, "timer-state"]) == 1
-        assert endpoints == [f"ws://127.0.0.1:{expected_port}/bridge/v3/rpc"]
+        assert endpoints == [f"ws://127.0.0.1:{expected_port}/bridge/v4/rpc"]
 
 
 def test_socket_supported_timeout_is_passed_to_rpc(monkeypatch) -> None:
-    socket = ErrorSocket()
+    socket = JsonSocket()
     timeouts: list[float] = []
 
-    def create_connection(*args: object, **kwargs: object) -> ErrorSocket:
+    def create_connection(*args: object, **kwargs: object) -> JsonSocket:
         timeouts.append(kwargs["timeout"])
         return socket
 
     monkeypatch.setattr(client_module.websocket, "create_connection", create_connection)
 
-    # 24 hours is accepted by socket.settimeout on supported platforms.
     assert main(["--timeout", "86400", "timer-state"]) == 1
     assert timeouts == [86400.0]
 
@@ -171,10 +166,10 @@ def test_socket_supported_timeout_is_passed_to_rpc(monkeypatch) -> None:
         ("-0.00000015", -2),
     ],
 )
-def test_decimal_ticks_are_sent_exactly_in_the_rpc(
+def test_decimal_ticks_are_sent_exactly_in_json_rpc(
     monkeypatch, seconds: str, expected_ticks: int
 ) -> None:
-    socket = ErrorSocket()
+    socket = JsonSocket()
     monkeypatch.setattr(
         client_module.websocket,
         "create_connection",
@@ -182,4 +177,69 @@ def test_decimal_ticks_are_sent_exactly_in_the_rpc(
     )
 
     assert main(["game-time", "set", seconds]) == 1
-    assert socket.request.game_time_operation.ticks == expected_ticks
+    assert socket.request == {
+        "request_id": 1,
+        "method": "game_time_operation",
+        "params": {"operation": "set", "ticks": expected_ticks},
+    }
+
+
+@pytest.mark.parametrize(
+    ("session_id", "valid"), [(1, True), (2**32 - 1, True), (0, False), (True, False)]
+)
+def test_rpc_response_rejects_zero_or_non_integer_session_id(
+    monkeypatch, session_id: object, valid: bool
+) -> None:
+    socket = JsonSocket()
+    monkeypatch.setattr(
+        client_module.websocket, "create_connection", lambda *a, **k: socket
+    )
+
+    with client_module.BridgeClient("ws://localhost/bridge/v4/rpc") as client:
+        response = {
+            "request_id": 1,
+            "session_id": session_id,
+            "result": {
+                "phase": "not_running",
+                "split_index": -1,
+                "real_time_ticks": 0,
+                "game_time_ticks": None,
+                "is_game_time_initialized": False,
+                "is_game_time_paused": False,
+            },
+        }
+        socket.recv = lambda: json.dumps(response)
+        if valid:
+            assert client.timer_state()["session_id"] == session_id
+        else:
+            with pytest.raises(client_module.BridgeClientError, match="session_id"):
+                client.timer_state()
+
+
+def test_json_output_preserves_complete_response(monkeypatch, capsys) -> None:
+    socket = JsonSocket()
+    monkeypatch.setattr(
+        client_module.websocket, "create_connection", lambda *a, **k: socket
+    )
+    socket.send = lambda data: setattr(
+        socket,
+        "response",
+        {
+            "request_id": 1,
+            "session_id": 17,
+            "result": {
+                "phase": "not_running",
+                "split_index": -1,
+                "real_time_ticks": 0,
+                "game_time_ticks": None,
+                "is_game_time_initialized": False,
+                "is_game_time_paused": False,
+            },
+        },
+    )
+
+    assert main(["--json", "timer-state"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["request_id"] == 1
+    assert output["session_id"] == 17
+    assert output["result"]["game_time_ticks"] is None

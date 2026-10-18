@@ -16,20 +16,12 @@ from decimal import (
 )
 
 import websocket
-from google.protobuf.json_format import MessageToDict
 
-from livesplit.bridge.v3 import common_pb2, run_pb2
-
-from .client import (
-    GAME_TIME_OPERATIONS,
-    TIMER_OPERATIONS,
-    BridgeClient,
-    BridgeClientError,
-)
+from .client import UINT32_MAX, BridgeClient, BridgeClientError, is_uint32
 
 DEFAULT_PORT = 54000
-RPC_PATH = "/bridge/v3/rpc"
-EVENTS_PATH = "/bridge/v3/events"
+RPC_PATH = "/bridge/v4/rpc"
+EVENTS_PATH = "/bridge/v4/events"
 TICKS_PER_SECOND = 10_000_000
 
 
@@ -66,7 +58,6 @@ def timeout_milliseconds(
     if value < Decimal("0.0005"):
         argument_parser.error("--timeout must round to at least 1 millisecond")
 
-    # Bound extreme Decimal exponents before scaling them into an integer.
     try:
         seconds = float(value)
     except OverflowError, ValueError:
@@ -81,8 +72,6 @@ def timeout_milliseconds(
     if milliseconds < 1:
         argument_parser.error("--timeout must round to at least 1 millisecond")
 
-    # Check the final value BridgeClient passes to websocket.create_connection,
-    # without opening a connection or imposing a platform-specific limit here.
     try:
         timeout_seconds = milliseconds / 1000
         with socket.socket() as probe:
@@ -98,7 +87,6 @@ def game_time_ticks(seconds: Decimal, argument_parser: argparse.ArgumentParser) 
     if not seconds:
         return 0
 
-    # These bounds avoid materializing enormous integers for extreme exponents.
     adjusted = seconds.adjusted()
     if adjusted >= 12:
         argument_parser.error(
@@ -117,7 +105,7 @@ def game_time_ticks(seconds: Decimal, argument_parser: argparse.ArgumentParser) 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        description="Debug LiveSplit.Bridge over WebSocket"
+        description="Debug LiveSplit.Bridge JSON v4 over WebSocket"
     )
     result.add_argument(
         "--port",
@@ -132,7 +120,7 @@ def parser() -> argparse.ArgumentParser:
         help="RPC timeout in seconds (default: 3)",
     )
     result.add_argument(
-        "--json", action="store_true", help="Print protobuf messages as JSON"
+        "--json", action="store_true", help="Print the complete JSON v4 message"
     )
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("timer-state", help="Get the current timer state")
@@ -142,10 +130,15 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("completed-count", help="Get the completed attempt count")
 
     timer = commands.add_parser("timer", help="Execute a timer operation")
-    timer.add_argument("operation", choices=TIMER_OPERATIONS)
+    timer.add_argument(
+        "operation",
+        choices=("start", "split", "skip", "undo", "reset", "pause", "resume"),
+    )
 
     game_time = commands.add_parser("game-time", help="Execute a game-time operation")
-    game_time.add_argument("operation", choices=[*GAME_TIME_OPERATIONS, "set"])
+    game_time.add_argument(
+        "operation", choices=("initialize", "set", "pause", "resume")
+    )
     game_time.add_argument(
         "seconds",
         type=decimal_argument,
@@ -160,10 +153,6 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def message_dict(message: object) -> dict[str, object]:
-    return MessageToDict(message, preserving_proto_field_name=True)
-
-
 def format_ticks(ticks: int) -> str:
     negative = ticks < 0
     value = abs(ticks)
@@ -174,107 +163,169 @@ def format_ticks(ticks: int) -> str:
     return f"{prefix}{hours}:{minutes:02d}:{seconds:06.3f}"
 
 
-def optional_ticks(value: object, field: str) -> str:
-    return format_ticks(getattr(value, field)) if value.HasField(field) else "-"
+def optional_ticks(value: dict[str, object], field: str) -> str:
+    ticks = value[field]
+    return "-" if ticks is None else format_ticks(int(ticks))
 
 
-def timer_state_lines(state: common_pb2.TimerState) -> list[str]:
-    phase = common_pb2.TimerPhase.Name(state.phase)
+def timer_state_lines(state: dict[str, object]) -> list[str]:
     return [
-        f"phase={phase} split_index={state.split_index}",
-        f"real_time={format_ticks(state.real_time_ticks)} "
+        f"phase={state['phase']} split_index={state['split_index']}",
+        f"real_time={format_ticks(int(state['real_time_ticks']))} "
         f"game_time={optional_ticks(state, 'game_time_ticks')} "
-        f"game_time_initialized={state.is_game_time_initialized} "
-        f"game_time_paused={state.is_game_time_paused}",
+        f"game_time_initialized={state['is_game_time_initialized']} "
+        f"game_time_paused={state['is_game_time_paused']}",
     ]
 
 
-def time_value(value: common_pb2.TimeValue) -> str:
+def time_value(value: dict[str, object]) -> str:
     return (
         f"real_time={optional_ticks(value, 'real_time_ticks')} "
         f"game_time={optional_ticks(value, 'game_time_ticks')}"
     )
 
 
-def run_lines(run: run_pb2.RunState) -> list[str]:
+def run_lines(run: dict[str, object]) -> list[str]:
     lines = [
-        f"game={run.game_name or '-'} category={run.category_name or '-'}",
-        f"comparisons={list(run.comparisons)}",
+        f"game={run['game_name'] or '-'} category={run['category_name'] or '-'}",
+        f"comparisons={run['comparisons']}",
     ]
-    for segment in run.segments:
-        lines.append(f"  [{segment.index}] {segment.name}")
-        lines.extend(
-            f"    {comparison.name}: {time_value(comparison.time)}"
-            for comparison in segment.comparisons
-        )
+    for segment in run["segments"]:
+        assert isinstance(segment, dict)
+        lines.append(f"  [{segment['index']}] {segment['name']}")
+        for comparison in segment["comparisons"]:
+            assert isinstance(comparison, dict) and isinstance(comparison["time"], dict)
+            lines.append(f"    {comparison['name']}: {time_value(comparison['time'])}")
     return lines
 
 
-def attempt_lines(attempt: common_pb2.AttemptState) -> list[str]:
-    lines = [f"attempt_count={attempt.attempt_count}"]
+def attempt_lines(attempt: dict[str, object]) -> list[str]:
+    lines = [f"attempt_count={attempt['attempt_count']}"]
+    for segment in attempt["segments"]:
+        assert isinstance(segment, dict) and isinstance(segment["split_time"], dict)
+        lines.append(f"  [{segment['index']}] {time_value(segment['split_time'])}")
+    return lines
+
+
+def context_lines(context: dict[str, object]) -> list[str]:
+    lines = [
+        f"timing_method={context['current_timing_method']}",
+        f"current_comparison={context['current_comparison'] or '-'}",
+    ]
+    variables = context["custom_variables"]
+    assert isinstance(variables, dict)
     lines.extend(
-        f"  [{segment.index}] {time_value(segment.split_time)}"
-        for segment in attempt.segments
+        f"  custom_variable {name}={value}" for name, value in sorted(variables.items())
     )
     return lines
 
 
-def context_lines(context: common_pb2.ContextState) -> list[str]:
-    lines = [
-        f"timing_method={common_pb2.TimingMethod.Name(context.current_timing_method)}",
-        f"current_comparison={context.current_comparison or '-'}",
-    ]
-    lines.extend(
-        f"  custom_variable {name}={value}"
-        for name, value in sorted(context.custom_variables.items())
-    )
-    return lines
-
-
-def print_message(message: object, as_json: bool) -> None:
+def print_response(response: dict[str, object], method: str, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(message_dict(message), ensure_ascii=False, indent=2))
-    elif isinstance(message, common_pb2.TimerState):
-        print("\n".join(timer_state_lines(message)))
-    elif isinstance(message, common_pb2.AttemptState):
-        print("\n".join(attempt_lines(message)))
-    elif isinstance(message, common_pb2.ContextState):
-        print("\n".join(context_lines(message)))
-    elif isinstance(message, run_pb2.RunState):
-        print("\n".join(run_lines(message)))
-    elif isinstance(message, common_pb2.CompletedCount):
-        print(f"completed_count={message.completed_count}")
+        print(json.dumps(response, ensure_ascii=False, indent=2))
+        return
+    result = response["result"]
+    if method == "get_timer_state":
+        assert isinstance(result, dict)
+        lines = timer_state_lines(result)
+    elif method == "get_run":
+        assert isinstance(result, dict)
+        lines = run_lines(result)
+    elif method == "get_attempt":
+        assert isinstance(result, dict)
+        lines = attempt_lines(result)
+    elif method == "get_context_state":
+        assert isinstance(result, dict)
+        lines = context_lines(result)
+    elif method == "get_completed_count":
+        assert isinstance(result, dict)
+        lines = [f"completed_count={result['completed_count']}"]
     else:
-        print(message)
+        lines = ["ok"]
+    print("\n".join(lines))
+
+
+def validate_event(event: object) -> dict[str, object]:
+    if not isinstance(event, dict):
+        raise BridgeClientError("Bridge returned a non-object Event")
+    if not is_uint32(event.get("session_id"), nonzero=True):
+        raise BridgeClientError("Bridge returned an invalid Event session_id")
+    if not is_uint32(event.get("event_sequence"), nonzero=True):
+        raise BridgeClientError("Bridge returned an invalid event_sequence")
+    if not isinstance(event.get("type"), str):
+        raise BridgeClientError("Bridge returned an Event without a type")
+    if "timer_state" not in event:
+        raise BridgeClientError("Bridge returned an Event without timer_state")
+    timer_state = event.get("timer_state")
+    if timer_state is not None and not isinstance(timer_state, dict):
+        raise BridgeClientError("Bridge returned an invalid Event timer_state")
+    return event
 
 
 def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
     try:
-        socket = websocket.create_connection(endpoint, timeout=None)
+        event_socket = websocket.create_connection(endpoint, timeout=None)
     except (OSError, websocket.WebSocketException) as error:
         raise BridgeClientError(f"Failed to connect to {endpoint}: {error}") from error
     received = 0
+    previous_session: int | None = None
+    previous_sequence: int | None = None
     print(f"Monitoring {endpoint} (Ctrl+C to stop)", file=sys.stderr)
     try:
         while count is None or received < count:
-            data = socket.recv()
-            if isinstance(data, str):
-                raise BridgeClientError("Bridge returned a text frame; binary expected")
-            event = common_pb2.BridgeEvent.FromString(data)
+            try:
+                data = event_socket.recv()
+            except (OSError, websocket.WebSocketException) as error:
+                raise BridgeClientError(f"Events connection closed: {error}") from error
+            if data is None:
+                raise BridgeClientError("Events connection closed by Bridge")
+            if not isinstance(data, str):
+                raise BridgeClientError(
+                    "Bridge returned a binary Event frame; text expected"
+                )
+            try:
+                event = validate_event(json.loads(data))
+            except (json.JSONDecodeError, UnicodeError) as error:
+                raise BridgeClientError(
+                    f"Bridge returned invalid Event JSON: {error}"
+                ) from error
+
+            session = int(event["session_id"])
+            sequence = int(event["event_sequence"])
+            if previous_session is not None and session != previous_session:
+                print(
+                    f"warning: Event session changed from {previous_session} "
+                    f"to {session}",
+                    file=sys.stderr,
+                )
+                previous_sequence = None
+            elif previous_sequence is not None:
+                expected = (
+                    1 if previous_sequence == UINT32_MAX else previous_sequence + 1
+                )
+                if sequence != expected:
+                    print(
+                        f"warning: Event sequence gap in session {session}: "
+                        f"expected {expected}, got {sequence}",
+                        file=sys.stderr,
+                    )
+            previous_session = session
+            previous_sequence = sequence
+
             if as_json:
-                print_message(event, True)
+                print(json.dumps(event, ensure_ascii=False, indent=2))
             else:
-                event_type = common_pb2.BridgeEventType.Name(event.type)
-                print(f"[{event.event_sequence}] {event_type}")
-                if event.HasField("timer_state"):
-                    print("  " + "\n  ".join(timer_state_lines(event.timer_state)))
+                print(f"[{sequence}] {event['type']}")
+                if isinstance(event.get("timer_state"), dict):
+                    print("  " + "\n  ".join(timer_state_lines(event["timer_state"])))
             received += 1
     except KeyboardInterrupt:
         return 0
-    except websocket.WebSocketException as error:
-        raise BridgeClientError(f"Events failed: {error}") from error
     finally:
-        socket.close()
+        try:
+            event_socket.close()
+        except OSError, websocket.WebSocketException:
+            pass
     return 0
 
 
@@ -300,56 +351,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "events":
             return run_events(events_url(args.port), args.json, args.count)
         with BridgeClient(rpc_url(args.port), timeout_ms) as client:
-            match args.command:
-                case "timer-state":
-                    response = client.timer_state()
-                    print_message(
-                        response if args.json else response.get_timer_state.timer_state,
-                        args.json,
-                    )
-                case "run":
-                    response = client.run()
-                    print_message(
-                        response if args.json else response.get_run.run, args.json
-                    )
-                case "attempt":
-                    response = client.attempt()
-                    print_message(
-                        response if args.json else response.get_attempt.attempt,
-                        args.json,
-                    )
-                case "context":
-                    response = client.context()
-                    print_message(
-                        response
-                        if args.json
-                        else response.get_context_state.context_state,
-                        args.json,
-                    )
-                case "completed-count":
-                    response = client.completed_count()
-                    print_message(
-                        response
-                        if args.json
-                        else response.get_completed_count.completed_count,
-                        args.json,
-                    )
-                case "timer":
-                    response = client.timer(TIMER_OPERATIONS[args.operation])
-                    print_message(
-                        response if args.json else response.operation, args.json
-                    )
-                case "game-time":
-                    if args.operation == "set":
-                        assert ticks is not None
-                        response = client.game_time(common_pb2.SET, ticks)
-                    else:
-                        response = client.game_time(
-                            GAME_TIME_OPERATIONS[args.operation]
-                        )
-                    print_message(
-                        response if args.json else response.operation, args.json
-                    )
+            if args.command == "timer-state":
+                method, response = "get_timer_state", client.timer_state()
+            elif args.command == "run":
+                method, response = "get_run", client.run()
+            elif args.command == "attempt":
+                method, response = "get_attempt", client.attempt()
+            elif args.command == "context":
+                method, response = "get_context_state", client.context()
+            elif args.command == "completed-count":
+                method, response = "get_completed_count", client.completed_count()
+            elif args.command == "timer":
+                method, response = "timer_operation", client.timer(args.operation)
+            else:
+                assert args.command == "game-time"
+                method = "game_time_operation"
+                response = client.game_time(args.operation, ticks)
+            print_response(response, method, args.json)
     except (BridgeClientError, websocket.WebSocketException, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
