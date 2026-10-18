@@ -233,7 +233,7 @@ public sealed class JsonBridgeRuntimeTests
     }
 
     [Fact]
-    public void RunChangedIsQueuedAfterTheNewSnapshotIsPublished()
+    public async Task RunChangedIsQueuedAfterTheNewSnapshotIsPublished()
     {
         var run = CreateRun();
         var state = TestLiveSplitState.Create(run);
@@ -242,7 +242,7 @@ public sealed class JsonBridgeRuntimeTests
         run.GameName = "Updated";
         state.CallRunManuallyModified();
 
-        var changed = Assert.IsType<Json.RunChangedEvent>(sink.Take(TimeSpan.FromSeconds(5)));
+        var changed = Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(5)));
 
         Assert.Equal("Updated", runtime.PublishedRun.GameName);
         Assert.Same(Json.JsonNullValue.Value, ((Json.StateChangedBridgeEvent)changed).TimerState);
@@ -286,7 +286,7 @@ public sealed class JsonBridgeRuntimeTests
     }
 
     [Fact]
-    public void NewerRunCandidateWinsWhenAnOlderBuildFinishesLater()
+    public async Task NewerRunCandidateWinsWhenAnOlderBuildFinishesLater()
     {
         var run = CreateRun();
         var state = TestLiveSplitState.Create(run);
@@ -297,24 +297,24 @@ public sealed class JsonBridgeRuntimeTests
 
         run.GameName = "first";
         state.CallRunManuallyModified();
-        Assert.True(first.BuildEntered.Wait(TimeSpan.FromSeconds(5)));
+        await first.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
 
         adapter.CandidateFactory = () => new Candidate(new Json.RunState { GameName = "latest" });
         var replacementRun = CreateRun();
         replacementRun.GameName = "latest";
         state.Run = replacementRun;
         state.CallRunManuallyModified();
-        Assert.IsType<Json.RunChangedEvent>(sink.Take(TimeSpan.FromSeconds(5)));
+        Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("latest", runtime.PublishedRun.GameName);
 
         first.ReleaseBuild.Set();
-        Assert.True(first.BuildFinished.Wait(TimeSpan.FromSeconds(5)));
+        await first.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, sink.Count);
         Assert.Equal("latest", runtime.PublishedRun.GameName);
     }
 
     [Fact]
-    public void CandidateCompletingAfterResetKeepsTheResetTimingSnapshot()
+    public async Task CandidateCompletingAfterResetKeepsTheResetTimingSnapshot()
     {
         var state = TestLiveSplitState.Create(CreateRun());
         var sink = new RecordingSink();
@@ -331,15 +331,15 @@ public sealed class JsonBridgeRuntimeTests
         using var runtime = new JsonBridgeRuntime(adapter, sink, state);
         var timerModel = new TimerModel { CurrentState = state };
         timerModel.Start();
-        sink.Take(TimeSpan.FromSeconds(3));
+        await sink.TakeAsync(TimeSpan.FromSeconds(3));
         state.CallRunManuallyModified();
-        Assert.True(candidate.BuildEntered.Wait(TimeSpan.FromSeconds(5)));
+        await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
 
         timerModel.Reset();
-        Assert.IsType<Json.TimerResetEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        Assert.IsType<Json.RunChangedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
+        Assert.IsType<Json.TimerResetEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(3)));
+        Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(3)));
         candidate.ReleaseBuild.Set();
-        Assert.True(candidate.BuildFinished.Wait(TimeSpan.FromSeconds(5)));
+        await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(99, runtime.PublishedRun.Segments[0].BestSegmentTime.RealTimeTicks);
         Assert.Null(runtime.PublishedRun.Metadata!.RunId);
@@ -347,7 +347,7 @@ public sealed class JsonBridgeRuntimeTests
     }
 
     [Fact]
-    public void DisposedRuntimeDoesNotPublishACompletedBackgroundCandidate()
+    public async Task DisposedRuntimeDoesNotPublishACompletedBackgroundCandidate()
     {
         var state = TestLiveSplitState.Create(CreateRun());
         var sink = new RecordingSink();
@@ -356,10 +356,10 @@ public sealed class JsonBridgeRuntimeTests
         var runtime = new JsonBridgeRuntime(adapter, sink, state);
 
         state.CallRunManuallyModified();
-        Assert.True(candidate.BuildEntered.Wait(TimeSpan.FromSeconds(5)));
+        await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
         runtime.Dispose();
         candidate.ReleaseBuild.Set();
-        Assert.True(candidate.BuildFinished.Wait(TimeSpan.FromSeconds(5)));
+        await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(0, sink.Count);
         Assert.NotEqual("late", runtime.PublishedRun.GameName);
@@ -493,18 +493,33 @@ public sealed class JsonBridgeRuntimeTests
     private sealed class GateCandidate : IJsonRunStateCandidate
     {
         private readonly Json.RunState value;
-        internal ManualResetEventSlim BuildEntered { get; } = new();
+        private int disposed;
+        internal AsyncSignal BuildEntered { get; } = new();
         internal ManualResetEventSlim ReleaseBuild { get; } = new();
-        internal ManualResetEventSlim BuildFinished { get; } = new();
+        internal AsyncSignal PipelineFinished { get; } = new();
         internal GateCandidate(Json.RunState value) => this.value = value;
         public Json.RunState Build()
         {
             BuildEntered.Set();
             if (!ReleaseBuild.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Candidate build was not released.");
-            BuildFinished.Set();
             return value;
         }
-        public void Dispose() { }
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0) PipelineFinished.Set();
+        }
+    }
+
+    private sealed class AsyncSignal
+    {
+        private readonly TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void Set() => completion.TrySetResult(true);
+        internal async Task WaitAsync(TimeSpan timeout)
+        {
+            var completed = await Task.WhenAny(completion.Task, Task.Delay(timeout)).ConfigureAwait(false);
+            Assert.Same(completion.Task, completed);
+            await completion.Task.ConfigureAwait(false);
+        }
     }
 
     private sealed class RecordingSink : IJsonEventSink
@@ -516,6 +531,12 @@ public sealed class JsonBridgeRuntimeTests
         internal Json.BridgeEvent Take(TimeSpan timeout)
         {
             Assert.True(available.Wait(timeout));
+            Assert.True(events.TryDequeue(out var result));
+            return result!;
+        }
+        internal async Task<Json.BridgeEvent> TakeAsync(TimeSpan timeout)
+        {
+            Assert.True(await available.WaitAsync(timeout).ConfigureAwait(false));
             Assert.True(events.TryDequeue(out var result));
             return result!;
         }

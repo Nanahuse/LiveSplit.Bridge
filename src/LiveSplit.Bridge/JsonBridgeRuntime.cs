@@ -60,8 +60,8 @@ internal sealed class JsonBridgeRuntime : IDisposable
     /// <summary>Called by a future host update loop; it performs throttled context and Run observation.</summary>
     internal void Update()
     {
-        ObserveContextState();
         ObserveRunReference();
+        ObserveContextState();
     }
 
     public void Dispose()
