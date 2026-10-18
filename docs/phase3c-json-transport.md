@@ -21,14 +21,14 @@ The official LiveSplit 1.8.37 archive is available in the temporary test directo
 
 This Phase 3C attempt launched an isolated copy with the v4 layout, but the process had no observable main window, the configured port did not listen, and an RPC connection was refused. The Component was not proven to load in this process. Consequently, the Phase 3A assembly paths cannot be claimed as the actual load paths for this v4 runtime. No host configuration, installed LiveSplit, registry entry, or production distribution list was changed.
 
-GitHub Actions for the new revision has not run yet. The existing successful CI result is for the previous Phase 3B-3 commit and is not evidence for this change.
+GitHub Actions passed for implementation commit `3a2626df6478291d20be6731818991ac6040a718`: the Windows tests job completed Restore, Release Build, .NET tests, and CLI tests successfully. This CI result does not establish LiveSplit GUI execution or slow-subscriber overflow behavior. The current follow-up commit changes documentation only.
 
 ## Remaining Phase 3C work
 
 - Repeat the v4 layout test in an interactive LiveSplit 1.8.37 session and capture the Component load, RPC, Event, and assembly path evidence.
-- Run the full test project and GitHub Actions after restoring the repository dependencies.
+- The repository's full .NET tests and CLI tests passed in GitHub Actions; the local full test project remains unavailable because the LiveSplit source submodule is absent.
 - Exercise Event queue overflow/slow-subscriber cleanup and additional Timer Event kinds in the complete Windows test environment.
 - Decide the final runtime assembly deployment policy only after the v4 LiveSplit process records the assemblies it actually loads. No shared runtime DLL was added to the distribution allow-list.
 - Phase 3D cleanup remains out of scope: remove Protobuf/v3 implementation and dependencies only after the JSON path is accepted and the remaining direct legacy tests are intentionally retired.
 
-Phase 3C is **not complete**: real v4 operation in LiveSplit and the full CI suite remain unverified. The implementation is an in-progress Draft PR and should not be treated as a release-ready communication migration.
+Phase 3C is **not complete**: real v4 operation in LiveSplit and slow-subscriber overflow behavior remain unverified. The implementation is an in-progress Draft PR and should not be treated as a release-ready communication migration.
