@@ -16,6 +16,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
     private readonly object eventGate = new();
     private readonly IJsonLiveSplitAdapter adapter;
     private readonly IJsonEventSink eventSink;
+    private readonly Action<Action> queueCandidateWork;
     private readonly LiveSplitState? state;
     private readonly uint sessionId;
     private Json.RunState publishedRun;
@@ -40,10 +41,16 @@ internal sealed class JsonBridgeRuntime : IDisposable
     internal JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState state)
         : this(adapter, eventSink, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true) { }
 
-    private JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState? state, bool attachStateEvents)
+    internal JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState state, Action<Action> queueCandidateWork)
+        : this(adapter, eventSink, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true,
+            queueCandidateWork ?? throw new ArgumentNullException(nameof(queueCandidateWork))) { }
+
+    private JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState? state, bool attachStateEvents,
+        Action<Action>? queueCandidateWork = null)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.eventSink = eventSink ?? throw new ArgumentNullException(nameof(eventSink));
+        this.queueCandidateWork = queueCandidateWork ?? (work => _ = Task.Run(work));
         this.state = state;
         sessionId = GenerateSessionId();
         publishedRun = adapter.GetRunState();
@@ -321,7 +328,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
                 || !ReferenceEquals(runReference, state.Run))
             { candidate.Dispose(); candidate = null; ClearRequestedRunReference(runReference, generation); return; }
             var queued = candidate;
-            _ = Task.Run(() => BuildAndPublishRunCandidate(queued, runReference, generation, capturedTimingGeneration));
+            queueCandidateWork(() => BuildAndPublishRunCandidate(queued, runReference, generation, capturedTimingGeneration));
             candidate = null;
         }
         catch (Exception exception)

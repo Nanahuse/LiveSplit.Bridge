@@ -238,7 +238,7 @@ public sealed class JsonBridgeRuntimeTests
         var run = CreateRun();
         var state = TestLiveSplitState.Create(run);
         var sink = new RecordingSink();
-        using var runtime = new JsonBridgeRuntime(new JsonLiveSplitAdapter(state), sink, state);
+        using var runtime = new JsonBridgeRuntime(new JsonLiveSplitAdapter(state), sink, state, QueueCandidateOnDedicatedThread);
         run.GameName = "Updated";
         state.CallRunManuallyModified();
 
@@ -293,7 +293,7 @@ public sealed class JsonBridgeRuntimeTests
         var sink = new RecordingSink();
         var first = new GateCandidate(new Json.RunState { GameName = "stale" });
         var adapter = new FakeAdapter { CandidateFactory = () => first };
-        using var runtime = new JsonBridgeRuntime(adapter, sink, state);
+        using var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
 
         run.GameName = "first";
         state.CallRunManuallyModified();
@@ -328,7 +328,7 @@ public sealed class JsonBridgeRuntimeTests
             TimingUpdateSnapshot = latestAfterReset,
             CandidateFactory = () => candidate,
         };
-        using var runtime = new JsonBridgeRuntime(adapter, sink, state);
+        using var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
         var timerModel = new TimerModel { CurrentState = state };
         timerModel.Start();
         await sink.TakeAsync(TimeSpan.FromSeconds(3));
@@ -353,7 +353,7 @@ public sealed class JsonBridgeRuntimeTests
         var sink = new RecordingSink();
         var candidate = new GateCandidate(new Json.RunState { GameName = "late" });
         var adapter = new FakeAdapter { CandidateFactory = () => candidate };
-        var runtime = new JsonBridgeRuntime(adapter, sink, state);
+        var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
 
         state.CallRunManuallyModified();
         await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
@@ -411,6 +411,12 @@ public sealed class JsonBridgeRuntimeTests
             },
         },
     };
+
+    private static void QueueCandidateOnDedicatedThread(Action work) => _ = Task.Factory.StartNew(
+        work,
+        CancellationToken.None,
+        TaskCreationOptions.LongRunning,
+        TaskScheduler.Default);
 
     private class FakeAdapter : IJsonLiveSplitAdapter
     {
