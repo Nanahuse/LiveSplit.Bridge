@@ -26,7 +26,9 @@ Protocol v3と互換性がありません。現行のDebug CLIはv3用のため�
 - ゲーム内時間を設定、Pause、Resumeする
 - LiveSplit側で行われたタイマー操作や設定変更を受け取る
 
-## インストール
+## 公開Releaseのインストール
+
+以下はGitHub Releasesで公開中のパッケージを使う場合の手順です。JSON Protocol v4はこの開発ブランチの候補で、まだReleaseされていません。公開パッケージはこのブランチと異なるProtocolを含むことがあるため、Releaseとv4開発ブランチのクライアント仕様を混在させないでください。v4へ接続するクライアントは、v4を実装したBridgeビルドと組み合わせてください。
 
 1. [最新のReleases](https://github.com/Nanahuse/LiveSplit.Bridge/releases/latest)から
    `LiveSplit.Bridge-v*.zip`をダウンロードします。
