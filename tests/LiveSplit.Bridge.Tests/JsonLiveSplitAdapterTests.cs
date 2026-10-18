@@ -104,6 +104,20 @@ public class JsonLiveSplitAdapterTests
     }
 
     [Fact]
+    public void TreatsEmptyLiveSplitRunIdAsUnset()
+    {
+        var run = CreateRun();
+        run.Metadata.RunID = string.Empty;
+        var adapter = new JsonLiveSplitAdapter(TestLiveSplitState.Create(run));
+
+        var published = adapter.GetRunState();
+        Assert.Null(published.Metadata!.RunId);
+
+        Assert.True(adapter.TryUpdateRunTimings(published, out var updated));
+        Assert.Null(updated.Metadata!.RunId);
+    }
+
+    [Fact]
     public void MergeRunTimingsPreservesCandidateStaticDataAndRejectsStructureMismatch()
     {
         var candidate = CreateSnapshot();

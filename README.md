@@ -61,7 +61,7 @@ WebSocketサーバーは引き続きloopbackだけで待ち受けます。Events
 Originに関係なく利用できます。OBSのブラウザソースでは、ローカルHTMLから追加のHTTPサーバー
 なしでQueryとEventsを利用できます。TimerやGame Timeを操作するControl RPCは従来のOrigin
 制限に従い、Originヘッダーなし、または`localhost`、`127.0.0.1`、`::1`のHTTP/HTTPS Origin
-からのみ許可されます。それ以外のOriginからControlを要求すると`PERMISSION_DENIED`が返り、
+からのみ許可されます。それ以外のOriginからControlを要求すると`permission_denied`が返り、
 WebSocket接続は維持されます。Origin制限はブラウザ由来の要求を制限する仕組みであり、完全な
 認証ではありません。
 

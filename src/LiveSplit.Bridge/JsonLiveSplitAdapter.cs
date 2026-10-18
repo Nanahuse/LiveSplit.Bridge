@@ -117,7 +117,7 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
             var metadata = run.Metadata;
             if (metadata != null)
             {
-                result.Metadata.RunId = metadata.RunID;
+                result.Metadata.RunId = NormalizeRunId(metadata.RunID);
                 if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
                 if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
                 result.Metadata.UsesEmulator = metadata.UsesEmulator;
@@ -172,7 +172,7 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
         }
 
         result.Metadata ??= new Json.RunMetadata();
-        result.Metadata.RunId = run.Metadata?.RunID;
+        result.Metadata.RunId = NormalizeRunId(run.Metadata?.RunID);
         updated = result;
         return true;
     }
@@ -255,6 +255,8 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
         }
         return true;
     }
+
+    private static string? NormalizeRunId(string? runId) => string.IsNullOrEmpty(runId) ? null : runId;
 
     private static bool MatchesSnapshotStructure(Json.RunState left, Json.RunState right)
     {
