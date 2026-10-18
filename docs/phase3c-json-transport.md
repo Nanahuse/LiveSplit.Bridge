@@ -2,33 +2,53 @@
 
 ## Implementation
 
-The Component now starts `JsonBridgeHost`, which owns `JsonBridgeRuntime` and a JSON-only WebSocket transport. The transport uses `HttpListener` with the `System.Net.WebSockets` APIs and binds `127.0.0.1` at the configured port. It serves `/bridge/v4/rpc` and `/bridge/v4/events`; the Component does not start the legacy Protobuf runtime.
+The Component starts `JsonBridgeHost`, which owns `JsonBridgeRuntime` and a JSON-only WebSocket transport. The transport uses `HttpListener` and .NET Framework 4.8.1 `System.Net.WebSockets`, binding `127.0.0.1` at the configured port. It serves `/bridge/v4/rpc` and `/bridge/v4/events`; the Component does not start the legacy Protobuf runtime.
 
 RPC accepts one Text Message per JSON object. Binary messages, malformed JSON, non-object roots, and missing or invalid `request_id` values receive no response. A valid uint32 ID is retained in `invalid_request` responses for duplicate properties, unknown methods, and malformed known requests. Duplicate property names are rejected recursively. Valid but unauthorized Control requests receive `permission_denied`; Query and Events remain available for external Origins.
 
-RPC input is received in 8 KiB chunks and counted in UTF-8 bytes. The transport stops receiving and closes with status 1009 once the accumulated Text Message exceeds 64 KiB; the oversized payload is not passed to the JSON parser. RPC responses are not subject to that request limit. Events use a per-subscriber queue bounded at 256 entries. The queues hold references to shared event snapshots, so 256 entries bound each subscriber's reference storage to roughly 2 KiB plus queue overhead while allowing a short burst. Enqueue does not serialize or send; a full queue schedules disconnection of that subscriber instead of silently dropping an Event. Each subscriber has one ordered sender.
+RPC input is received in 8 KiB chunks and counted in UTF-8 bytes. The transport closes with status 1009 once the accumulated Text Message exceeds 64 KiB. RPC responses have no matching size cap. Events use an ordered sender and queue bounded at 256 entries per subscriber. Enqueue only retains the shared event snapshot; it does not serialize or send. A full queue transitions that subscriber to a stopping state and schedules one disconnect. Other subscribers continue receiving events in order.
 
-## Verification performed in this checkout
+## Verification in this checkout
 
-- Release build of `src/LiveSplit.Bridge/LiveSplit.Bridge.csproj` succeeded using temporary references to the official LiveSplit 1.8.37 assemblies because the `external/LiveSplit` source submodule is absent.
-- A temporary focused test host compiled the current Bridge and the JSON WebSocket/component test sources. Loopback integration passed 11/11 selected Facts, including all five Query methods, all Timer and Game Time operation discriminators, malformed envelopes, nested duplicate properties, Binary drop, 64 KiB boundary and fragmented overflow, an oversized GetRun response containing a noisy PNG icon, the Origin matrix, two Event subscribers, Timer Reset then RunChanged ordering, latest GetRun state, and port reuse after disposal.
-- Schema PoC Release build and execution passed 32/32 C# serializer checks. Ajv validated 3/3 Draft 2020-12 schemas, 80/80 fixtures, and 33/33 C# serialized messages. No Schema files changed in Phase 3C.
-- The normal `dotnet test` project could not be restored here: the checkout has no LiveSplit source submodule or test `project.assets.json`; the SDK restore graph failed before producing assets. The focused host is not the full test suite.
+- Production Bridge Release build passed using temporary references to official LiveSplit 1.8.37 assemblies. The source submodule `external/LiveSplit` is absent, so the regular project restore/test graph is not available locally.
+- A temporary focused test host passed **16/16** selected Facts: seven JSON RPC cases, three WebSocket Event cases, three deterministic subscription/overflow/dispose cases, port release/reconnect, the Origin matrix, and Component endpoint lifecycle. The Event tests cover all timer event kinds through the WebSocket contract and ContextChanged, including session IDs, ordering, timer state, and follow-up queries. The queue test blocks one sender, fills its 256 pending slots, verifies one slow-subscriber disconnect, and checks ordered delivery to a healthy subscriber.
+- Schema PoC restore/build/run completed with **32/32** C# checks. `pnpm run validate` passed **3/3** Draft 2020-12 meta-schemas, **80/80** fixtures, and **33/33** actual C# serialized messages. The preceding `pnpm install --frozen-lockfile --ignore-scripts` did not finish: package-manager supply-chain policy verification could not access the configured network source. Validation used the existing installed Ajv dependencies. Schema output was regenerated and did not change.
+- Runtime Probe Release build passed. Its log for process 18872 records all seven JSON checks as PASS, `JSON_CHECKS_COMPLETE`, and `UPDATE_HEARTBEAT`. It also records the actual loaded assembly paths listed below.
+- The isolated LiveSplit process previously returned a production v4 Query response with `request_id: 700` echoed and a non-zero `session_id`. The earlier failed launch was caused by an incorrectly relative layout path; using the absolute layout path resolved that launch failure.
+- This recheck connected an Event client to the isolated local Event endpoint, but no UI-originated Event was captured. The Windows UI automation helper could observe the LiveSplit window but failed to activate it (`GetCursorPos failed: access denied`). Therefore Start/Split/Reset via LiveSplit UI, Event reconnect against the live process, Reset/GetRun consistency after UI Reset, and component removal/port release in the GUI remain **unverified**. Passing loopback lifecycle tests do not substitute for those live UI checks.
+- The full local `dotnet test` suite and Python CLI tests were not run in this checkout. GitHub Actions result for the new follow-up commit is pending; the previous passing run #106 predates these changes.
 
-## LiveSplit process and dependency status
+## Runtime Probe assembly evidence
 
-The official LiveSplit 1.8.37 archive is available in the temporary test directory, and Phase 3A previously verified System.Text.Json DTO work inside that host. That earlier result does not verify the v4 production Component.
+The log is `%TEMP%\LiveSplit.JsonRuntimeProbe-18872-20261018T100757620Z.log` on the test host. It records LiveSplit's .NET Framework 4.8.1 process and these loaded assemblies:
 
-This Phase 3C attempt launched an isolated copy with the v4 layout, but the process had no observable main window, the configured port did not listen, and an RPC connection was refused. The Component was not proven to load in this process. Consequently, the Phase 3A assembly paths cannot be claimed as the actual load paths for this v4 runtime. No host configuration, installed LiveSplit, registry entry, or production distribution list was changed.
+| Assembly | Assembly version | Observed load path |
+| --- | --- | --- |
+| `LiveSplit` | 1.0.0.0 | `<LiveSplit root>\LiveSplit.exe` |
+| `LiveSplit.Core` | 1.0.0.0 | `<LiveSplit root>\LiveSplit.Core.dll` |
+| `LiveSplit.View` | 1.0.0.0 | `<LiveSplit root>\LiveSplit.View.dll` |
+| `LiveSplit.Bridge` | 1.0.0.0 | `<LiveSplit root>\Components\LiveSplit.Bridge.dll` |
+| `LiveSplit.JsonRuntimeProbe` | 1.0.0.0 | `<LiveSplit root>\Components\LiveSplit.JsonRuntimeProbe.dll` |
+| `System.Text.Json` | 9.0.0.4 | `<LiveSplit root>\System.Text.Json.dll` |
+| `System.Text.Encodings.Web` | 9.0.0.4 | `<LiveSplit root>\System.Text.Encodings.Web.dll` |
+| `System.Memory` | 4.0.1.2 | `<LiveSplit root>\System.Memory.dll` |
+| `System.Buffers` | 4.0.3.0 | `<LiveSplit root>\System.Buffers.dll` |
+| `System.Numerics.Vectors` | 4.1.4.0 | `<LiveSplit root>\System.Numerics.Vectors.dll` |
+| `Microsoft.Bcl.AsyncInterfaces` | 9.0.0.4 | `<LiveSplit root>\Microsoft.Bcl.AsyncInterfaces.dll` |
+| `System.IO.Pipelines` | 9.0.0.4 | `<LiveSplit root>\System.IO.Pipelines.dll` |
+| `System.Runtime.CompilerServices.Unsafe` | 6.0.0.0 | `<LiveSplit root>\System.Runtime.CompilerServices.Unsafe.dll` |
+| `System.Threading.Tasks.Extensions` | 4.2.0.1 | `<LiveSplit root>\System.Threading.Tasks.Extensions.dll` |
+| `System.ValueTuple` | 4.0.0.0 | .NET Framework GAC |
 
-GitHub Actions passed for implementation commit `3a2626df6478291d20be6731818991ac6040a718`: the Windows tests job completed Restore, Release Build, .NET tests, and CLI tests successfully. This CI result does not establish LiveSplit GUI execution or slow-subscriber overflow behavior. The current follow-up commit changes documentation only.
+This probe proves the DTO serializer can run in the host and that the official LiveSplit root supplied the runtime dependencies in that process. It does not yet prove the UI-driven v4 Event flow or establish a final Bridge distribution policy. No production distribution allow-list or host configuration was changed.
 
 ## Remaining Phase 3C work
 
-- Repeat the v4 layout test in an interactive LiveSplit 1.8.37 session and capture the Component load, RPC, Event, and assembly path evidence.
-- The repository's full .NET tests and CLI tests passed in GitHub Actions; the local full test project remains unavailable because the LiveSplit source submodule is absent.
-- Exercise Event queue overflow/slow-subscriber cleanup and additional Timer Event kinds in the complete Windows test environment.
-- Decide the final runtime assembly deployment policy only after the v4 LiveSplit process records the assemblies it actually loads. No shared runtime DLL was added to the distribution allow-list.
-- Phase 3D cleanup remains out of scope: remove Protobuf/v3 implementation and dependencies only after the JSON path is accepted and the remaining direct legacy tests are intentionally retired.
+- Capture `timer_started`, `timer_split`, and `timer_reset` from LiveSplit UI actions, then verify the reset RunState and reconnect to the live Event endpoint.
+- Verify Event receipt and port release after removing the Component in the interactive LiveSplit process.
+- Run the full .NET and Python suites on a complete checkout or use a successful Actions run for the follow-up commit.
+- Re-run frozen pnpm installation when the package policy source is available; Ajv validation itself passed using the already-restored dependencies.
+- Keep the existing distribution list unchanged unless a production runtime capture demonstrates a missing dependency.
+- Phase 3D cleanup remains out of scope: remove Protobuf/v3 implementation and dependencies only after the JSON path is accepted and legacy tests are intentionally retired.
 
-Phase 3C is **not complete**: real v4 operation in LiveSplit and slow-subscriber overflow behavior remain unverified. The implementation is an in-progress Draft PR and should not be treated as a release-ready communication migration.
+Phase 3C is **not complete**: local deterministic queue tests, WebSocket integration tests, schema checks, and Runtime Probe JSON checks passed, but the required real LiveSplit UI Event sequence and latest full CI run are still outstanding. PR #35 remains Draft; this evidence does not decide adoption or release readiness.

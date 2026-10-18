@@ -179,7 +179,7 @@ public sealed class RuntimeProbeComponent : IComponent
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "LiveSplit", "LiveSplit.Core", "LiveSplit.View", "LiveSplit.JsonRuntimeProbe",
+            "LiveSplit", "LiveSplit.Core", "LiveSplit.View", "LiveSplit.Bridge", "LiveSplit.JsonRuntimeProbe",
             "System.Text.Json", "System.Text.Encodings.Web", "Microsoft.Bcl.AsyncInterfaces",
             "System.Buffers", "System.IO.Pipelines", "System.Memory", "System.Numerics.Vectors",
             "System.Runtime.CompilerServices.Unsafe", "System.Threading.Tasks.Extensions", "System.ValueTuple",

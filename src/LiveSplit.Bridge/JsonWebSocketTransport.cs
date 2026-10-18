@@ -81,10 +81,10 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         lock (clientsGate) current = subscriptions.ToArray();
         foreach (var subscription in current)
         {
-            if (!subscription.TryEnqueue(bridgeEvent))
+            if (subscription.TryEnqueue(bridgeEvent) == EventEnqueueResult.QueueFull)
             {
                 // Disconnect asynchronously: this callback is invoked under JsonBridgeRuntime.eventGate.
-                _ = Task.Run(() => subscription.DisconnectSlowClientAsync());
+                _ = Task.Run(subscription.DisconnectSlowClient);
             }
         }
     }
@@ -330,7 +330,9 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         internal bool CloseReceived { get; }
     }
 
-    private sealed class EventSubscription : IDisposable
+    internal enum EventEnqueueResult { Enqueued, Stopping, QueueFull }
+
+    internal sealed class EventSubscription : IDisposable
     {
         private readonly object gate = new();
         private readonly Queue<Json.BridgeEvent> queue = new();
@@ -341,6 +343,11 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         private readonly Action<EventSubscription> remove;
         private Task? sender;
         private bool completed;
+        private bool disconnectRequested;
+        private int disconnectStarted;
+        private int ownerRemoved;
+        private int socketAborted;
+        private int resourcesDisposed;
 
         internal EventSubscription(JsonSerializerOptions options, Action<EventSubscription> remove, CancellationToken hostToken)
         {
@@ -350,56 +357,74 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         }
 
         internal bool Owns(WebSocket candidate) => ReferenceEquals(socket, candidate);
+        internal Task? SenderTask { get { lock (gate) return sender; } }
 
         internal void Bind(WebSocket acceptedSocket)
         {
+            var reject = false;
             lock (gate)
             {
-                if (completed)
+                if (completed || cancellation.IsCancellationRequested)
                 {
-                    acceptedSocket.Abort();
-                    acceptedSocket.Dispose();
-                    return;
+                    completed = true;
+                    reject = true;
                 }
-                socket = acceptedSocket;
-                sender = Task.Run(SendLoopAsync);
+                else
+                {
+                    socket = acceptedSocket;
+                    sender = Task.Run(SendLoopAsync);
+                }
+            }
+            if (reject)
+            {
+                AbortSocket(acceptedSocket);
+                acceptedSocket.Dispose();
+                RemoveFromOwner();
+                DisposeResources();
             }
         }
 
-        internal bool TryEnqueue(Json.BridgeEvent item)
+        internal EventEnqueueResult TryEnqueue(Json.BridgeEvent item)
         {
             lock (gate)
             {
-                if (completed || cancellation.IsCancellationRequested || queue.Count >= EventQueueCapacity) return false;
+                if (completed || disconnectRequested || cancellation.IsCancellationRequested) return EventEnqueueResult.Stopping;
+                if (queue.Count >= EventQueueCapacity)
+                {
+                    disconnectRequested = true;
+                    return EventEnqueueResult.QueueFull;
+                }
                 queue.Enqueue(item);
                 available.Release();
-                return true;
+                return EventEnqueueResult.Enqueued;
             }
         }
 
-        internal async Task DisconnectSlowClientAsync()
+        internal void DisconnectSlowClient()
         {
-            remove(this);
+            if (Interlocked.Exchange(ref disconnectStarted, 1) != 0) return;
+            lock (gate)
+            {
+                if (!disconnectRequested || completed) return;
+            }
+            RemoveFromOwner();
             Dispose();
-            try { await Task.Run(() => socket.Abort()).ConfigureAwait(false); }
-            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] Slow JSON subscriber close failed: {exception.Message}"); }
         }
 
         public void Dispose()
         {
+            Task? currentSender;
+            WebSocket? currentSocket;
             lock (gate)
             {
                 if (completed) return;
                 completed = true;
                 queue.Clear();
+                currentSender = sender;
+                currentSocket = socket;
             }
-            cancellation.Cancel();
-            try { socket?.Abort(); }
-            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON subscriber abort failed: {exception.Message}"); }
-            try { sender?.Wait(TimeSpan.FromMilliseconds(100)); }
-            catch (AggregateException exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON subscriber stop failed: {exception.GetBaseException().Message}"); }
-            cancellation.Dispose();
-            available.Dispose();
+            CancelAndAbort(currentSocket);
+            if (currentSender == null) DisposeResources();
         }
 
         private async Task SendLoopAsync()
@@ -425,10 +450,42 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
             catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON event serialization failed: {exception}"); }
             finally
             {
-                remove(this);
-                try { socket?.Abort(); }
-                catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON event socket cleanup failed: {exception.Message}"); }
+                RemoveFromOwner();
+                lock (gate)
+                {
+                    completed = true;
+                    queue.Clear();
+                }
+                CancelAndAbort(socket);
+                DisposeResources();
             }
+        }
+
+        private void CancelAndAbort(WebSocket? currentSocket)
+        {
+            try { cancellation.Cancel(); }
+            catch (ObjectDisposedException) { }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON subscriber cancellation failed: {exception.Message}"); }
+            if (currentSocket != null) AbortSocket(currentSocket);
+        }
+
+        private void RemoveFromOwner()
+        {
+            if (Interlocked.Exchange(ref ownerRemoved, 1) == 0) remove(this);
+        }
+
+        private void AbortSocket(WebSocket currentSocket)
+        {
+            if (Interlocked.Exchange(ref socketAborted, 1) != 0) return;
+            try { currentSocket.Abort(); }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON subscriber abort failed: {exception.Message}"); }
+        }
+
+        private void DisposeResources()
+        {
+            if (Interlocked.Exchange(ref resourcesDisposed, 1) != 0) return;
+            cancellation.Dispose();
+            available.Dispose();
         }
     }
 }
