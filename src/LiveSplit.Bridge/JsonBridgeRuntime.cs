@@ -66,7 +66,8 @@ internal sealed class JsonBridgeRuntime : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        lock (eventGate)
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         DetachStateEvents();
     }
 
