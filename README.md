@@ -4,10 +4,10 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 コンポーネントです。対応する外部アプリケーションから、タイマーの状態確認や操作、
 ゲーム内時間の制御ができるようになります。
 
-現在の`main`ブランチはProtocol v3の開発版です。公開Releaseは別のバージョンとして
-管理されており、開発版の説明と公開Releaseの対応状況を混同しないでください。
-Protocol v3はv2以前と通信互換性がありません。v3対応クライアントにはv3対応Bridgeを
-使用してください。
+この開発ブランチでは、JSON Protocol v4を実装しています。公開Releaseと`main`ブランチの
+通信仕様はこの作業ブランチの内容とは異なる場合があります。JSON Protocol v4は旧Protobuf
+Protocol v3と互換性がありません。現行のDebug CLIはv3用のため、このブランチのBridgeには
+接続できません。
 
 このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
 外部アプリケーションと組み合わせて使用してください。
@@ -48,9 +48,10 @@ Protocol v3はv2以前と通信互換性がありません。v3対応クライ�
 |---|---:|
 | WebSocketポート | `54000` |
 
-RPCは`ws://127.0.0.1:<port>/bridge/v3/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v3/events`で接続します。Protocol v3はProtobufのBinary
-WebSocket Messageを使用します。通常は既定値のまま使用できます。
+RPCは`ws://127.0.0.1:<port>/bridge/v4/rpc`、イベントは
+`ws://127.0.0.1:<port>/bridge/v4/events`で接続します。JSONはWebSocket Text Messageで
+送信します。RPC RequestはUTF-8で64 KiBまでです。上限を超える接続はMessage Too Bigで
+終了します。通常は既定値のまま使用できます。
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 
@@ -86,6 +87,9 @@ WebSocket接続は維持されます。Origin制限はブラウザ由来の要�
   ください。
 
 ## 関連ドキュメント
+
+- JSON WebSocket実装と検証状況:
+  [`docs/phase3c-json-transport.md`](docs/phase3c-json-transport.md)
 
 - Bridgeへ接続するアプリケーションを作る方:
   [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)

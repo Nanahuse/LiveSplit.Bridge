@@ -124,6 +124,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
     }
 
     private Json.RpcResponse Success(uint requestId) => new Json.ControlSuccessResponse { RequestId = requestId, SessionId = sessionId };
+    internal Json.RpcResponse InvalidRequest(uint requestId, string message) => Error(requestId, Json.BridgeErrorCode.InvalidRequest, message);
     private Json.RpcResponse Error(uint requestId, Json.BridgeErrorCode code, string message) => new Json.ErrorResponse
     {
         RequestId = requestId,

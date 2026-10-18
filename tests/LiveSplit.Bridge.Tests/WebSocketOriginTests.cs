@@ -1,4 +1,6 @@
-using LiveSplit.Bridge.Protocol.V3;
+using System.Text.Json;
+using LiveSplit.Model;
+using LiveSplit.Model.Comparisons;
 
 namespace LiveSplit.Bridge.Tests;
 
@@ -30,38 +32,41 @@ public class WebSocketOriginTests
         Assert.False(WebSocketOriginValidator.IsAllowed(origin));
     }
 
-    [Theory]
-    [InlineData(null, true)]
-    [InlineData("http://localhost", true)]
-    [InlineData("null", false)]
-    [InlineData("http://absolute", false)]
-    [InlineData("http://example.com", false)]
-    public async Task RpcAcceptsEveryOriginAndCapturesControlPermission(string? origin, bool expectedPermission)
+    [Fact]
+    public async Task JsonV4RpcAndEventsPreserveOriginPermissions()
     {
-        var port = BridgeTestEndpoints.GetFreePort();
-        var permission = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var transport = CreateTransport(port, allowControl => permission.TrySetResult(allowControl));
-        transport.Start();
-
-        using var client = await WebSocketTestClient.ConnectAsync(BridgeTestEndpoints.Rpc(port), origin);
-        var response = await client.SendRequestAsync(new Request
+        foreach (var (origin, allowed) in new (string? Origin, bool Allowed)[]
         {
-            ProtocolVersion = 3,
-            RequestId = 11,
-            GetTimerState = new GetTimerStateRequest(),
-        }, TimeSpan.FromSeconds(5));
-
-        Assert.Equal(11UL, response.RequestId);
-        Assert.Equal(expectedPermission, await permission.Task);
-        Assert.True(transport.IsListening);
-    }
-
-    private static WebSocketTransport CreateTransport(int port, Action<bool> onRequest)
-    {
-        return new WebSocketTransport(port, (request, allowControl) =>
+            (null, true),
+            ("http://localhost:54000", true),
+            ("http://127.0.0.1:54000", true),
+            ("http://[::1]:54000", true),
+            ("http://example.com", false),
+            ("null", false),
+        })
         {
-            onRequest(allowControl);
-            return new Response { ProtocolVersion = 3, RequestId = request.RequestId };
-        });
+            var port = BridgeTestEndpoints.GetFreePort();
+            var run = new Run(new StandardComparisonGeneratorsFactory());
+            run.Add(new Segment("One"));
+            using var component = JsonWebSocketTestClient.StartComponent(TestLiveSplitState.Create(run), port);
+
+            using var rpc = await JsonWebSocketTestClient.ConnectAsync(BridgeTestEndpoints.JsonRpc(port), origin).ConfigureAwait(false);
+            await rpc.SendTextAsync("{\"request_id\":11,\"method\":\"timer_operation\",\"params\":{\"operation\":\"start\"}}");
+            using var response = JsonDocument.Parse((await rpc.ReceiveAsync(TimeSpan.FromSeconds(5))).Data);
+            Assert.Equal(11U, response.RootElement.GetProperty("request_id").GetUInt32());
+            if (allowed)
+            {
+                Assert.Equal(JsonValueKind.Null, response.RootElement.GetProperty("result").ValueKind);
+                Assert.False(response.RootElement.TryGetProperty("error", out _));
+            }
+            else
+            {
+                Assert.Equal("permission_denied", response.RootElement.GetProperty("error").GetProperty("code").GetString());
+                Assert.False(response.RootElement.TryGetProperty("result", out _));
+            }
+
+            using var events = await JsonWebSocketTestClient.ConnectAsync(BridgeTestEndpoints.JsonEvents(port), origin).ConfigureAwait(false);
+            Assert.Equal(System.Net.WebSockets.WebSocketState.Open, events.State);
+        }
     }
 }
