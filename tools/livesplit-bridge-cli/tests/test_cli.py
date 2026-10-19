@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from livesplit_bridge_cli import cli as cli_module
 from livesplit_bridge_cli import client as client_module
 from livesplit_bridge_cli.cli import TICKS_PER_SECOND, format_ticks, main
 
@@ -243,3 +244,214 @@ def test_json_output_preserves_complete_response(monkeypatch, capsys) -> None:
     assert output["request_id"] == 1
     assert output["session_id"] == 17
     assert output["result"]["game_time_ticks"] is None
+
+
+VALID_TIMER_STATE = {
+    "phase": "running",
+    "split_index": 0,
+    "real_time_ticks": 0,
+    "game_time_ticks": None,
+    "is_game_time_initialized": False,
+    "is_game_time_paused": False,
+}
+VALID_TIME_VALUE = {"real_time_ticks": None, "game_time_ticks": None}
+VALID_QUERY_RESULTS = {
+    "get_timer_state": VALID_TIMER_STATE,
+    "get_run": {
+        "game_name": "Game",
+        "category_name": "Any%",
+        "offset_ticks": 0,
+        "file_path": None,
+        "layout_path": None,
+        "metadata": None,
+        "comparisons": ["Personal Best"],
+        "segments": [
+            {
+                "index": 0,
+                "name": "Intro",
+                "comparisons": [{"name": "Personal Best", "time": VALID_TIME_VALUE}],
+                "best_segment_time": VALID_TIME_VALUE,
+                "icon": None,
+            }
+        ],
+        "game_icon": None,
+    },
+    "get_attempt": {
+        "attempt_count": 1,
+        "segments": [
+            {
+                "index": 0,
+                "split_time": VALID_TIME_VALUE,
+                "custom_variables": {"key": "value"},
+            }
+        ],
+    },
+    "get_context_state": {
+        "current_timing_method": "real_time",
+        "current_comparison": "Personal Best",
+        "custom_variables": {"key": "value"},
+    },
+    "get_completed_count": {"completed_count": 1},
+}
+
+
+def rpc_client_with_result(monkeypatch, method: str, result: object):
+    socket = JsonSocket()
+
+    def send(data: str) -> None:
+        request = json.loads(data)
+        socket.response = {
+            "request_id": request["request_id"],
+            "session_id": 17,
+            "result": result,
+        }
+
+    socket.send = send
+    monkeypatch.setattr(
+        client_module.websocket, "create_connection", lambda *a, **k: socket
+    )
+    return client_module.BridgeClient("ws://localhost/bridge/v4/rpc")
+
+
+@pytest.mark.parametrize(
+    ("method", "result"),
+    [
+        ("get_timer_state", {}),
+        (
+            "get_timer_state",
+            {**VALID_TIMER_STATE, "split_index": True},
+        ),
+        (
+            "get_timer_state",
+            {**VALID_TIMER_STATE, "real_time_ticks": 1 << 63},
+        ),
+        (
+            "get_timer_state",
+            {**VALID_TIMER_STATE, "game_time_ticks": False},
+        ),
+        (
+            "get_run",
+            {
+                **VALID_QUERY_RESULTS["get_run"],
+                "segments": [
+                    {
+                        **VALID_QUERY_RESULTS["get_run"]["segments"][0],
+                        "comparisons": [{"name": "PB", "time": {}}],
+                    }
+                ],
+            },
+        ),
+        (
+            "get_run",
+            {
+                **VALID_QUERY_RESULTS["get_run"],
+                "segments": [{"index": 1, "name": "Intro"}],
+            },
+        ),
+        (
+            "get_attempt",
+            {"attempt_count": True, "segments": []},
+        ),
+        (
+            "get_context_state",
+            {**VALID_QUERY_RESULTS["get_context_state"], "current_timing_method": 2},
+        ),
+        ("get_completed_count", {"completed_count": 1 << 32}),
+    ],
+)
+def test_rpc_rejects_malformed_query_results(
+    monkeypatch, method: str, result: object
+) -> None:
+    client = rpc_client_with_result(monkeypatch, method, result)
+    with client:
+        with pytest.raises(client_module.BridgeClientError):
+            client.request(method)
+
+
+@pytest.mark.parametrize("method", list(VALID_QUERY_RESULTS))
+def test_rpc_accepts_complete_query_results(monkeypatch, method: str) -> None:
+    client = rpc_client_with_result(monkeypatch, method, VALID_QUERY_RESULTS[method])
+    with client:
+        response = client.request(method)
+    assert response["result"] == VALID_QUERY_RESULTS[method]
+
+
+def test_invalid_query_response_is_reported_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    socket = JsonSocket()
+
+    def send(data: str) -> None:
+        request = json.loads(data)
+        socket.response = {
+            "request_id": request["request_id"],
+            "session_id": 17,
+            "result": {},
+        }
+
+    socket.send = send
+    monkeypatch.setattr(
+        client_module.websocket, "create_connection", lambda *a, **k: socket
+    )
+
+    assert main(["timer-state"]) == 1
+    captured = capsys.readouterr()
+    assert "error: Bridge returned invalid TimerState.phase" in captured.err
+    assert "Traceback" not in captured.err
+
+
+VALID_EVENT = {
+    "session_id": 17,
+    "event_sequence": 1,
+    "type": "timer_started",
+    "timer_state": VALID_TIMER_STATE,
+}
+
+
+@pytest.mark.parametrize(
+    ("event", "valid"),
+    [
+        (VALID_EVENT, True),
+        ({**VALID_EVENT, "timer_state": None}, False),
+        ({**VALID_EVENT, "type": "timer_reset", "timer_state": None}, True),
+        ({**VALID_EVENT, "type": "run_changed", "timer_state": None}, True),
+        ({**VALID_EVENT, "type": "context_changed", "timer_state": None}, True),
+        ({**VALID_EVENT, "type": "run_changed"}, False),
+        ({**VALID_EVENT, "type": "context_changed"}, False),
+        ({**VALID_EVENT, "type": "unknown"}, False),
+        ({**VALID_EVENT, "event_sequence": True}, False),
+        (
+            {**VALID_EVENT, "timer_state": {**VALID_TIMER_STATE, "phase": "RUNNING"}},
+            False,
+        ),
+        (
+            {key: value for key, value in VALID_EVENT.items() if key != "timer_state"},
+            False,
+        ),
+    ],
+)
+def test_event_payload_validation(event: dict[str, object], valid: bool) -> None:
+    if valid:
+        assert client_module.validate_event(event) == event
+    else:
+        with pytest.raises(client_module.BridgeClientError):
+            client_module.validate_event(event)
+
+
+def test_invalid_event_is_reported_without_traceback(monkeypatch, capsys) -> None:
+    class EventSocket:
+        def recv(self) -> str:
+            return json.dumps({**VALID_EVENT, "timer_state": {}})
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        cli_module.websocket, "create_connection", lambda *a, **k: EventSocket()
+    )
+    assert main(["events", "--count", "1"]) == 1
+    captured = capsys.readouterr()
+    assert (
+        "error: Bridge returned invalid BridgeEvent.timer_state.phase" in captured.err
+    )
+    assert "Traceback" not in captured.err

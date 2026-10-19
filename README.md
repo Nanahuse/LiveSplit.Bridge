@@ -6,8 +6,8 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 
 この開発ブランチでは、JSON Protocol v4を実装しています。公開Releaseと`main`ブランチの
 通信仕様はこの作業ブランチの内容とは異なる場合があります。JSON Protocol v4は旧Protobuf
-Protocol v3と互換性がありません。現行のDebug CLIはv3用のため、このブランチのBridgeには
-接続できません。
+Protocol v3と互換性がありません。同梱のDebug CLIはこのブランチのJSON v4向けであり、v3の
+公開Releaseや`main`とは通信できません。
 
 このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
 外部アプリケーションと組み合わせて使用してください。

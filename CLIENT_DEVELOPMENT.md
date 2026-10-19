@@ -1,6 +1,6 @@
 # LiveSplit.Bridge JSON v4 クライアント開発ガイド
 
-この作業ブランチはJSON Protocol v4の開発候補です。公開Releaseと`main`はProtobuf Protocol v3のままの場合があり、このブランチとは通信互換性がありません。同梱Debug CLIもv3用です。v4はDraft PRで検証中であり、正式採用・Releaseは確定していません。
+この作業ブランチはJSON Protocol v4の開発候補です。公開Releaseと`main`はProtobuf Protocol v3のままの場合があり、このブランチとは通信互換性がありません。同梱Debug CLIはJSON v4に対応していますが、v3のReleaseや`main`には接続できません。v4はDraft PRで検証中であり、正式採用・Releaseは確定していません。
 
 ## 接続
 
@@ -118,4 +118,4 @@ Binary Message、JSON構文エラー、JSONオブジェクト以外、欠落ま�
 
 - JSON WebSocket実装と検証状況: [`docs/phase3c-json-transport.md`](docs/phase3c-json-transport.md)
 - Protocol v4のC# DTOと生成Schema: [`tools/schema-poc/README.md`](tools/schema-poc/README.md)
-- 同梱Debug CLI: [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)（Protocol v3用）
+- 同梱Debug CLI: [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)（JSON Protocol v4用）

@@ -326,6 +326,32 @@ def test_connection_failure_returns_nonzero_and_error(
     assert "Failed to connect" in result.stderr
 
 
+def test_testhost_rejects_port_occupied_by_another_process() -> None:
+    port = free_port()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", port))
+        listener.listen()
+        result = subprocess.run(
+            [str(HOST_EXE), "--port", str(port)],
+            cwd=ROOT,
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
+
+    assert result.returncode != 0
+    assert b"READY" not in result.stdout
+    assert b"already occupied" in result.stderr
+
+
+def test_testhost_shutdown_releases_rpc_port(test_host: BridgeTestHost) -> None:
+    port = test_host.port
+    test_host.close()
+
+    with socket.socket() as probe:
+        assert probe.connect_ex(("127.0.0.1", port)) != 0
+
+
 def test_event_cli_reports_component_shutdown_as_connection_error(
     test_host: BridgeTestHost,
 ) -> None:

@@ -14,10 +14,16 @@ from decimal import (
     InvalidOperation,
     localcontext,
 )
+from typing import cast
 
 import websocket
 
-from .client import UINT32_MAX, BridgeClient, BridgeClientError, is_uint32
+from .client import (
+    UINT32_MAX,
+    BridgeClient,
+    BridgeClientError,
+    validate_event,
+)
 
 DEFAULT_PORT = 54000
 RPC_PATH = "/bridge/v4/rpc"
@@ -190,20 +196,23 @@ def run_lines(run: dict[str, object]) -> list[str]:
         f"game={run['game_name'] or '-'} category={run['category_name'] or '-'}",
         f"comparisons={run['comparisons']}",
     ]
-    for segment in run["segments"]:
-        assert isinstance(segment, dict)
+    for segment in cast(list[dict[str, object]], run["segments"]):
         lines.append(f"  [{segment['index']}] {segment['name']}")
-        for comparison in segment["comparisons"]:
-            assert isinstance(comparison, dict) and isinstance(comparison["time"], dict)
-            lines.append(f"    {comparison['name']}: {time_value(comparison['time'])}")
+        for comparison in cast(list[dict[str, object]], segment["comparisons"]):
+            lines.append(
+                f"    {comparison['name']}: "
+                f"{time_value(cast(dict[str, object], comparison['time']))}"
+            )
     return lines
 
 
 def attempt_lines(attempt: dict[str, object]) -> list[str]:
     lines = [f"attempt_count={attempt['attempt_count']}"]
-    for segment in attempt["segments"]:
-        assert isinstance(segment, dict) and isinstance(segment["split_time"], dict)
-        lines.append(f"  [{segment['index']}] {time_value(segment['split_time'])}")
+    for segment in cast(list[dict[str, object]], attempt["segments"]):
+        lines.append(
+            f"  [{segment['index']}] "
+            f"{time_value(cast(dict[str, object], segment['split_time']))}"
+        )
     return lines
 
 
@@ -212,8 +221,7 @@ def context_lines(context: dict[str, object]) -> list[str]:
         f"timing_method={context['current_timing_method']}",
         f"current_comparison={context['current_comparison'] or '-'}",
     ]
-    variables = context["custom_variables"]
-    assert isinstance(variables, dict)
+    variables = cast(dict[str, str], context["custom_variables"])
     lines.extend(
         f"  custom_variable {name}={value}" for name, value in sorted(variables.items())
     )
@@ -226,40 +234,19 @@ def print_response(response: dict[str, object], method: str, as_json: bool) -> N
         return
     result = response["result"]
     if method == "get_timer_state":
-        assert isinstance(result, dict)
-        lines = timer_state_lines(result)
+        lines = timer_state_lines(cast(dict[str, object], result))
     elif method == "get_run":
-        assert isinstance(result, dict)
-        lines = run_lines(result)
+        lines = run_lines(cast(dict[str, object], result))
     elif method == "get_attempt":
-        assert isinstance(result, dict)
-        lines = attempt_lines(result)
+        lines = attempt_lines(cast(dict[str, object], result))
     elif method == "get_context_state":
-        assert isinstance(result, dict)
-        lines = context_lines(result)
+        lines = context_lines(cast(dict[str, object], result))
     elif method == "get_completed_count":
-        assert isinstance(result, dict)
-        lines = [f"completed_count={result['completed_count']}"]
+        completed = cast(dict[str, object], result)
+        lines = [f"completed_count={completed['completed_count']}"]
     else:
         lines = ["ok"]
     print("\n".join(lines))
-
-
-def validate_event(event: object) -> dict[str, object]:
-    if not isinstance(event, dict):
-        raise BridgeClientError("Bridge returned a non-object Event")
-    if not is_uint32(event.get("session_id"), nonzero=True):
-        raise BridgeClientError("Bridge returned an invalid Event session_id")
-    if not is_uint32(event.get("event_sequence"), nonzero=True):
-        raise BridgeClientError("Bridge returned an invalid event_sequence")
-    if not isinstance(event.get("type"), str):
-        raise BridgeClientError("Bridge returned an Event without a type")
-    if "timer_state" not in event:
-        raise BridgeClientError("Bridge returned an Event without timer_state")
-    timer_state = event.get("timer_state")
-    if timer_state is not None and not isinstance(timer_state, dict):
-        raise BridgeClientError("Bridge returned an invalid Event timer_state")
-    return event
 
 
 def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
@@ -285,13 +272,13 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
                 )
             try:
                 event = validate_event(json.loads(data))
-            except (json.JSONDecodeError, UnicodeError) as error:
+            except (json.JSONDecodeError, UnicodeError, RecursionError) as error:
                 raise BridgeClientError(
                     f"Bridge returned invalid Event JSON: {error}"
                 ) from error
 
-            session = int(event["session_id"])
-            sequence = int(event["event_sequence"])
+            session = cast(int, event["session_id"])
+            sequence = cast(int, event["event_sequence"])
             if previous_session is not None and session != previous_session:
                 print(
                     f"warning: Event session changed from {previous_session} "
@@ -317,7 +304,14 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
             else:
                 print(f"[{sequence}] {event['type']}")
                 if isinstance(event.get("timer_state"), dict):
-                    print("  " + "\n  ".join(timer_state_lines(event["timer_state"])))
+                    print(
+                        "  "
+                        + "\n  ".join(
+                            timer_state_lines(
+                                cast(dict[str, object], event["timer_state"])
+                            )
+                        )
+                    )
             received += 1
     except KeyboardInterrupt:
         return 0
