@@ -46,42 +46,7 @@ jobs:
             --no-restore `
             --nologo
 
-          $packageName = "LiveSplit.Bridge-${{ github.ref_name }}"
-          $stagingPath = Join-Path $env:RUNNER_TEMP $packageName
-          $artifactPath = Join-Path $PWD "artifacts"
-          New-Item -ItemType Directory -Path $stagingPath, $artifactPath -Force
-
-          $buildProperties = dotnet msbuild src/LiveSplit.Bridge/LiveSplit.Bridge.csproj `
-            -property:Configuration=Release `
-            -getProperty:TargetDir,BridgeDistributionFiles `
-            -nologo | ConvertFrom-Json
-          $distributionFiles = $buildProperties.Properties.BridgeDistributionFiles -split ";"
-          $buildOutputPath = $buildProperties.Properties.TargetDir
-          foreach ($file in $distributionFiles) {
-            $sourcePath = Join-Path $buildOutputPath $file
-            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-              throw "Expected release file was not produced: $sourcePath"
-            }
-
-            Copy-Item -LiteralPath $sourcePath -Destination $stagingPath
-          }
-
-          $expectedFiles = @($distributionFiles | Sort-Object)
-          $stagedFiles = @(Get-ChildItem -LiteralPath $stagingPath -File |
-            ForEach-Object Name | Sort-Object)
-          if (Compare-Object $expectedFiles $stagedFiles) {
-            throw "Release staging contents do not match BridgeDistributionFiles."
-          }
-          if (Get-ChildItem -LiteralPath $stagingPath -Filter "*.pdb" -File) {
-            throw "Release staging must not contain PDB files."
-          }
-
-          $archivePath = Join-Path $artifactPath "$packageName.zip"
-          Compress-Archive -Path "$stagingPath/*" -DestinationPath $archivePath
-
-          $hash = Get-FileHash -Path $archivePath -Algorithm SHA256
-          "$($hash.Hash.ToLowerInvariant())  $($hash.Path | Split-Path -Leaf)" |
-            Set-Content -Path (Join-Path $artifactPath "SHA256SUMS.txt") -Encoding ascii
+          ./eng/package-release.ps1 -PackageName "LiveSplit.Bridge-${{ github.ref_name }}"
 
       - name: Create GitHub release
         shell: pwsh

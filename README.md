@@ -93,6 +93,9 @@ WebSocket接続は維持されます。Origin制限はブラウザ由来の要�
 - JSON WebSocket実装と検証状況:
   [`docs/phase3c-json-transport.md`](docs/phase3c-json-transport.md)
 
+- JSON v4 Schemaと検証手順:
+  [`tools/schema/README.md`](tools/schema/README.md)
+
 - Bridgeへ接続するアプリケーションを作る方:
   [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
 - 同梱のDebug CLIを使う方:

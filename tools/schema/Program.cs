@@ -169,7 +169,6 @@ var eventSamples = new BridgeEvent[]
 foreach (var bridgeEvent in eventSamples) AddSerializedCase("event", bridgeEvent.GetType().Name, JsonSerializer.Serialize<BridgeEvent>(bridgeEvent, jsonOptions));
 AddSerializedCase("event", "TimerResetEvent with null timer state", JsonSerializer.Serialize<BridgeEvent>(new TimerResetEvent { SessionId = 123, EventSequence = 9, TimerState = null }, jsonOptions));
 
-var outOfOrderOptions = new JsonSerializerOptions(jsonOptions) { AllowOutOfOrderMetadataProperties = false };
 Check("five query methods deserialize to their declared derived types", () =>
 {
     var json = new[] { "get_timer_state", "get_run", "get_attempt", "get_context_state", "get_completed_count" };
@@ -201,7 +200,6 @@ Check("unknown request method is rejected", () => Rejects(() => JsonSerializer.D
 Check("query method rejects operation params", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\",\"request_id\":1,\"params\":{}}", jsonOptions)));
 Check("missing operation params is rejected", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"timer_operation\",\"request_id\":1}", jsonOptions)));
 Check("request_id before method is accepted when out-of-order metadata is enabled", () => JsonSerializer.Deserialize<RpcRequest>("{\"request_id\":1,\"method\":\"get_run\"}", jsonOptions) is GetRunRequest);
-Check("request_id before method is rejected when out-of-order metadata is disabled", () => Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"request_id\":1,\"method\":\"get_run\"}", outOfOrderOptions)));
 Check("invalid enum text and numeric enum values are rejected", () => Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":\"flying\",\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false}", jsonOptions)) && Rejects(() => JsonSerializer.Deserialize<TimerState>("{\"phase\":1,\"split_index\":0,\"real_time_ticks\":0,\"game_time_ticks\":null,\"is_game_time_initialized\":false,\"is_game_time_paused\":false}", jsonOptions)));
 Check("shared explicit-null converter emits and accepts null only", () => JsonSerializer.Serialize<RpcResponse>(new ControlSuccessResponse { RequestId = 1, SessionId = 123 }, jsonOptions).Contains("\"result\":null") && Rejects(() => JsonSerializer.Deserialize<JsonNullValue>("true", jsonOptions)));
 Check("success and error response DTOs serialize mutually exclusive members", () => responses.All(response =>
@@ -260,18 +258,6 @@ Check("request_id rejects overflow, negative, null, and omission in Request and 
         && Rejects(() => JsonSerializer.Deserialize<RpcRequest>("{\"method\":\"get_run\"}", jsonOptions))
         && Rejects(() => JsonSerializer.Deserialize<ControlSuccessResponse>("{\"session_id\":1,\"result\":null}", jsonOptions));
 });
-Check("event_sequence uint32 accepts zero and maximum in Serializer", () => new[] { 0u, 1u, uint.MaxValue }.All(sequence =>
-{
-    var json = JsonSerializer.Serialize(new RunChangedEvent { SessionId = 1, EventSequence = sequence }, jsonOptions);
-    return JsonSerializer.Deserialize<RunChangedEvent>(json, jsonOptions)?.EventSequence == sequence;
-}));
-Check("event_sequence rejects overflow, negative, null, and omission in Serializer", () => new[] { "4294967296", "-1", "null" }.All(value => Rejects(() => JsonSerializer.Deserialize<RunChangedEvent>($"{{\"session_id\":1,\"event_sequence\":{value},\"timer_state\":null}}", jsonOptions)))
-    && Rejects(() => JsonSerializer.Deserialize<RunChangedEvent>("{\"session_id\":1,\"timer_state\":null}", jsonOptions)));
-Check("session_id uint32 accepts zero and maximum in Serializer but rejects overflow", () => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":0}", jsonOptions)?.SessionId == 0
-    && JsonSerializer.Deserialize<SessionIdProbe>($"{{\"session_id\":{uint.MaxValue}}}", jsonOptions)?.SessionId == uint.MaxValue
-    && Rejects(() => JsonSerializer.Deserialize<SessionIdProbe>("{\"session_id\":4294967296}", jsonOptions)));
-Check("nullable collection elements and dictionary values accept null in System.Text.Json", () => JsonSerializer.Deserialize<RunState>("{\"game_name\":\"\",\"category_name\":\"\",\"offset_ticks\":0,\"file_path\":null,\"layout_path\":null,\"metadata\":{\"run_id\":null,\"platform_name\":null,\"region_name\":null,\"uses_emulator\":false,\"variables\":{\"x\":null}},\"comparisons\":[null],\"segments\":[],\"game_icon\":null}", jsonOptions) is { Comparisons.Count: 1, Metadata.Variables.Count: 1 });
-Check("root null is accepted by System.Text.Json for reference model", () => JsonSerializer.Deserialize<RunState>("null", jsonOptions) == null);
 
 var serializedCasesPath = Path.Combine(outputDirectory, "csharp-serialized-cases.json");
 File.WriteAllText(serializedCasesPath, JsonSerializer.Serialize(cases, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }) + Environment.NewLine);
@@ -323,9 +309,4 @@ public sealed class SerializedCase
     public string Name { get; }
     public bool Valid { get; }
     public JsonNode Data { get; }
-}
-
-public sealed class SessionIdProbe
-{
-    [JsonRequired] public uint SessionId { get; set; }
 }

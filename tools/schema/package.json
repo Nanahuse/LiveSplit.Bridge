@@ -1,5 +1,5 @@
 {
-  "name": "livesplit-bridge-schema-poc-validation",
+  "name": "livesplit-bridge-schema-validation",
   "private": true,
   "packageManager": "pnpm@12.9.1",
   "engines": {

@@ -73,7 +73,7 @@ Query成功の例:
 {"error":{"code":"permission_denied","message":"Control permission is required."},"request_id":1,"session_id":123456789}
 ```
 
-エラーコードは`invalid_request`、`invalid_argument`、`operation_failed`、`internal_error`、`permission_denied`です。時間値は100ナノ秒単位のticks整数、Enumは小文字の文字列、画像はPNGのBase64文字列または`null`です。生成済みの通信Schemaは[`tools/schema-poc/schema-results`](tools/schema-poc/schema-results)にあります。
+エラーコードは`invalid_request`、`invalid_argument`、`operation_failed`、`internal_error`、`permission_denied`です。時間値は100ナノ秒単位のticks整数、Enumは小文字の文字列、画像はPNGのBase64文字列または`null`です。生成済みの通信Schemaは[`schemas/v4/`](schemas/v4/)にあります。
 
 ## Events
 
@@ -117,5 +117,5 @@ Binary Message、JSON構文エラー、JSONオブジェクト以外、欠落ま�
 ## 関連資料
 
 - JSON WebSocket実装と検証状況: [`docs/phase3c-json-transport.md`](docs/phase3c-json-transport.md)
-- Protocol v4のC# DTOと生成Schema: [`tools/schema-poc/README.md`](tools/schema-poc/README.md)
+- Protocol v4のC# DTOとSchema生成・検証手順: [`tools/schema/README.md`](tools/schema/README.md)
 - 同梱Debug CLI: [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)（JSON Protocol v4用）
