@@ -50,8 +50,6 @@ public class DeploymentProjectTests
             new[]
             {
                 "LiveSplit.Bridge.dll",
-                "LiveSplit.Bridge.Protocol.dll",
-                "Google.Protobuf.dll",
             },
             files);
     }

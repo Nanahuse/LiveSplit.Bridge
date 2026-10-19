@@ -11,8 +11,6 @@
       Private="false"
       ExcludeAssets="runtime" />
 
-    <ProjectReference
-      Include="..\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -35,12 +33,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
     <PackageReference Include="System.Text.Json" Version="9.0.4" />
   </ItemGroup>
 
   <PropertyGroup>
-    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;Google.Protobuf.dll</BridgeDistributionFiles>
+    <BridgeDistributionFiles>LiveSplit.Bridge.dll</BridgeDistributionFiles>
   </PropertyGroup>
 
   <ItemGroup>
