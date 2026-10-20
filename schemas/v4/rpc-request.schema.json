@@ -1,0 +1,235 @@
+{
+  "type": "object",
+  "required": [
+    "method"
+  ],
+  "anyOf": [
+    {
+      "properties": {
+        "method": {
+          "const": "get_timer_state"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "get_run"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "get_attempt"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "get_context_state"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "get_completed_count"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "timer_operation"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "operation"
+          ],
+          "anyOf": [
+            {
+              "properties": {
+                "operation": {
+                  "const": "start"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "split"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "skip"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "undo"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "reset"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "pause"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "resume"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "params",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "method": {
+          "const": "game_time_operation"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "operation"
+          ],
+          "anyOf": [
+            {
+              "properties": {
+                "operation": {
+                  "const": "initialize"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "set"
+                },
+                "ticks": {
+                  "type": "integer",
+                  "minimum": -9223372036854775808,
+                  "maximum": 9223372036854775807
+                }
+              },
+              "required": [
+                "ticks"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "pause"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "properties": {
+                "operation": {
+                  "const": "resume"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "params",
+        "request_id"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

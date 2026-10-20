@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Windows.Forms;
 using System.Xml;
+using System.Text.Json;
 using LiveSplit.Model;
 using LiveSplit.Model.Comparisons;
 using LiveSplit.UI;
@@ -57,6 +58,25 @@ public class ComponentLifecycleTests
 
         Update(component, state);
         BridgeTestEndpoints.WaitForListener(port, expected: true);
+    }
+
+    [Fact]
+    public async Task ComponentPublishesJsonV4RpcEndpoint()
+    {
+        var state = CreateState();
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var component = new Component(state);
+        SetSettings(component, port);
+        Update(component, state);
+
+        using var client = await JsonWebSocketTestClient.ConnectAsync(BridgeTestEndpoints.JsonRpc(port)).ConfigureAwait(false);
+        await client.SendTextAsync("{\"request_id\":7,\"method\":\"get_completed_count\"}");
+        var received = await client.ReceiveAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(System.Net.WebSockets.WebSocketMessageType.Text, received.Type);
+        using var response = JsonDocument.Parse(received.Data);
+        Assert.Equal(7U, response.RootElement.GetProperty("request_id").GetUInt32());
+        Assert.True(response.RootElement.GetProperty("session_id").GetUInt32() > 0);
+        Assert.Equal(0U, response.RootElement.GetProperty("result").GetProperty("completed_count").GetUInt32());
     }
 
     [Fact]

@@ -1,0 +1,14 @@
+{
+  "name": "livesplit-bridge-schema-validation",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "validate": "node validate-schemas.cjs"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
+  }
+}

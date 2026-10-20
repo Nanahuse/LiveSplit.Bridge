@@ -11,8 +11,6 @@
       Private="false"
       ExcludeAssets="runtime" />
 
-    <ProjectReference
-      Include="..\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -29,11 +27,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
+    <Compile Include="..\LiveSplit.Bridge.Json\Models.cs" Link="Json\Models.cs" />
+    <Compile Include="..\LiveSplit.Bridge.Json\SerializerOptions.cs" Link="Json\SerializerOptions.cs" />
+    <Compile Include="..\LiveSplit.Bridge.Json\SnapshotOperations.cs" Link="Json\SnapshotOperations.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
   </ItemGroup>
 
   <PropertyGroup>
-    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;Google.Protobuf.dll</BridgeDistributionFiles>
+    <BridgeDistributionFiles>LiveSplit.Bridge.dll</BridgeDistributionFiles>
   </PropertyGroup>
 
   <ItemGroup>
