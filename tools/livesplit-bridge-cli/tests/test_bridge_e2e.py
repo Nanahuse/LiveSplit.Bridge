@@ -157,21 +157,34 @@ def test_host() -> Iterator[BridgeTestHost]:
         bufsize=1,
     )
     lines: queue.Queue[str] = queue.Queue()
-    threading.Thread(
+    reader = threading.Thread(
         target=enqueue_lines, args=(process.stdout, lines), daemon=True
-    ).start()
+    )
+    reader.start()
+    line = None
     try:
-        line = lines.get(timeout=20)
+        line = lines.get(timeout=30)
     except queue.Empty:
-        process.terminate()
-        output = process.communicate(timeout=5)[0]
-        pytest.fail(
-            f"TestHost did not become ready (exit={process.returncode}): {output}"
-        )
+        pass
     if line != "READY":
-        process.terminate()
-        process.wait(timeout=5)
-        pytest.fail(f"TestHost failed to start: {line}")
+        if line is None and process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+        reader.join(timeout=5)
+        output = [] if line is None else [line]
+        while True:
+            try:
+                output.append(lines.get_nowait())
+            except queue.Empty:
+                break
+        pytest.fail(
+            f"TestHost did not become ready (exit={process.returncode}):\n"
+            + "\n".join(output)
+        )
     host = BridgeTestHost(process, port, lines)
     try:
         yield host
@@ -351,6 +364,7 @@ def test_testhost_rejects_port_occupied_by_another_process() -> None:
     assert result.returncode != 0
     assert b"READY" not in result.stdout
     assert b"already occupied" in result.stderr
+    assert b"System.Net.Sockets.SocketException" in result.stderr
 
 
 def test_testhost_shutdown_releases_rpc_port(test_host: BridgeTestHost) -> None:
