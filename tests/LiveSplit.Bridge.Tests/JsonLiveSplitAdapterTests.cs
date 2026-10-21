@@ -118,7 +118,8 @@ public class JsonLiveSplitAdapterTests
         segment.SetPixel(0, 0, Color.Cyan);
         run.GameIcon = game;
         run[0].Icon = segment;
-        var state = TestLiveSplitState.Create(run);
+        using var ui = new LiveSplitTestUiThread(run);
+        var state = ui.State;
         var adapter = new JsonLiveSplitAdapter(state);
 
         var icons = adapter.GetRunIcons();
@@ -128,8 +129,11 @@ public class JsonLiveSplitAdapterTests
         Assert.Null(icons.SegmentIcons[1]);
 
         // Every request reads the current Run; there is no persistent icon snapshot.
-        state.Run = CreateRun();
-        var missing = adapter.GetRunIcons();
+        var missing = (Json.RunIcons)state.Form.Invoke(new Func<Json.RunIcons>(() =>
+        {
+            state.Run = CreateRun();
+            return adapter.GetRunIcons();
+        }));
         Assert.Null(missing.GameIcon);
         Assert.Equal(new byte[]?[] { null, null }, missing.SegmentIcons);
     }

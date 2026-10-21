@@ -140,9 +140,11 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
         // TimerForm.SetRun disposes old images before replacing state.Run, without a
         // shared lock. Clone on that same thread to exclude Dispose, then encode the
         // detached images on the calling RPC thread. Image encoding needs no UI affinity.
-        var form = state.Form;
-        if (form?.IsDisposed == true) throw new ObjectDisposedException(nameof(state.Form));
-        var images = form?.InvokeRequired == true
+        var form = state.Form ?? throw new InvalidOperationException("The LiveSplit form is unavailable.");
+        if (form.Disposing || form.IsDisposed) throw new ObjectDisposedException(nameof(state.Form));
+        // InvokeRequired can also return false before the owning thread creates a handle.
+        if (!form.IsHandleCreated) throw new InvalidOperationException("The LiveSplit form handle is not created.");
+        var images = form.InvokeRequired
             ? (List<Bitmap?>)form.Invoke(new Func<List<Bitmap?>>(CloneRunIcons))
             : CloneRunIcons();
         try
