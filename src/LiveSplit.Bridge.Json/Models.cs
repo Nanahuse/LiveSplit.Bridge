@@ -3,9 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Range = System.ComponentModel.DataAnnotations.RangeAttribute;
 #if SCHEMA_GENERATION
 using Json.Schema.Generation;
-using Range = System.ComponentModel.DataAnnotations.RangeAttribute;
 using PngImage = string;
 #else
 using PngImage = byte[];
@@ -86,9 +86,7 @@ public enum BridgeErrorCode
 #endif
 public abstract class CorrelatedMessage
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "0", "4294967295")]
-#endif
     [JsonRequired] public uint RequestId { get; set; }
 }
 
@@ -164,17 +162,13 @@ public sealed class GameSetParams : GameTimeParams
         get => OperationName;
         set { if (value != OperationName) throw new JsonException("Invalid game-time set operation."); }
     }
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long Ticks { get; set; }
 }
 
 public abstract class RpcResponse : CorrelatedMessage
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "1", "4294967295")]
-#endif
     [JsonRequired] public uint SessionId { get; set; }
 }
 
@@ -213,13 +207,9 @@ public sealed class ErrorResponse : RpcResponse
 #endif
 public abstract class BridgeEvent
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "1", "4294967295")]
-#endif
     [JsonRequired] public uint SessionId { get; set; }
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "1", "4294967295")]
-#endif
     [JsonRequired] public uint EventSequence { get; set; }
 }
 
@@ -262,17 +252,11 @@ public sealed class ChangedEvent : BridgeEvent
 public sealed class TimerState
 {
     [JsonRequired] public TimerPhase Phase { get; set; }
-#if SCHEMA_GENERATION
     [Range(int.MinValue, int.MaxValue)]
-#endif
     [JsonRequired] public int SplitIndex { get; set; }
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long RealTimeTicks { get; set; }
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long? GameTimeTicks { get; set; }
     [JsonRequired] public bool IsGameTimeInitialized { get; set; }
     [JsonRequired] public bool IsGameTimePaused { get; set; }
@@ -283,13 +267,9 @@ public sealed class TimerState
 #endif
 public sealed class TimeValue
 {
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long? RealTimeTicks { get; set; }
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long? GameTimeTicks { get; set; }
 }
 
@@ -298,9 +278,7 @@ public sealed class TimeValue
 #endif
 public sealed class AttemptState
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "0", "4294967295")]
-#endif
     [JsonRequired] public uint AttemptCount { get; set; }
     [JsonRequired] public List<AttemptSegment> Segments { get; set; } = new();
 }
@@ -309,9 +287,7 @@ public sealed class AttemptState
 #endif
 public sealed class AttemptSegment
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "0", "4294967295")]
-#endif
     [JsonRequired] public uint Index { get; set; }
     [JsonRequired] public TimeValue SplitTime { get; set; } = new();
     [JsonRequired] public Dictionary<string, string> CustomVariables { get; set; } = new();
@@ -321,9 +297,7 @@ public sealed class AttemptSegment
 #endif
 public sealed class CompletedCount
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "0", "4294967295")]
-#endif
     [JsonRequired, JsonPropertyName("completed_count")] public uint Value { get; set; }
 }
 #if SCHEMA_GENERATION
@@ -342,9 +316,7 @@ public sealed class RunState
 {
     [JsonRequired] public string GameName { get; set; } = "";
     [JsonRequired] public string CategoryName { get; set; } = "";
-#if SCHEMA_GENERATION
     [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
-#endif
     [JsonRequired] public long OffsetTicks { get; set; }
     [JsonRequired] public string? FilePath { get; set; }
     [JsonRequired] public string? LayoutPath { get; set; }
@@ -376,9 +348,7 @@ public sealed class RunIcons
 #endif
 public sealed class SegmentInfo
 {
-#if SCHEMA_GENERATION
     [Range(typeof(uint), "0", "4294967295")]
-#endif
     [JsonRequired] public uint Index { get; set; }
     [JsonRequired] public string Name { get; set; } = "";
     [JsonRequired] public List<ComparisonTime> Comparisons { get; set; } = new();
