@@ -101,7 +101,7 @@ DTOの生ソースは、明示的なwire名とSchema専用属性で増えた。�
 
 公式exeの通常通信確認後、RPCの単一操作チェックと不要内部検証の整理を加えた。最終DLLは既存TestHostを未変更の公式アセンブリで起動して既存12件を再実行した。TestHostとその専用configは検証用の追加ファイルで、配布ZIPには入らない。元77ファイルはこの確認後も変更0。
 
-GitHub Actionsの結果はPRのチェック欄に集約する。ローカルログ/TRX/JUnitと測定用一時コードはignored `.tmp/migration-results/` 等へ保存した。検証・測定の集計は [`json-v4-generation-results.json`](json-v4-generation-results.json) に保存する。
+GitHub Actionsは実装コミット `11ce8a2` でSchema contract / Windows testsの両ジョブ成功（[実行結果](https://github.com/Nanahuse/LiveSplit.Bridge/actions/runs/39533917312)）。最終状態は[PR #37](https://github.com/Nanahuse/LiveSplit.Bridge/pull/37)のチェック欄に集約する。ローカルログ/TRX/JUnitと測定用一時コードはignored `.tmp/migration-results/` 等へ保存した。検証・測定の集計は [`json-v4-generation-results.json`](json-v4-generation-results.json) に保存する。
 
 ## 性能
 

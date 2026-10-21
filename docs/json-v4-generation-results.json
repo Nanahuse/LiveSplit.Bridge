@@ -45,7 +45,13 @@
       "schemaRejected": 0,
       "verifiedDllSha256": "981010f38570e00257b6b05de32eadaebe3b9c28d494a0c4d9ab0aae58fc3fad"
     },
-    "githubActions": "pending"
+    "githubActions": {
+      "runId": 39533917312,
+      "url": "https://github.com/Nanahuse/LiveSplit.Bridge/actions/runs/39533917312",
+      "implementationCommit": "11ce8a2",
+      "schemaContract": "success",
+      "windowsTests": "success"
+    }
   },
   "distribution": {
     "dllBytes": 68096,
