@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "JsonSchema.Net.Generation": {
+        "type": "Direct",
+        "requested": "[7.3.11, )",
+        "resolved": "7.3.11",
+        "contentHash": "ANV07AP26QlI4eN2pF2rnKqNvVOtJ0GkA/V9/FwoVAh+icPMKp2QrenR4cz9rO6MiH0fGfZVc0+QH0QP4wjNcQ==",
+        "dependencies": {
+          "Humanizer.Core": "3.0.10",
+          "JsonSchema.Net": "9.4.0"
+        }
+      },
+      "JsonSchema.Net.Generation.DataAnnotations": {
+        "type": "Direct",
+        "requested": "[3.1.1, )",
+        "resolved": "3.1.1",
+        "contentHash": "Ws39uh5AqpL7XF0k00+hNOqHWFcERCJe0YsLWp0z57X8mN28vRwkFnMYCNhwV2ocSejWhqJP6BxydakR6cmSqg==",
+        "dependencies": {
+          "Humanizer.Core": "3.0.10",
+          "JsonSchema.Net.Generation": "7.1.3",
+          "System.ComponentModel.Annotations": "5.0.0"
+        }
+      },
+      "Humanizer.Core": {
+        "type": "Transitive",
+        "resolved": "3.0.10",
+        "contentHash": "yZIhtw8sYuvsONzQbZxWpR60tMWYHXoo0DL6nyOqSFiU5POjBTSEyWFpTQtJEZuy+oqiYTXKXY/Mjx7KnqIQFw=="
+      },
+      "Json.More.Net": {
+        "type": "Transitive",
+        "resolved": "3.0.1",
+        "contentHash": "fRctF2J2SILYG6wqP21drmeEODmCVkVQ/b3MndDu2fT1swfySyUgq7ePCk+aENGlDcIm05fyfjh9vcuqDEfv3w=="
+      },
+      "JsonPointer.Net": {
+        "type": "Transitive",
+        "resolved": "7.0.2",
+        "contentHash": "oClYHv2ooeRrtPZyC9sb/Za/ie5pGhjTbNHlAyFg4XOCyU+606FdoZKS7UdaWvtsPlrF+U2w0Ja3TRvn5+spyA==",
+        "dependencies": {
+          "Humanizer.Core": "3.0.10",
+          "Json.More.Net": "3.0.1"
+        }
+      },
+      "JsonSchema.Net": {
+        "type": "Transitive",
+        "resolved": "9.4.0",
+        "contentHash": "muE4nPuzbD9x5XA1mkXJNqX4mhz47oF3EY8qFLY1pyUY7lhXFKq65t/dSKIHeNSLBV17zwZuq24MD1em90rMNg==",
+        "dependencies": {
+          "JsonPointer.Net": "7.0.2"
+        }
+      },
+      "System.ComponentModel.Annotations": {
+        "type": "Transitive",
+        "resolved": "5.0.0",
+        "contentHash": "dMkqfy2el8A8/I76n2Hi1oBFEbG1SfxD2l5nhwXV3XjlnOmwxJlQbYpJH4W51odnU9sARCSAgv7S3CyAFMkpYg=="
+      }
+    }
+  }
+}

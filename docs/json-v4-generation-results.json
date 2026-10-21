@@ -1,0 +1,293 @@
+{
+  "baseline": "2877e44967cd3aa4ece5026efd6fcfa681bb270d",
+  "branch": "codex/json-v4-generation",
+  "tooling": {
+    "generationFramework": "net10.0",
+    "runtimeFramework": "net481",
+    "generation": "JsonSchema.Net.Generation 7.3.11",
+    "dataAnnotations": "JsonSchema.Net.Generation.DataAnnotations 3.1.1",
+    "runtimeSerializer": "System.Text.Json 9.0.4"
+  },
+  "validation": {
+    "dotnet": {
+      "passed": 87,
+      "skipped": 0
+    },
+    "python": {
+      "passed": 43,
+      "e2e": 12
+    },
+    "officialDependenciesE2E": {
+      "passed": 12
+    },
+    "schemaContract": {
+      "fixed": 21,
+      "actualCSharp": 33
+    },
+    "oneOffSchemaComparison": {
+      "cases": 11029,
+      "exactDifferences": 0,
+      "ajvDifferences": 0
+    },
+    "actualMessagesChanged": 0,
+    "officialExe": {
+      "checks": 34,
+      "messages": 34,
+      "eventTypes": [
+        "run_changed",
+        "timer_phase_changed",
+        "timer_reset",
+        "timer_skipped",
+        "timer_split",
+        "timer_started",
+        "timer_undo"
+      ],
+      "schemaRejected": 0,
+      "verifiedDllSha256": "981010f38570e00257b6b05de32eadaebe3b9c28d494a0c4d9ab0aae58fc3fad"
+    },
+    "githubActions": "pending"
+  },
+  "distribution": {
+    "dllBytes": 68096,
+    "dllSha256": "f19428ede2d9d4185fffd7e937e39112d2234e8c9a61847c1d876a45301bcf32",
+    "originalOfficialFiles": 77,
+    "changedOfficialFiles": [],
+    "deployedFinalDllMatches": true,
+    "zipEntries": [
+      "LiveSplit.Bridge.dll"
+    ],
+    "addedRuntimeDependencies": []
+  },
+  "performance": {
+    "runSerializationBefore": {
+      "variant": "before",
+      "iterations": 1000,
+      "trials": 5,
+      "payloadBytes": 27377,
+      "microsecondsPerSend": [
+        100.60950000000001,
+        101.2936,
+        99.8785,
+        101.23150000000001,
+        98.23230000000001
+      ],
+      "gen0Collections": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "medianMicroseconds": 100.60950000000001,
+      "dllBytes": 69632
+    },
+    "runSerializationAfter": {
+      "variant": "after",
+      "iterations": 1000,
+      "trials": 5,
+      "payloadBytes": 27377,
+      "microsecondsPerSend": [
+        99.205,
+        99.40220000000001,
+        100.81880000000001,
+        100.91420000000001,
+        100.6288
+      ],
+      "gen0Collections": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "medianMicroseconds": 100.6288,
+      "dllBytes": 68096
+    },
+    "rpcRoundtrip": {
+      "iterations": 500,
+      "trials": 3,
+      "rows": [
+        {
+          "variant": "before",
+          "trial": 1,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 84.59780015982687,
+          "responseBytes": 194
+        },
+        {
+          "variant": "before",
+          "trial": 1,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 255.86980022490025,
+          "responseBytes": 1092
+        },
+        {
+          "variant": "after",
+          "trial": 1,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 103.27559988945723,
+          "responseBytes": 194
+        },
+        {
+          "variant": "after",
+          "trial": 1,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 278.9294000249356,
+          "responseBytes": 1092
+        },
+        {
+          "variant": "before",
+          "trial": 2,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 95.51679994910955,
+          "responseBytes": 194
+        },
+        {
+          "variant": "before",
+          "trial": 2,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 266.5212000720203,
+          "responseBytes": 1092
+        },
+        {
+          "variant": "after",
+          "trial": 2,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 98.5611998476088,
+          "responseBytes": 194
+        },
+        {
+          "variant": "after",
+          "trial": 2,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 262.89040013216436,
+          "responseBytes": 1092
+        },
+        {
+          "variant": "before",
+          "trial": 3,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 105.279800016433,
+          "responseBytes": 193
+        },
+        {
+          "variant": "before",
+          "trial": 3,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 262.6082000788301,
+          "responseBytes": 1091
+        },
+        {
+          "variant": "after",
+          "trial": 3,
+          "method": "get_timer_state",
+          "microsecondsPerRoundtrip": 97.23379998467863,
+          "responseBytes": 194
+        },
+        {
+          "variant": "after",
+          "trial": 3,
+          "method": "get_run",
+          "microsecondsPerRoundtrip": 287.8944000694901,
+          "responseBytes": 1092
+        }
+      ],
+      "medians": {
+        "before": {
+          "get_timer_state": 95.51679994910955,
+          "get_run": 262.6082000788301
+        },
+        "after": {
+          "get_timer_state": 98.5611998476088,
+          "get_run": 278.9294000249356
+        }
+      }
+    }
+  },
+  "size": {
+    "dto": {
+      "beforeLines": 256,
+      "afterLines": 425,
+      "beforeBytes": 10065,
+      "afterBytes": 12383,
+      "beforeClasses": 54,
+      "afterClasses": 28
+    },
+    "product": {
+      "beforeLines": 2184,
+      "afterLines": 2363,
+      "beforeBytes": 89203,
+      "afterBytes": 92521
+    },
+    "tests": {
+      "beforeLines": 2169,
+      "afterLines": 1980,
+      "beforeBytes": 97148,
+      "afterBytes": 90597
+    },
+    "cliSource": {
+      "beforeLines": 754,
+      "afterLines": 533,
+      "beforeBytes": 27842,
+      "afterBytes": 19483
+    },
+    "cliTests": {
+      "beforeLines": 856,
+      "afterLines": 685,
+      "beforeBytes": 27541,
+      "afterBytes": 21966
+    },
+    "schemaCode": {
+      "beforeLines": 362,
+      "afterLines": 208,
+      "beforeBytes": 22085,
+      "afterBytes": 10982
+    },
+    "schemaFixtures": {
+      "beforeLines": 82,
+      "afterLines": 23,
+      "beforeBytes": 16178,
+      "afterBytes": 3524
+    },
+    "packaging": {
+      "beforeLines": 103,
+      "afterLines": 52,
+      "beforeBytes": 3960,
+      "afterBytes": 1914
+    },
+    "schemas": [
+      {
+        "file": "bridge-event.schema.json",
+        "beforeLines": 484,
+        "afterLines": 196,
+        "beforeBytes": 12034,
+        "afterBytes": 5023,
+        "beforeBranches": 8,
+        "afterBranches": 3
+      },
+      {
+        "file": "rpc-request.schema.json",
+        "beforeLines": 235,
+        "afterLines": 152,
+        "beforeBytes": 5191,
+        "afterBytes": 3660,
+        "beforeBranches": 7,
+        "afterBranches": 4
+      },
+      {
+        "file": "rpc-response.schema.json",
+        "beforeLines": 522,
+        "afterLines": 522,
+        "beforeBytes": 14096,
+        "afterBytes": 14061,
+        "beforeBranches": 7,
+        "afterBranches": 7
+      }
+    ]
+  },
+  "limitations": [
+    "UI click failed: GetCursorPos access denied (0x80070005).",
+    "The official LiveSplit.exe checks preceded the final RPC-only single-action guard. The final DLL was retested with unmodified official assemblies through the existing TestHost.",
+    "Finite compatibility tests do not prove full logical equivalence."
+  ]
+}

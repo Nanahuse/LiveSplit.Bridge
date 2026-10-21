@@ -88,7 +88,7 @@ public sealed class JsonEventSubscriptionTests
         Assert.Empty(lateSocket.SentPayloads);
     }
 
-    private static Json.TimerStartedEvent CreateEvent(uint sequence) => new() { SessionId = 10, EventSequence = sequence };
+    private static Json.TimerEvent CreateEvent(uint sequence) => new() { Type = Json.TimerEventKind.Started, SessionId = 10, EventSequence = sequence };
 
     private static uint ReadSequence(byte[] payload)
     {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using LiveSplit.Bridge.Json;
@@ -12,28 +13,16 @@ internal static class ContractSamples
         var jsonOptions = BridgeJsonOptions.Create();
         var cases = new List<SerializedCase>();
 
-        var requestSamples = new List<RpcRequest>
-        {
-            new GetTimerStateRequest { RequestId = 1 },
-            new GetRunRequest { RequestId = 2 },
-            new GetAttemptRequest { RequestId = 3 },
-            new GetContextStateRequest { RequestId = 4 },
-            new GetCompletedCountRequest { RequestId = 5 },
-        };
-        var timerOperations = new TimerOperationParams[]
-        {
-            new TimerStartParams(), new TimerSplitParams(), new TimerSkipParams(), new TimerUndoParams(),
-            new TimerResetParams(), new TimerPauseParams(), new TimerResumeParams(),
-        };
-        foreach (var operation in timerOperations)
-            requestSamples.Add(new TimerOperationRequest { RequestId = (uint)requestSamples.Count + 1, Params = operation });
-        var gameTimeOperations = new GameTimeOperationParams[]
-        {
-            new GameTimeInitializeParams(), new GameTimeSetParams { Ticks = -123456 }, new GameTimePauseParams(), new GameTimeResumeParams(),
-        };
-        foreach (var operation in gameTimeOperations)
-            requestSamples.Add(new GameTimeOperationRequest { RequestId = (uint)requestSamples.Count + 1, Params = operation });
-        foreach (var request in requestSamples) AddSerializedCase("request", request.GetType().Name, JsonSerializer.Serialize<RpcRequest>(request, jsonOptions));
+        var requestSamples = Enum.GetValues(typeof(QueryMethod)).Cast<QueryMethod>()
+            .Select(method => (RpcRequest)new QueryRequest { Method = method, RequestId = (uint)method + 1 }).ToList();
+        foreach (TimerOperation operation in Enum.GetValues(typeof(TimerOperation)))
+            requestSamples.Add(new TimerRequest { RequestId = (uint)requestSamples.Count + 1, Params = new() { Operation = operation } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 13, Params = new() { Operation = GameControlOperation.Initialize } });
+        requestSamples.Add(new GameTimeRequest<GameSetParams> { RequestId = 14, Params = new() { Ticks = -123456 } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 15, Params = new() { Operation = GameControlOperation.Pause } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 16, Params = new() { Operation = GameControlOperation.Resume } });
+        foreach (var request in requestSamples)
+            AddSerializedCase("request", $"request {request.RequestId}", JsonSerializer.Serialize((object)request, jsonOptions));
 
         var emptyRun = new RunState
         {
@@ -88,30 +77,30 @@ internal static class ContractSamples
         };
         var responses = new RpcResponse[]
         {
-            new TimerStateResponse { RequestId = 1, SessionId = 123, Result = timerState },
-            new RunStateResponse { RequestId = 2, SessionId = 123, Result = emptyRun },
-            new RunStateResponse { RequestId = 8, SessionId = 123, Result = populatedRun },
-            new AttemptStateResponse { RequestId = 3, SessionId = 123, Result = new AttemptState { AttemptCount = 4, Segments = new List<AttemptSegment> { new() { Index = 0, SplitTime = new TimeValue { RealTimeTicks = null, GameTimeTicks = null }, CustomVariables = new Dictionary<string, string>() } } } },
-            new ContextStateResponse { RequestId = 4, SessionId = 123, Result = new ContextState { CurrentTimingMethod = TimingMethod.GameTime, CurrentComparison = "Personal Best", CustomVariables = new Dictionary<string, string>() } },
-            new CompletedCountResponse { RequestId = 5, SessionId = 123, Result = new CompletedCount { Value = 2 } },
+            new Success<TimerState> { RequestId = 1, SessionId = 123, Result = timerState },
+            new Success<RunState> { RequestId = 2, SessionId = 123, Result = emptyRun },
+            new Success<RunState> { RequestId = 8, SessionId = 123, Result = populatedRun },
+            new Success<AttemptState> { RequestId = 3, SessionId = 123, Result = new AttemptState { AttemptCount = 4, Segments = new List<AttemptSegment> { new() { Index = 0, SplitTime = new TimeValue { RealTimeTicks = null, GameTimeTicks = null }, CustomVariables = new Dictionary<string, string>() } } } },
+            new Success<ContextState> { RequestId = 4, SessionId = 123, Result = new ContextState { CurrentTimingMethod = TimingMethod.GameTime, CurrentComparison = "Personal Best", CustomVariables = new Dictionary<string, string>() } },
+            new Success<CompletedCount> { RequestId = 5, SessionId = 123, Result = new CompletedCount { Value = 2 } },
             new ControlSuccessResponse { RequestId = 6, SessionId = 123 },
             new ErrorResponse { RequestId = 7, SessionId = 123, Error = new BridgeError { Code = BridgeErrorCode.OperationFailed, Message = "Operation failed." } },
         };
-        foreach (var response in responses) AddSerializedCase("response", response.GetType().Name, JsonSerializer.Serialize<RpcResponse>(response, jsonOptions));
+        foreach (var response in responses) AddSerializedCase("response", response.GetType().Name, JsonSerializer.Serialize((object)response, jsonOptions));
 
         var eventSamples = new BridgeEvent[]
         {
-            new TimerStartedEvent { SessionId = 123, EventSequence = 1, TimerState = timerState },
-            new TimerSplitEvent { SessionId = 123, EventSequence = 2, TimerState = timerState },
-            new TimerSkippedEvent { SessionId = 123, EventSequence = 3, TimerState = timerState },
-            new TimerUndoEvent { SessionId = 123, EventSequence = 4, TimerState = timerState },
-            new TimerResetEvent { SessionId = 123, EventSequence = 5, TimerState = timerState },
-            new TimerPhaseChangedEvent { SessionId = 123, EventSequence = 6, TimerState = timerState },
-            new RunChangedEvent { SessionId = 123, EventSequence = 7 },
-            new ContextChangedEvent { SessionId = 123, EventSequence = 8 },
+            new TimerEvent { Type = TimerEventKind.Started, SessionId = 123, EventSequence = 1, TimerState = timerState },
+            new TimerEvent { Type = TimerEventKind.Split, SessionId = 123, EventSequence = 2, TimerState = timerState },
+            new TimerEvent { Type = TimerEventKind.Skipped, SessionId = 123, EventSequence = 3, TimerState = timerState },
+            new TimerEvent { Type = TimerEventKind.Undo, SessionId = 123, EventSequence = 4, TimerState = timerState },
+            new ResetEvent { SessionId = 123, EventSequence = 5, TimerState = timerState },
+            new TimerEvent { Type = TimerEventKind.PhaseChanged, SessionId = 123, EventSequence = 6, TimerState = timerState },
+            new ChangedEvent { Type = ChangedEventKind.RunChanged, SessionId = 123, EventSequence = 7 },
+            new ChangedEvent { Type = ChangedEventKind.ContextChanged, SessionId = 123, EventSequence = 8 },
         };
-        foreach (var bridgeEvent in eventSamples) AddSerializedCase("event", bridgeEvent.GetType().Name, JsonSerializer.Serialize<BridgeEvent>(bridgeEvent, jsonOptions));
-        AddSerializedCase("event", "TimerResetEvent with null timer state", JsonSerializer.Serialize<BridgeEvent>(new TimerResetEvent { SessionId = 123, EventSequence = 9, TimerState = null }, jsonOptions));
+        foreach (var bridgeEvent in eventSamples) AddSerializedCase("event", bridgeEvent.GetType().Name, JsonSerializer.Serialize((object)bridgeEvent, jsonOptions));
+        AddSerializedCase("event", "ResetEvent with null timer state", JsonSerializer.Serialize((object)new ResetEvent { SessionId = 123, EventSequence = 9, TimerState = null }, jsonOptions));
 
         var serializedCasesPath = Path.Combine(outputDirectory, "csharp-serialized-cases.json");
         File.WriteAllText(serializedCasesPath, JsonSerializer.Serialize(cases, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }) + Environment.NewLine);

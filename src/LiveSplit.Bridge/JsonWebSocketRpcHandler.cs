@@ -30,7 +30,22 @@ internal static class JsonWebSocketRpcHandler
 
             try
             {
-                var request = JsonSerializer.Deserialize<Json.RpcRequest>(utf8, options);
+                if (!root.TryGetProperty("method", out var method) || method.ValueKind != JsonValueKind.String)
+                    return invalidRequest(requestId, "Request method is required.");
+                // STJ also accepts comma-separated names for non-flags enums; RPC selects one action.
+                var methodName = method.GetString()!;
+                if (methodName.IndexOf(',') >= 0 || (root.TryGetProperty("params", out var arguments)
+                    && arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("operation", out var operation)
+                    && operation.ValueKind == JsonValueKind.String && operation.GetString()!.IndexOf(',') >= 0))
+                    return invalidRequest(requestId, "A request must name a single method and operation.");
+                Json.RpcRequest? request = methodName switch
+                {
+                    Json.TimerRequest.MethodName => root.Deserialize<Json.TimerRequest>(options),
+                    Json.GameTimeRequest<Json.GameControlParams>.MethodName => IsGameTimeSet(root)
+                        ? root.Deserialize<Json.GameTimeRequest<Json.GameSetParams>>(options)
+                        : root.Deserialize<Json.GameTimeRequest<Json.GameControlParams>>(options),
+                    _ => root.Deserialize<Json.QueryRequest>(options),
+                };
                 if (request == null) return invalidRequest(requestId, "Request object is required.");
                 return requestHandler(request, allowControl);
             }
@@ -44,6 +59,11 @@ internal static class JsonWebSocketRpcHandler
             }
         }
     }
+
+    private static bool IsGameTimeSet(JsonElement request) =>
+        request.TryGetProperty("params", out var arguments) && arguments.ValueKind == JsonValueKind.Object
+        && arguments.TryGetProperty("operation", out var operation) && operation.ValueKind == JsonValueKind.String
+        && operation.GetString() == Json.GameSetParams.OperationName;
 
     private static bool TryReadRequestId(JsonElement root, out uint requestId)
     {

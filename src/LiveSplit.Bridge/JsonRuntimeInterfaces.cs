@@ -14,8 +14,8 @@ internal interface IJsonLiveSplitAdapter
     IJsonRunStateCandidate CaptureRunState();
     bool TryUpdateRunTimings(Json.RunState published, out Json.RunState updated);
     bool IsTimerOnlyRun();
-    void ExecuteTimerOperation(Json.TimerOperationParams operation);
-    void ExecuteGameTimeOperation(Json.GameTimeOperationParams operation);
+    void ExecuteTimerOperation(Json.TimerOperation operation);
+    void ExecuteGameTimeOperation(Json.GameTimeParams operation);
 }
 
 internal interface IJsonRunStateCandidate : IDisposable

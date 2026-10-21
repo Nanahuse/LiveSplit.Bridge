@@ -81,34 +81,27 @@ internal sealed class JsonBridgeRuntime : IDisposable
         {
             switch (request)
             {
-                case Json.GetTimerStateRequest:
-                    return new Json.TimerStateResponse { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetTimerState() };
-                case Json.GetRunRequest:
-                    return new Json.RunStateResponse { RequestId = request.RequestId, SessionId = sessionId, Result = Volatile.Read(ref publishedRun) };
-                case Json.GetAttemptRequest:
-                    return new Json.AttemptStateResponse { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetAttempt() };
-                case Json.GetContextStateRequest:
-                    return new Json.ContextStateResponse { RequestId = request.RequestId, SessionId = sessionId, Result = Volatile.Read(ref publishedContext) };
-                case Json.GetCompletedCountRequest:
-                    return new Json.CompletedCountResponse { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetCompletedCount() };
-                case Json.TimerOperationRequest timerRequest:
+                case Json.QueryRequest { Method: Json.QueryMethod.GetTimerState }:
+                    return new Json.Success<Json.TimerState> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetTimerState() };
+                case Json.QueryRequest { Method: Json.QueryMethod.GetRun }:
+                    return new Json.Success<Json.RunState> { RequestId = request.RequestId, SessionId = sessionId, Result = Volatile.Read(ref publishedRun) };
+                case Json.QueryRequest { Method: Json.QueryMethod.GetAttempt }:
+                    return new Json.Success<Json.AttemptState> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetAttempt() };
+                case Json.QueryRequest { Method: Json.QueryMethod.GetContextState }:
+                    return new Json.Success<Json.ContextState> { RequestId = request.RequestId, SessionId = sessionId, Result = Volatile.Read(ref publishedContext) };
+                case Json.QueryRequest { Method: Json.QueryMethod.GetCompletedCount }:
+                    return new Json.Success<Json.CompletedCount> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetCompletedCount() };
+                case Json.TimerRequest timerRequest:
                     if (!allowControl) return Error(request.RequestId, Json.BridgeErrorCode.PermissionDenied, "Control permission is required.");
-                    if (timerRequest.Params == null || !IsKnownTimerOperation(timerRequest.Params))
-                        return Error(request.RequestId, Json.BridgeErrorCode.InvalidArgument, "Timer operation is invalid.");
                     lock (controlGate)
                     {
-                        try { adapter.ExecuteTimerOperation(timerRequest.Params); return Success(request.RequestId); }
+                        try { adapter.ExecuteTimerOperation(timerRequest.Params.Operation); return Success(request.RequestId); }
                         catch (Exception exception) { return Error(request.RequestId, Json.BridgeErrorCode.OperationFailed, exception.Message); }
                     }
-                case Json.GameTimeOperationRequest gameRequest:
-                    if (!allowControl) return Error(request.RequestId, Json.BridgeErrorCode.PermissionDenied, "Control permission is required.");
-                    if (gameRequest.Params == null || !IsKnownGameTimeOperation(gameRequest.Params))
-                        return Error(request.RequestId, Json.BridgeErrorCode.InvalidArgument, "Game time operation is invalid.");
-                    lock (controlGate)
-                    {
-                        try { adapter.ExecuteGameTimeOperation(gameRequest.Params); return Success(request.RequestId); }
-                        catch (Exception exception) { return Error(request.RequestId, Json.BridgeErrorCode.OperationFailed, exception.Message); }
-                    }
+                case Json.GameTimeRequest<Json.GameControlParams> gameRequest:
+                    return HandleGameTimeOperation(request.RequestId, gameRequest.Params, allowControl);
+                case Json.GameTimeRequest<Json.GameSetParams> setRequest:
+                    return HandleGameTimeOperation(request.RequestId, setRequest.Params, allowControl);
                 default:
                     return Error(request.RequestId, Json.BridgeErrorCode.InvalidRequest, "Request is unsupported.");
             }
@@ -128,10 +121,15 @@ internal sealed class JsonBridgeRuntime : IDisposable
         Error = new Json.BridgeError { Code = code, Message = message ?? string.Empty },
     };
 
-    private static bool IsKnownTimerOperation(Json.TimerOperationParams operation) => operation is Json.TimerStartParams or Json.TimerSplitParams
-        or Json.TimerSkipParams or Json.TimerUndoParams or Json.TimerResetParams or Json.TimerPauseParams or Json.TimerResumeParams;
-    private static bool IsKnownGameTimeOperation(Json.GameTimeOperationParams operation) => operation is Json.GameTimeInitializeParams
-        or Json.GameTimeSetParams or Json.GameTimePauseParams or Json.GameTimeResumeParams;
+    private Json.RpcResponse HandleGameTimeOperation(uint requestId, Json.GameTimeParams operation, bool allowControl)
+    {
+        if (!allowControl) return Error(requestId, Json.BridgeErrorCode.PermissionDenied, "Control permission is required.");
+        lock (controlGate)
+        {
+            try { adapter.ExecuteGameTimeOperation(operation); return Success(requestId); }
+            catch (Exception exception) { return Error(requestId, Json.BridgeErrorCode.OperationFailed, exception.Message); }
+        }
+    }
 
     internal void ObserveContextState()
     {
@@ -147,7 +145,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
                 if (Volatile.Read(ref disposed) != 0
                     || Json.ContextSnapshot.ContentEquals(next, Volatile.Read(ref publishedContext))) return;
                 Interlocked.Exchange(ref publishedContext, next);
-                EnqueueEventLocked(new Json.ContextChangedEvent());
+                EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.ContextChanged });
             }
         }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON context observation failed: {exception}"); }
@@ -196,11 +194,11 @@ internal sealed class JsonBridgeRuntime : IDisposable
         state.RunManuallyModified -= StateRunManuallyModified;
     }
 
-    private void StateOnStart(object sender, EventArgs args) => PublishTimerEvent<Json.TimerStartedEvent>();
-    private void StateOnSplit(object sender, EventArgs args) => PublishTimerEvent<Json.TimerSplitEvent>();
-    private void StateOnSkipSplit(object sender, EventArgs args) => PublishTimerEvent<Json.TimerSkippedEvent>();
-    private void StateOnUndoSplit(object sender, EventArgs args) => PublishTimerEvent<Json.TimerUndoEvent>();
-    private void StateOnPhaseChanged(object sender, EventArgs args) => PublishTimerEvent<Json.TimerPhaseChangedEvent>();
+    private void StateOnStart(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.Started);
+    private void StateOnSplit(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.Split);
+    private void StateOnSkipSplit(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.Skipped);
+    private void StateOnUndoSplit(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.Undo);
+    private void StateOnPhaseChanged(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.PhaseChanged);
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
         if (Volatile.Read(ref disposed) != 0) return;
@@ -213,7 +211,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
         }
     }
 
-    private void PublishTimerEvent<TEvent>() where TEvent : Json.TimerBridgeEvent, new()
+    private void PublishTimerEvent(Json.TimerEventKind type)
     {
         if (Volatile.Read(ref disposed) != 0) return;
         try
@@ -222,7 +220,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
             lock (eventGate)
             {
                 if (Volatile.Read(ref disposed) != 0) return;
-                EnqueueEventLocked(new TEvent { TimerState = timerState });
+                EnqueueEventLocked(new Json.TimerEvent { Type = type, TimerState = timerState });
             }
         }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON timer event failed: {exception}"); }
@@ -276,8 +274,8 @@ internal sealed class JsonBridgeRuntime : IDisposable
                     if (candidateForReplacement) cachedRunReference = currentRun;
                     ClearRequestedRunReferenceLocked(currentRun);
                     Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
-                    EnqueueEventLocked(new Json.TimerResetEvent { TimerState = timerState });
-                    if (runChanged) EnqueueEventLocked(new Json.RunChangedEvent());
+                    EnqueueEventLocked(new Json.ResetEvent { TimerState = timerState });
+                    if (runChanged) EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
                     return;
                 }
                 else if (resetCandidate != null && !ReferenceEquals(basis, publishedRun)) retry = true;
@@ -293,7 +291,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
                 }
                 if (retry) continue;
                 Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
-                EnqueueEventLocked(new Json.TimerResetEvent { TimerState = timerState });
+                EnqueueEventLocked(new Json.ResetEvent { TimerState = timerState });
                 return;
             }
         }
@@ -387,7 +385,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
                 if (changed)
                 {
                     Interlocked.Exchange(ref publishedRun, withLatestTiming);
-                    EnqueueEventLocked(new Json.RunChangedEvent());
+                    EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
                 }
                 cachedRunReference = runReference;
                 ClearRequestedRunReferenceLocked(runReference);

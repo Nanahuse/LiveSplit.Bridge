@@ -211,29 +211,29 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
             && run[0].Icon == null;
     }
 
-    public void ExecuteTimerOperation(Json.TimerOperationParams operation)
+    public void ExecuteTimerOperation(Json.TimerOperation operation)
     {
         switch (operation)
         {
-            case Json.TimerStartParams: timerModel.Start(); break;
-            case Json.TimerSplitParams: timerModel.Split(); break;
-            case Json.TimerSkipParams: timerModel.SkipSplit(); break;
-            case Json.TimerUndoParams: timerModel.UndoSplit(); break;
-            case Json.TimerResetParams: timerModel.Reset(); break;
-            case Json.TimerPauseParams:
-            case Json.TimerResumeParams: timerModel.Pause(); break;
+            case Json.TimerOperation.Start: timerModel.Start(); break;
+            case Json.TimerOperation.Split: timerModel.Split(); break;
+            case Json.TimerOperation.Skip: timerModel.SkipSplit(); break;
+            case Json.TimerOperation.Undo: timerModel.UndoSplit(); break;
+            case Json.TimerOperation.Reset: timerModel.Reset(); break;
+            case Json.TimerOperation.Pause:
+            case Json.TimerOperation.Resume: timerModel.Pause(); break;
             default: throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported timer operation.");
         }
     }
 
-    public void ExecuteGameTimeOperation(Json.GameTimeOperationParams operation)
+    public void ExecuteGameTimeOperation(Json.GameTimeParams operation)
     {
         switch (operation)
         {
-            case Json.GameTimeInitializeParams: timerModel.InitializeGameTime(); break;
-            case Json.GameTimeSetParams set: state.SetGameTime(TimeSpan.FromTicks(set.Ticks)); break;
-            case Json.GameTimePauseParams: state.IsGameTimePaused = true; break;
-            case Json.GameTimeResumeParams: state.IsGameTimePaused = false; break;
+            case Json.GameControlParams { Operation: Json.GameControlOperation.Initialize }: timerModel.InitializeGameTime(); break;
+            case Json.GameSetParams set: state.SetGameTime(TimeSpan.FromTicks(set.Ticks)); break;
+            case Json.GameControlParams { Operation: Json.GameControlOperation.Pause }: state.IsGameTimePaused = true; break;
+            case Json.GameControlParams { Operation: Json.GameControlOperation.Resume }: state.IsGameTimePaused = false; break;
             default: throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unsupported game time operation.");
         }
     }

@@ -19,6 +19,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@v3
         with:
@@ -32,7 +37,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore Schema generator
-        run: dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj --nologo
+        run: dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj --locked-mode --nologo
 
       - name: Build Schema generator
         run: dotnet build tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-restore --nologo
@@ -42,8 +47,8 @@ jobs:
           dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- tools/schema/out
           ./tools/schema/Sync-Schemas.ps1 -Check
 
-      - name: Export C# communication samples
-        run: dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- --samples tools/schema/out
+      - name: Export net481 C# communication samples
+        run: dotnet run --project tools/schema/ContractSamples/LiveSplit.Bridge.ContractSamples.csproj --configuration Release -- tools/schema/out
 
       - name: Validate Draft 2020-12 contracts
         working-directory: tools/schema

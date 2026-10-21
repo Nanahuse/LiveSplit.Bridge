@@ -1,5 +1,7 @@
 # JSON v4 既存テストの整理結果
 
+本書は統合PRに取り込んだテスト整理コミット時点の記録。DTO移行後の構成と最終検証は[自動生成移行レポート](json-v4-generation-migration.md)を参照。
+
 2026-10-21。基準は `0966623`、作業ブランチは `codex/simplify-v4-tests`。
 
 テストの目的を通信・状態管理の保証へ絞り、テスト専用の公開APIとPythonのSchema相当検証を削減した。JSON v4 DTO、serializer options、チェックイン済み3 Schemaは変更していない。生成方式の案Aへの全面移行は別作業とする。

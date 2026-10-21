@@ -18,10 +18,10 @@ public sealed class JsonBridgeRuntimeTests
         using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
         var requests = new Json.RpcRequest[]
         {
-            new Json.GetTimerStateRequest { RequestId = 0 }, new Json.GetRunRequest { RequestId = uint.MaxValue },
-            new Json.GetContextStateRequest { RequestId = 8 }, new Json.GetAttemptRequest { RequestId = 9 },
-            new Json.GetCompletedCountRequest { RequestId = 10 },
-            new Json.TimerOperationRequest { RequestId = 11, Params = new Json.TimerStartParams() },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetTimerState, RequestId = 0 }, new Json.QueryRequest { Method = Json.QueryMethod.GetRun, RequestId = uint.MaxValue },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetContextState, RequestId = 8 }, new Json.QueryRequest { Method = Json.QueryMethod.GetAttempt, RequestId = 9 },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetCompletedCount, RequestId = 10 },
+            new Json.TimerRequest { RequestId = 11, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } },
         };
         var responses = requests.Select(request => WireResponse(runtime.HandleRequest(request, true))).ToArray();
         var session = responses[0].GetProperty("session_id").GetUInt32();
@@ -35,21 +35,17 @@ public sealed class JsonBridgeRuntimeTests
     }
 
     [Fact]
-    public void DeniesControlBeforeParamsValidationAndMapsOperationErrors()
+    public void DeniesControlAndMapsOperationFailures()
     {
         var adapter = new FakeAdapter { ThrowOnTimerOperation = true };
         using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
 
         var denied = WireResponse(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 21, Params = null! }, allowControl: false));
+            new Json.TimerRequest { RequestId = 21, Params = null! }, allowControl: false));
         var failed = WireResponse(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 22, Params = new Json.TimerStartParams() }, allowControl: true));
-        var invalid = WireResponse(runtime.HandleRequest(
-            new Json.GameTimeOperationRequest { RequestId = 23, Params = null! }, allowControl: true));
-
+            new Json.TimerRequest { RequestId = 22, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, allowControl: true));
         Assert.Equal("permission_denied", denied.GetProperty("error").GetProperty("code").GetString());
         Assert.Equal("operation_failed", failed.GetProperty("error").GetProperty("code").GetString());
-        Assert.Equal("invalid_argument", invalid.GetProperty("error").GetProperty("code").GetString());
         Assert.Equal(1, adapter.TimerOperationCalls);
     }
 
@@ -57,7 +53,7 @@ public sealed class JsonBridgeRuntimeTests
     public void QueryExceptionReturnsInternalError()
     {
         using var runtime = new JsonBridgeRuntime(new FakeAdapter { ThrowOnAttempt = true }, new RecordingSink());
-        var response = WireResponse(runtime.HandleRequest(new Json.GetAttemptRequest { RequestId = 19 }, false));
+        var response = WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetAttempt, RequestId = 19 }, false));
 
         Assert.Equal(19U, response.GetProperty("request_id").GetUInt32());
         Assert.Equal("internal_error", response.GetProperty("error").GetProperty("code").GetString());
@@ -74,14 +70,14 @@ public sealed class JsonBridgeRuntimeTests
         Json.RpcResponse? queryResponse = null;
         _ = Task.Factory.StartNew(() =>
         {
-            try { controlResponse = runtime.HandleRequest(new Json.TimerOperationRequest { RequestId = 1, Params = new Json.TimerStartParams() }, true); }
+            try { controlResponse = runtime.HandleRequest(new Json.TimerRequest { RequestId = 1, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, true); }
             finally { controlDone.Set(); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Assert.True(adapter.ControlEntered.Wait(TimeSpan.FromSeconds(5)));
 
         _ = Task.Factory.StartNew(() =>
         {
-            try { queryResponse = runtime.HandleRequest(new Json.GetTimerStateRequest { RequestId = 2 }, false); }
+            try { queryResponse = runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetTimerState, RequestId = 2 }, false); }
             finally { queryDone.Set(); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Assert.True(queryDone.Wait(TimeSpan.FromSeconds(2)));
@@ -112,7 +108,7 @@ public sealed class JsonBridgeRuntimeTests
         Assert.Equal(JsonValueKind.Null, WireResponse(secondResponse!).GetProperty("result").ValueKind);
 
         static void StartControl(JsonBridgeRuntime runtime, uint id, Action<Json.RpcResponse> completed) => _ = Task.Factory.StartNew(
-            () => completed(runtime.HandleRequest(new Json.TimerOperationRequest { RequestId = id, Params = new Json.TimerStartParams() }, true)),
+            () => completed(runtime.HandleRequest(new Json.TimerRequest { RequestId = id, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, true)),
             CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
@@ -146,17 +142,17 @@ public sealed class JsonBridgeRuntimeTests
         var timer = new TimerModel { CurrentState = state };
 
         timer.Start();
-        adapter.ExecuteTimerOperation(new Json.TimerPauseParams());
+        adapter.ExecuteTimerOperation(Json.TimerOperation.Pause);
         Assert.Equal(LiveSplit.Model.TimerPhase.Paused, state.CurrentPhase);
-        adapter.ExecuteTimerOperation(new Json.TimerResumeParams());
+        adapter.ExecuteTimerOperation(Json.TimerOperation.Resume);
         Assert.Equal(LiveSplit.Model.TimerPhase.Running, state.CurrentPhase);
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeInitializeParams());
-        adapter.ExecuteGameTimeOperation(new Json.GameTimePauseParams());
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeSetParams { Ticks = -12345 });
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Initialize });
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Pause });
+        adapter.ExecuteGameTimeOperation(new Json.GameSetParams { Ticks = -12345 });
         Assert.True(state.IsGameTimeInitialized);
         Assert.Equal(-12345, state.CurrentTime.GameTime?.Ticks);
         Assert.True(state.IsGameTimePaused);
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeResumeParams());
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Resume });
         Assert.False(state.IsGameTimePaused);
     }
 
@@ -200,7 +196,7 @@ public sealed class JsonBridgeRuntimeTests
         runtime.ObserveContextState();
 
         ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "context_changed");
-        var publishedContext = runtime.HandleRequest(new Json.GetContextStateRequest(), false);
+        var publishedContext = runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetContextState }, false);
         Assert.Equal("Best Segments", WireResponse(publishedContext).GetProperty("result").GetProperty("current_comparison").GetString());
 
         Thread.Sleep(110);
@@ -346,10 +342,10 @@ public sealed class JsonBridgeRuntimeTests
         Assert.NotEqual("late", ReadRun(runtime).GetProperty("game_name").GetString());
     }
 
-    private static JsonElement WireResponse(Json.RpcResponse response) => JsonSerializer.SerializeToElement(response, Json.BridgeJsonOptions.Create());
-    private static JsonElement WireEvent(Json.BridgeEvent value) => JsonSerializer.SerializeToElement(value, Json.BridgeJsonOptions.Create());
-    private static JsonElement ReadRun(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.GetRunRequest(), false)).GetProperty("result");
-    private static JsonElement ReadContext(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.GetContextStateRequest(), false)).GetProperty("result");
+    private static JsonElement WireResponse(Json.RpcResponse response) => JsonSerializer.SerializeToElement((object)response, Json.BridgeJsonOptions.Create());
+    private static JsonElement WireEvent(Json.BridgeEvent value) => JsonSerializer.SerializeToElement((object)value, Json.BridgeJsonOptions.Create());
+    private static JsonElement ReadRun(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetRun }, false)).GetProperty("result");
+    private static JsonElement ReadContext(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetContextState }, false)).GetProperty("result");
 
     private static JsonElement ReadEvent(Json.BridgeEvent value, string expectedType)
     {
@@ -424,19 +420,19 @@ public sealed class JsonBridgeRuntimeTests
             return true;
         }
         public bool IsTimerOnlyRun() => false;
-        public virtual void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public virtual void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             TimerOperationCalls++;
             if (ThrowOnTimerOperation) throw new InvalidOperationException("operation failed");
         }
-        public void ExecuteGameTimeOperation(Json.GameTimeOperationParams operation) { }
+        public void ExecuteGameTimeOperation(Json.GameTimeParams operation) { }
     }
 
     private sealed class BlockingAdapter : FakeAdapter
     {
         internal ManualResetEventSlim ControlEntered { get; } = new();
         internal ManualResetEventSlim ReleaseControl { get; } = new();
-        public override void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public override void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             ControlEntered.Set();
             if (!ReleaseControl.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Control was not released.");
@@ -449,7 +445,7 @@ public sealed class JsonBridgeRuntimeTests
         internal ManualResetEventSlim FirstEntered { get; } = new();
         internal ManualResetEventSlim ReleaseFirst { get; } = new();
         internal ManualResetEventSlim SecondEntered { get; } = new();
-        public override void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public override void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             if (Interlocked.Increment(ref operationCount) == 1)
             {
