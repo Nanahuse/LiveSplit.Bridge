@@ -104,7 +104,7 @@ internal static class RunSnapshot
             && StringEquals(left.PlatformName, right.PlatformName)
             && StringEquals(left.RegionName, right.RegionName)
             && left.UsesEmulator == right.UsesEmulator
-            && DictionaryEquals(left.Variables, right.Variables);
+            && SnapshotComparison.DictionaryEquals(left.Variables, right.Variables);
     }
 
     private static bool SegmentEquals(SegmentInfo? left, SegmentInfo? right)
@@ -135,30 +135,6 @@ internal static class RunSnapshot
 
         return left.RealTimeTicks == right.RealTimeTicks
             && left.GameTimeTicks == right.GameTimeTicks;
-    }
-
-    private static bool DictionaryEquals(
-        Dictionary<string, string>? left,
-        Dictionary<string, string>? right)
-    {
-        if (ReferenceEquals(left, right)) return true;
-        if (left is null || right is null || left.Count != right.Count) return false;
-
-        foreach (var pair in left)
-        {
-            var found = false;
-            foreach (var candidate in right)
-            {
-                if (!StringEquals(pair.Key, candidate.Key)) continue;
-                if (!StringEquals(pair.Value, candidate.Value)) return false;
-                found = true;
-                break;
-            }
-
-            if (!found) return false;
-        }
-
-        return true;
     }
 
     private static bool ListEquals<T>(
@@ -199,29 +175,27 @@ internal static class ContextSnapshot
 
         return left.CurrentTimingMethod == right.CurrentTimingMethod
             && string.Equals(left.CurrentComparison, right.CurrentComparison, StringComparison.Ordinal)
-            && ContextVariablesEqual(left.CustomVariables, right.CustomVariables);
+            && SnapshotComparison.DictionaryEquals(left.CustomVariables, right.CustomVariables);
     }
+}
 
-    private static bool ContextVariablesEqual(
+internal static class SnapshotComparison
+{
+    public static bool DictionaryEquals(
         Dictionary<string, string>? left,
         Dictionary<string, string>? right)
     {
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null || left.Count != right.Count) return false;
 
-        foreach (var pair in left)
-        {
-            var found = false;
-            foreach (var candidate in right)
-            {
-                if (!string.Equals(pair.Key, candidate.Key, StringComparison.Ordinal)) continue;
-                if (!string.Equals(pair.Value, candidate.Value, StringComparison.Ordinal)) return false;
-                found = true;
-                break;
-            }
+        // Snapshot keys use ordinal JSON names, even if a caller supplied a dictionary
+        // with a different comparer. The usual ordinal/default dictionaries need no copy.
+        if (right.Comparer != StringComparer.Ordinal && right.Comparer != EqualityComparer<string>.Default)
+            right = new Dictionary<string, string>(right, StringComparer.Ordinal);
 
-            if (!found) return false;
-        }
+        foreach (var pair in left)
+            if (!right.TryGetValue(pair.Key, out var value)
+                || !string.Equals(pair.Value, value, StringComparison.Ordinal)) return false;
 
         return true;
     }

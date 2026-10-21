@@ -2,13 +2,15 @@
 
 ## Implementation
 
-The Component starts `JsonBridgeHost`, which owns `JsonBridgeRuntime` and a JSON-only WebSocket transport. The transport uses `HttpListener` and .NET Framework 4.8.1 `System.Net.WebSockets`, binding `127.0.0.1` at the configured port. It serves `/bridge/v4/rpc` and `/bridge/v4/events`; the Component does not start the legacy Protobuf runtime.
+The Component starts `JsonBridgeHost`, which owns `JsonBridgeRuntime` and a JSON-only WebSocket transport. The transport uses LiveSplit's WebSocketSharp 1.0.3-rc11, binding `127.0.0.1` at the configured port. It serves `/bridge/v4/rpc` and `/bridge/v4/events`; the Component does not start the legacy Protobuf runtime.
 
 RPC accepts one Text Message per JSON object. Binary messages, malformed JSON, non-object roots, and missing or invalid `request_id` values receive no response. A valid uint32 ID is retained in `invalid_request` responses for duplicate properties, unknown methods, and malformed known requests. Duplicate property names are rejected recursively. Valid but unauthorized Control requests receive `permission_denied`; Query and Events remain available for external Origins.
 
-RPC input is received in 8 KiB chunks and counted in UTF-8 bytes. The transport closes with status 1009 once the accumulated Text Message exceeds 64 KiB. RPC responses have no matching size cap. Events use an ordered sender and queue bounded at 256 entries per subscriber. Enqueue only retains the shared event snapshot; it does not serialize or send. A full queue transitions that subscriber to a stopping state and schedules one disconnect. Other subscribers continue receiving events in order.
+WebSocketSharp assembles a message before delivering it to the RPC behavior. The behavior rejects payloads over 64 KiB with close status 1009 before JSON parsing. The library has no public streaming receive-size limit, so this is a limit on accepted RPC messages, not on fragment-buffer allocation. RPC responses have no matching size cap.
 
-For an oversized RPC message, the server attempts the WebSocket close handshake with a one-second bound before disposing the connection. This reduces the chance of a TCP reset racing the client's observation of the required 1009 close status.
+Events use one shared buffer bounded at 256 snapshots and one background publisher. Enqueue never waits for network writes; a full buffer drops new notifications. WebSocketSharp owns sessions, broadcast, and close handshakes. There are no per-subscriber queues, sender tasks, custom disconnect states, retries, or additional delivery-order guarantees. A slow connection can delay the shared publisher; clients recover current state with Query rather than relying on every notification.
+
+The sections below record the earlier Phase 3C implementation and its verification, not the current transport. The obsolete standalone Runtime Probe has been removed; current RPC/Schema tests and the CLI TestHost cover its responsibilities.
 
 ## Verification in this checkout
 

@@ -262,7 +262,7 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
                 data = event_socket.recv()
             except (OSError, websocket.WebSocketException) as error:
                 raise BridgeClientError(f"Events connection closed: {error}") from error
-            if data is None:
+            if data is None or data == "":
                 raise BridgeClientError("Events connection closed by Bridge")
             if not isinstance(data, str):
                 raise BridgeClientError(

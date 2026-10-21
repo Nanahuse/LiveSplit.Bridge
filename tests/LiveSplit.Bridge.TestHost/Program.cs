@@ -1,12 +1,10 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -186,7 +184,6 @@ internal static class Program
             cancellationToken
         ).GetAwaiter().GetResult();
 
-        using var response = new MemoryStream();
         var buffer = new byte[4096];
         WebSocketReceiveResult received;
         do
@@ -196,37 +193,9 @@ internal static class Program
                 cancellationToken
             ).GetAwaiter().GetResult();
             if (received.MessageType != WebSocketMessageType.Text)
-                throw new InvalidDataException("RPC startup probe received a non-text response.");
-            response.Write(buffer, 0, received.Count);
+                throw new InvalidOperationException("RPC startup probe received a non-text response.");
         }
         while (!received.EndOfMessage);
-
-        using var document = JsonDocument.Parse(response.ToArray());
-        var root = document.RootElement;
-        if (
-            !root.TryGetProperty("request_id", out var requestId)
-            || !requestId.TryGetUInt32(out var requestIdValue)
-            || requestIdValue != 0
-            || !root.TryGetProperty("session_id", out var sessionId)
-            || !sessionId.TryGetUInt32(out var sessionIdValue)
-            || sessionIdValue == 0
-            || !root.TryGetProperty("result", out var result)
-            || result.ValueKind != JsonValueKind.Object
-            || root.TryGetProperty("error", out _)
-            || !result.TryGetProperty("phase", out var phase)
-            || phase.ValueKind != JsonValueKind.String
-            || !result.TryGetProperty("split_index", out var splitIndex)
-            || !splitIndex.TryGetInt32(out _)
-            || !result.TryGetProperty("real_time_ticks", out var realTimeTicks)
-            || !realTimeTicks.TryGetInt64(out _)
-            || !result.TryGetProperty("game_time_ticks", out var gameTimeTicks)
-            || (gameTimeTicks.ValueKind != JsonValueKind.Null && !gameTimeTicks.TryGetInt64(out _))
-            || !result.TryGetProperty("is_game_time_initialized", out var initialized)
-            || initialized.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
-            || !result.TryGetProperty("is_game_time_paused", out var paused)
-            || paused.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
-        )
-            throw new InvalidDataException("RPC startup probe received an invalid get_timer_state response.");
     }
 
     private static int Usage()

@@ -29,9 +29,6 @@ internal sealed class JsonBridgeHost : IDisposable
         }
     }
 
-    internal string Endpoint => transport.Endpoint;
-    internal bool IsListening => transport.IsListening;
-
     internal void Update()
     {
         if (!disposed) runtime.Update();

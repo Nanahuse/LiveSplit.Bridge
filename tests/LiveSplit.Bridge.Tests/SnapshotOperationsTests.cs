@@ -35,6 +35,12 @@ public class SnapshotOperationsTests
         Assert.True(RunSnapshot.ContentEquals(null, null));
         Assert.False(RunSnapshot.ContentEquals(left, null));
         Assert.False(RunSnapshot.ContentEquals(null, right));
+
+        right.Metadata.Variables = new Dictionary<string, string>(right.Metadata.Variables, StringComparer.OrdinalIgnoreCase);
+        Assert.True(RunSnapshot.ContentEquals(left, right));
+        right.Metadata.Variables.Remove("character");
+        right.Metadata.Variables["Character"] = "A";
+        Assert.False(RunSnapshot.ContentEquals(left, right));
     }
 
     [Theory]
@@ -72,6 +78,12 @@ public class SnapshotOperationsTests
         Assert.False(ContextSnapshot.ContentEquals(left, right));
         right.CurrentComparison = left.CurrentComparison;
         right.CustomVariables["character"] = "B";
+        Assert.False(ContextSnapshot.ContentEquals(left, right));
+        right.CustomVariables["character"] = "A";
+        right.CustomVariables = new Dictionary<string, string>(right.CustomVariables, StringComparer.OrdinalIgnoreCase);
+        Assert.True(ContextSnapshot.ContentEquals(left, right));
+        right.CustomVariables.Remove("character");
+        right.CustomVariables["Character"] = "A";
         Assert.False(ContextSnapshot.ContentEquals(left, right));
     }
 

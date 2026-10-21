@@ -79,7 +79,7 @@ class BridgeClient:
         except (OSError, websocket.WebSocketException) as error:
             raise BridgeClientError(f"RPC failed: {error}") from error
 
-        if data is None:
+        if data is None or data == "":
             raise BridgeClientError("RPC connection closed before a response arrived")
         if not isinstance(data, str):
             raise BridgeClientError("Bridge returned a binary frame; text expected")
