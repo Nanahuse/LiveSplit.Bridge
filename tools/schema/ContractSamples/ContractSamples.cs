@@ -17,10 +17,10 @@ internal static class ContractSamples
             .Select(method => (RpcRequest)new QueryRequest { Method = method, RequestId = (uint)method + 1 }).ToList();
         foreach (TimerOperation operation in Enum.GetValues(typeof(TimerOperation)))
             requestSamples.Add(new TimerRequest { RequestId = (uint)requestSamples.Count + 1, Params = new() { Operation = operation } });
-        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 13, Params = new() { Operation = GameControlOperation.Initialize } });
-        requestSamples.Add(new GameTimeRequest<GameSetParams> { RequestId = 14, Params = new() { Ticks = -123456 } });
-        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 15, Params = new() { Operation = GameControlOperation.Pause } });
-        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 16, Params = new() { Operation = GameControlOperation.Resume } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 14, Params = new() { Operation = GameControlOperation.Initialize } });
+        requestSamples.Add(new GameTimeRequest<GameSetParams> { RequestId = 15, Params = new() { Ticks = -123456 } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 16, Params = new() { Operation = GameControlOperation.Pause } });
+        requestSamples.Add(new GameTimeRequest<GameControlParams> { RequestId = 17, Params = new() { Operation = GameControlOperation.Resume } });
         foreach (var request in requestSamples)
             AddSerializedCase("request", $"request {request.RequestId}", JsonSerializer.Serialize((object)request, jsonOptions));
 
@@ -34,7 +34,6 @@ internal static class ContractSamples
             Metadata = null,
             Comparisons = new List<string>(),
             Segments = new List<SegmentInfo>(),
-            GameIcon = null,
         };
         var populatedRun = new RunState
         {
@@ -60,10 +59,8 @@ internal static class ContractSamples
                     Name = "Opening",
                     Comparisons = new List<ComparisonTime> { new() { Name = "Personal Best", Time = new TimeValue { RealTimeTicks = 1234, GameTimeTicks = null } } },
                     BestSegmentTime = new TimeValue { RealTimeTicks = -100, GameTimeTicks = 500 },
-                    Icon = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/b2sAAAAASUVORK5CYII="),
                 },
             },
-            GameIcon = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/b2sAAAAASUVORK5CYII="),
         };
 
         var timerState = new TimerState
@@ -80,6 +77,12 @@ internal static class ContractSamples
             new Success<TimerState> { RequestId = 1, SessionId = 123, Result = timerState },
             new Success<RunState> { RequestId = 2, SessionId = 123, Result = emptyRun },
             new Success<RunState> { RequestId = 8, SessionId = 123, Result = populatedRun },
+            new Success<RunIcons> { RequestId = 18, SessionId = 123, Result = new RunIcons() },
+            new Success<RunIcons> { RequestId = 19, SessionId = 123, Result = new RunIcons
+            {
+                GameIcon = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/b2sAAAAASUVORK5CYII="),
+                SegmentIcons = new List<byte[]?> { Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/b2sAAAAASUVORK5CYII="), null },
+            } },
             new Success<AttemptState> { RequestId = 3, SessionId = 123, Result = new AttemptState { AttemptCount = 4, Segments = new List<AttemptSegment> { new() { Index = 0, SplitTime = new TimeValue { RealTimeTicks = null, GameTimeTicks = null }, CustomVariables = new Dictionary<string, string>() } } } },
             new Success<ContextState> { RequestId = 4, SessionId = 123, Result = new ContextState { CurrentTimingMethod = TimingMethod.GameTime, CurrentComparison = "Personal Best", CustomVariables = new Dictionary<string, string>() } },
             new Success<CompletedCount> { RequestId = 5, SessionId = 123, Result = new CompletedCount { Value = 2 } },

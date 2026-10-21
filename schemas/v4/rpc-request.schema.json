@@ -14,6 +14,7 @@
           "enum": [
             "get_timer_state",
             "get_run",
+            "get_run_icons",
             "get_attempt",
             "get_context_state",
             "get_completed_count"

@@ -21,6 +21,7 @@ public sealed class JsonBridgeRuntimeTests
             new Json.QueryRequest { Method = Json.QueryMethod.GetTimerState, RequestId = 0 }, new Json.QueryRequest { Method = Json.QueryMethod.GetRun, RequestId = uint.MaxValue },
             new Json.QueryRequest { Method = Json.QueryMethod.GetContextState, RequestId = 8 }, new Json.QueryRequest { Method = Json.QueryMethod.GetAttempt, RequestId = 9 },
             new Json.QueryRequest { Method = Json.QueryMethod.GetCompletedCount, RequestId = 10 },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetRunIcons, RequestId = 12 },
             new Json.TimerRequest { RequestId = 11, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } },
         };
         var responses = requests.Select(request => WireResponse(runtime.HandleRequest(request, true))).ToArray();
@@ -57,6 +58,34 @@ public sealed class JsonBridgeRuntimeTests
 
         Assert.Equal(19U, response.GetProperty("request_id").GetUInt32());
         Assert.Equal("internal_error", response.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task IconQueryDoesNotHoldTheTimerControlGate()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var adapter = new FakeAdapter
+        {
+            IconsFactory = () =>
+            {
+                entered.Set();
+                if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Icon conversion was not released.");
+                return new Json.RunIcons();
+            },
+        };
+        using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
+        var icons = Task.Factory.StartNew(() => runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetRunIcons }, false),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            var control = Task.Run(() => runtime.HandleRequest(new Json.TimerRequest { Params = new() { Operation = Json.TimerOperation.Start } }, true));
+            Assert.Same(control, await Task.WhenAny(control, Task.Delay(TimeSpan.FromSeconds(3))));
+            Assert.Equal(JsonValueKind.Null, WireResponse(await control).GetProperty("result").ValueKind);
+        }
+        finally { release.Set(); }
+        Assert.Equal(JsonValueKind.Array, WireResponse(await icons).GetProperty("result").GetProperty("segment_icons").ValueKind);
     }
 
     [Fact]
@@ -217,7 +246,7 @@ public sealed class JsonBridgeRuntimeTests
         var run = CreateRun();
         var state = TestLiveSplitState.Create(run);
         var sink = new RecordingSink();
-        using var runtime = new JsonBridgeRuntime(new JsonLiveSplitAdapter(state), sink, state, QueueCandidateOnDedicatedThread);
+        using var runtime = new JsonBridgeRuntime(new JsonLiveSplitAdapter(state), sink, state);
         run.GameName = "Updated";
         state.CallRunManuallyModified();
 
@@ -263,83 +292,81 @@ public sealed class JsonBridgeRuntimeTests
     }
 
     [Fact]
-    public async Task NewerRunCandidateWinsWhenAnOlderBuildFinishesLater()
+    public void IconOnlyChangesDoNotPublishRunChanged()
     {
         var run = CreateRun();
         var state = TestLiveSplitState.Create(run);
         var sink = new RecordingSink();
-        var first = new GateCandidate(new Json.RunState { GameName = "stale" });
-        var adapter = new FakeAdapter { CandidateFactory = () => first };
-        using var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
-
-        run.GameName = "first";
+        using var runtime = new JsonBridgeRuntime(state, sink);
+        using var image = new System.Drawing.Bitmap(2, 2);
+        run.GameIcon = image;
+        run[0].Icon = image;
         state.CallRunManuallyModified();
-        await first.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
-
-        adapter.CandidateFactory = () => new Candidate(new Json.RunState { GameName = "latest" });
-        var replacementRun = CreateRun();
-        replacementRun.GameName = "latest";
-        state.Run = replacementRun;
-        state.CallRunManuallyModified();
-        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(5)), "run_changed");
-        Assert.Equal("latest", ReadRun(runtime).GetProperty("game_name").GetString());
-
-        first.ReleaseBuild.Set();
-        await first.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, sink.Count);
-        Assert.Equal("latest", ReadRun(runtime).GetProperty("game_name").GetString());
+        image.Dispose();
+        state.CallRunManuallyModified();
+        Assert.Equal(0, sink.Count);
     }
 
     [Fact]
-    public async Task CandidateCompletingAfterResetKeepsTheResetTimingSnapshot()
+    public async Task ResetRacingRunRefreshPublishesLatestTimingAndProtectsPreviousSnapshot()
     {
         var state = TestLiveSplitState.Create(CreateRun());
         var sink = new RecordingSink();
         var baseline = CreateTimingSnapshot(10);
-        var latestAfterReset = CreateTimingSnapshot(99);
-        latestAfterReset.Metadata!.RunId = null;
-        var candidate = new GateCandidate(CreateTimingSnapshot(10));
-        var adapter = new FakeAdapter
+        var latest = CreateTimingSnapshot(99);
+        latest.Metadata!.RunId = null;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var adapter = new FakeAdapter { RunSnapshot = baseline, TimingUpdateSnapshot = latest };
+        using var runtime = new JsonBridgeRuntime(adapter, sink, state);
+        var publishedBefore = runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetRun }, false);
+        var timer = new TimerModel { CurrentState = state };
+        timer.Start();
+        sink.Take(TimeSpan.FromSeconds(3));
+        adapter.RunFactory = () =>
         {
-            RunSnapshot = baseline,
-            TimingUpdateSnapshot = latestAfterReset,
-            CandidateFactory = () => candidate,
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Run capture was not released.");
+            return CreateTimingSnapshot(10);
         };
-        using var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
-        var timerModel = new TimerModel { CurrentState = state };
-        timerModel.Start();
-        await sink.TakeAsync(TimeSpan.FromSeconds(3));
-        state.CallRunManuallyModified();
-        await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
-
-        timerModel.Reset();
-        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(3)), "timer_reset");
-        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(3)), "run_changed");
-        candidate.ReleaseBuild.Set();
-        await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
+        var refresh = Task.Factory.StartNew(state.CallRunManuallyModified, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+        var reset = Task.Factory.StartNew(timer.Reset, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => state.CurrentPhase == TimerPhase.NotRunning, TimeSpan.FromSeconds(3)));
+            release.Set();
+            await Task.WhenAll(refresh, reset);
+        }
+        finally { release.Set(); }
 
         Assert.Equal(99, ReadRun(runtime).GetProperty("segments")[0].GetProperty("best_segment_time").GetProperty("real_time_ticks").GetInt64());
         Assert.Equal(JsonValueKind.Null, ReadRun(runtime).GetProperty("metadata").GetProperty("run_id").ValueKind);
-        Assert.Equal(0, sink.Count);
+        Assert.Equal(10, WireResponse(publishedBefore).GetProperty("result").GetProperty("segments")[0].GetProperty("best_segment_time").GetProperty("real_time_ticks").GetInt64());
+        var kinds = Enumerable.Range(0, sink.Count).Select(_ => WireEvent(sink.Take(TimeSpan.FromSeconds(3))).GetProperty("type").GetString()).ToArray();
+        Assert.Contains("timer_reset", kinds);
+        Assert.Equal("run_changed", kinds.Last());
     }
 
     [Fact]
-    public async Task DisposedRuntimeDoesNotPublishACompletedBackgroundCandidate()
+    public void RunReplacementDuringCaptureIsRetriedWithoutPublishingObsoleteData()
     {
         var state = TestLiveSplitState.Create(CreateRun());
         var sink = new RecordingSink();
-        var candidate = new GateCandidate(new Json.RunState { GameName = "late" });
-        var adapter = new FakeAdapter { CandidateFactory = () => candidate };
-        var runtime = new JsonBridgeRuntime(adapter, sink, state, QueueCandidateOnDedicatedThread);
-
+        var adapter = new FakeAdapter();
+        using var runtime = new JsonBridgeRuntime(adapter, sink, state);
+        adapter.RunFactory = () =>
+        {
+            state.Run = CreateRun();
+            return new Json.RunState { GameName = "obsolete" };
+        };
         state.CallRunManuallyModified();
-        await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
-        runtime.Dispose();
-        candidate.ReleaseBuild.Set();
-        await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
-
         Assert.Equal(0, sink.Count);
-        Assert.NotEqual("late", ReadRun(runtime).GetProperty("game_name").GetString());
+        adapter.RunFactory = () => new Json.RunState { GameName = "latest" };
+        runtime.ObserveRunReference();
+        ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "run_changed");
+        Assert.Equal("latest", ReadRun(runtime).GetProperty("game_name").GetString());
     }
 
     private static JsonElement WireResponse(Json.RpcResponse response) => JsonSerializer.SerializeToElement((object)response, Json.BridgeJsonOptions.Create());
@@ -380,19 +407,14 @@ public sealed class JsonBridgeRuntimeTests
         },
     };
 
-    private static void QueueCandidateOnDedicatedThread(Action work) => _ = Task.Factory.StartNew(
-        work,
-        CancellationToken.None,
-        TaskCreationOptions.LongRunning,
-        TaskScheduler.Default);
-
     private class FakeAdapter : IJsonLiveSplitAdapter
     {
         public bool ThrowOnTimerOperation { get; set; }
         public bool ThrowOnTimerState { get; set; }
         public bool ThrowOnSecondTimerState { get; set; }
         public bool ThrowOnAttempt { get; set; }
-        public Func<IJsonRunStateCandidate>? CandidateFactory { get; set; }
+        public Func<Json.RunState>? RunFactory { get; set; }
+        public Func<Json.RunIcons>? IconsFactory { get; set; }
         public Json.ContextState ContextState { get; set; } = new();
         public Json.RunState RunSnapshot { get; set; } = new();
         public Json.RunState? TimingUpdateSnapshot { get; set; }
@@ -412,14 +434,13 @@ public sealed class JsonBridgeRuntimeTests
             CurrentComparison = ContextState.CurrentComparison,
             CustomVariables = new Dictionary<string, string>(ContextState.CustomVariables),
         };
-        public Json.RunState GetRunState() => RunSnapshot;
-        public IJsonRunStateCandidate CaptureRunState() => CandidateFactory?.Invoke() ?? new Candidate(new Json.RunState());
+        public Json.RunState GetRunState() => RunFactory?.Invoke() ?? RunSnapshot;
+        public Json.RunIcons GetRunIcons() => IconsFactory?.Invoke() ?? new();
         public bool TryUpdateRunTimings(Json.RunState published, out Json.RunState updated)
         {
             updated = TimingUpdateSnapshot == null ? published : LiveSplit.Bridge.Json.RunSnapshot.CopyForTimingUpdate(TimingUpdateSnapshot);
             return true;
         }
-        public bool IsTimerOnlyRun() => false;
         public virtual void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             TimerOperationCalls++;
@@ -453,46 +474,6 @@ public sealed class JsonBridgeRuntimeTests
                 if (!ReleaseFirst.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("First control was not released.");
             }
             else SecondEntered.Set();
-        }
-    }
-
-    private sealed class Candidate : IJsonRunStateCandidate
-    {
-        private Json.RunState? value;
-        internal Candidate(Json.RunState value) => this.value = value;
-        public Json.RunState Build() => Interlocked.Exchange(ref value, null) ?? throw new ObjectDisposedException(nameof(Candidate));
-        public void Dispose() => Interlocked.Exchange(ref value, null);
-    }
-
-    private sealed class GateCandidate : IJsonRunStateCandidate
-    {
-        private readonly Json.RunState value;
-        private int disposed;
-        internal AsyncSignal BuildEntered { get; } = new();
-        internal ManualResetEventSlim ReleaseBuild { get; } = new();
-        internal AsyncSignal PipelineFinished { get; } = new();
-        internal GateCandidate(Json.RunState value) => this.value = value;
-        public Json.RunState Build()
-        {
-            BuildEntered.Set();
-            if (!ReleaseBuild.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Candidate build was not released.");
-            return value;
-        }
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref disposed, 1) == 0) PipelineFinished.Set();
-        }
-    }
-
-    private sealed class AsyncSignal
-    {
-        private readonly TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal void Set() => completion.TrySetResult(true);
-        internal async Task WaitAsync(TimeSpan timeout)
-        {
-            var completed = await Task.WhenAny(completion.Task, Task.Delay(timeout)).ConfigureAwait(false);
-            Assert.Same(completion.Task, completed);
-            await completion.Task.ConfigureAwait(false);
         }
     }
 

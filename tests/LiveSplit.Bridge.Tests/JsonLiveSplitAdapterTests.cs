@@ -41,7 +41,7 @@ public class JsonLiveSplitAdapterTests
     }
 
     [Fact]
-    public void CapturesRunStateAndDetachedPngImages()
+    public void BuildsRunStateWithoutReadingImages()
     {
         var run = CreateRun();
         run.GameName = "Game";
@@ -59,10 +59,9 @@ public class JsonLiveSplitAdapterTests
         run[0].Icon = segmentIcon;
         var adapter = new JsonLiveSplitAdapter(TestLiveSplitState.Create(run));
 
-        using var candidate = adapter.CaptureRunState();
         gameIcon.Dispose();
         segmentIcon.Dispose();
-        var result = candidate.Build();
+        var result = adapter.GetRunState();
 
         Assert.Equal("Game", result.GameName);
         Assert.Equal(-123, result.OffsetTicks);
@@ -72,8 +71,6 @@ public class JsonLiveSplitAdapterTests
         Assert.Equal(run.Comparisons.Distinct(), result.Comparisons);
         Assert.Equal("One", result.Segments[0].Name);
         Assert.Equal(TimeSpan.FromSeconds(7).Ticks, result.Segments[0].BestSegmentTime.RealTimeTicks);
-        AssertPng(result.GameIcon);
-        AssertPng(result.Segments[0].Icon);
     }
 
     [Fact]
@@ -84,8 +81,6 @@ public class JsonLiveSplitAdapterTests
         run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(2), null);
         var adapter = new JsonLiveSplitAdapter(TestLiveSplitState.Create(run));
         var published = adapter.GetRunState();
-        published.GameIcon = new byte[] { 1, 2, 3 };
-        published.Segments[0].Icon = new byte[] { 4, 5, 6 };
         run.Metadata.RunID = null;
         run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(9), null);
 
@@ -94,8 +89,6 @@ public class JsonLiveSplitAdapterTests
         Assert.Null(updated.Metadata!.RunId);
         Assert.Equal(TimeSpan.FromSeconds(2).Ticks, published.Segments[0].BestSegmentTime.RealTimeTicks);
         Assert.Equal(TimeSpan.FromSeconds(9).Ticks, updated.Segments[0].BestSegmentTime.RealTimeTicks);
-        Assert.Equal(new byte[] { 1, 2, 3 }, updated.GameIcon);
-        Assert.Equal(new byte[] { 4, 5, 6 }, updated.Segments[0].Icon);
 
         updated.Segments.RemoveAt(updated.Segments.Count - 1);
         Assert.False(adapter.TryUpdateRunTimings(updated, out _));
@@ -116,21 +109,86 @@ public class JsonLiveSplitAdapterTests
     }
 
     [Fact]
-    public void MergeRunTimingsPreservesCandidateStaticDataAndRejectsStructureMismatch()
+    public void GetsCurrentIconsAsPngWithNullEntriesInSegmentOrder()
     {
-        var candidate = CreateSnapshot();
-        var latest = CreateSnapshot();
-        latest.Metadata!.RunId = null;
-        latest.Segments[0].BestSegmentTime.RealTimeTicks = 99;
+        var run = CreateRun();
+        using var game = new Bitmap(2, 2);
+        using var segment = new Bitmap(2, 2);
+        game.SetPixel(0, 0, Color.Magenta);
+        segment.SetPixel(0, 0, Color.Cyan);
+        run.GameIcon = game;
+        run[0].Icon = segment;
+        var state = TestLiveSplitState.Create(run);
+        var adapter = new JsonLiveSplitAdapter(state);
 
-        Assert.True(JsonLiveSplitAdapter.TryMergeRunTimings(candidate, latest, out var merged));
-        Assert.Equal("Game", merged.GameName);
-        Assert.Null(merged.Metadata!.RunId);
-        Assert.Equal(99, merged.Segments[0].BestSegmentTime.RealTimeTicks);
-        Assert.Equal(10, candidate.Segments[0].BestSegmentTime.RealTimeTicks);
+        var icons = adapter.GetRunIcons();
+        Assert.Equal(Color.Magenta.ToArgb(), ReadPixel(icons.GameIcon).ToArgb());
+        Assert.Equal(2, icons.SegmentIcons.Count);
+        Assert.Equal(Color.Cyan.ToArgb(), ReadPixel(icons.SegmentIcons[0]).ToArgb());
+        Assert.Null(icons.SegmentIcons[1]);
 
-        latest.Segments[0].Name = "Different";
-        Assert.False(JsonLiveSplitAdapter.TryMergeRunTimings(candidate, latest, out _));
+        // Every request reads the current Run; there is no persistent icon snapshot.
+        state.Run = CreateRun();
+        var missing = adapter.GetRunIcons();
+        Assert.Null(missing.GameIcon);
+        Assert.Equal(new byte[]?[] { null, null }, missing.SegmentIcons);
+    }
+
+    [Fact]
+    public async Task IconRequestWaitsForRunReplacementToFinishDisposingOldImages()
+    {
+        var ready = new TaskCompletionSource<LiveSplitState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var disposedImage = new ManualResetEventSlim();
+        using var finishReplacement = new ManualResetEventSlim();
+        var ui = new Thread(() =>
+        {
+            var run = CreateRun();
+            run.GameIcon = new Bitmap(2, 2);
+            var state = TestLiveSplitState.Create(run);
+            using var form = state.Form;
+            _ = form.Handle;
+            ready.SetResult(state);
+            try { System.Windows.Forms.Application.Run(); }
+            finally { state.Run.GameIcon?.Dispose(); }
+        }) { IsBackground = true };
+        ui.SetApartmentState(ApartmentState.STA);
+        ui.Start();
+        Assert.Same(ready.Task, await Task.WhenAny(ready.Task, Task.Delay(TimeSpan.FromSeconds(5))));
+        var state = await ready.Task;
+        try
+        {
+            state.Form.BeginInvoke((Action)(() =>
+            {
+                // TimerForm.SetRun has this same interval: old images are disposed
+                // while state.Run still points at the old Run.
+                state.Run.GameIcon.Dispose();
+                disposedImage.Set();
+                if (!finishReplacement.Wait(TimeSpan.FromSeconds(5))) return;
+                var replacement = CreateRun();
+                var icon = new Bitmap(2, 2);
+                icon.SetPixel(0, 0, Color.Magenta);
+                replacement.GameIcon = icon;
+                state.Run = replacement;
+            }));
+            Assert.True(disposedImage.Wait(TimeSpan.FromSeconds(5)));
+            var request = Task.Run(() => new JsonLiveSplitAdapter(state).GetRunIcons());
+            try
+            {
+                Assert.NotSame(request, await Task.WhenAny(request, Task.Delay(100)));
+            }
+            finally { finishReplacement.Set(); }
+            Assert.Same(request, await Task.WhenAny(request, Task.Delay(TimeSpan.FromSeconds(5))));
+            var icons = await request;
+            Assert.Equal(Color.Magenta.ToArgb(), ReadPixel(icons.GameIcon).ToArgb());
+            Assert.Equal(2, icons.SegmentIcons.Count);
+            Assert.All(icons.SegmentIcons, Assert.Null);
+        }
+        finally
+        {
+            finishReplacement.Set();
+            state.Form.BeginInvoke((Action)System.Windows.Forms.Application.ExitThread);
+            Assert.True(ui.Join(TimeSpan.FromSeconds(5)));
+        }
     }
 
     private static Run CreateRun()
@@ -141,26 +199,11 @@ public class JsonLiveSplitAdapterTests
         return run;
     }
 
-    private static Json.RunState CreateSnapshot() => new()
-    {
-        GameName = "Game",
-        Metadata = new Json.RunMetadata { RunId = "id" },
-        Comparisons = new() { "Personal Best" },
-        Segments = new()
-        {
-            new Json.SegmentInfo
-            {
-                Name = "One",
-                Comparisons = new() { new Json.ComparisonTime { Name = "Personal Best", Time = new Json.TimeValue() } },
-                BestSegmentTime = new Json.TimeValue { RealTimeTicks = 10 },
-            },
-        },
-    };
-
-    private static void AssertPng(byte[]? data)
+    private static Color ReadPixel(byte[]? data)
     {
         Assert.NotNull(data);
-        Assert.True(data!.Length > 8);
-        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, data.Take(8));
+        using var stream = new System.IO.MemoryStream(data!);
+        using var bitmap = new Bitmap(stream);
+        return bitmap.GetPixel(0, 0);
     }
 }

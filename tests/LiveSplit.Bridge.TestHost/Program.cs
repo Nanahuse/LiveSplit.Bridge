@@ -51,6 +51,7 @@ internal static class Program
         run.Metadata.GetOrAddCustomVariable("host_var").Value = "host-value";
 
         using var form = new Form();
+        _ = form.Handle;
         var layoutSettings = new BridgeLayoutSettings();
         var layout = new Layout { Settings = layoutSettings };
         var state = new LiveSplitState(run, form, layout, layoutSettings, new Settings());

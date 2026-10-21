@@ -205,6 +205,15 @@ def test_queries_return_v4_state_and_complete_json_envelopes(
     assert [segment["name"] for segment in run["segments"]] == ["First", "Second"]
     assert run["segments"][0]["comparisons"][0]["name"] == "Personal Best"
 
+    assert "game_icon" not in run
+    assert all("icon" not in segment for segment in run["segments"])
+    icons_response = rpc_json(test_host, "run-icons")
+    assert icons_response["result"] == {
+        "game_icon": None,
+        "segment_icons": [None, None],
+    }
+    assert icons_response["session_id"] > 0
+
     attempt = rpc_json(test_host, "attempt")["result"]
     assert attempt["attempt_count"] == 0
     assert len(attempt["segments"]) == 2

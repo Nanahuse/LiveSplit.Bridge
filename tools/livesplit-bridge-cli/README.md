@@ -22,6 +22,7 @@ Protocol v4の小文字Enum表記を使います。
 ```powershell
 uv run livesplit-bridge timer-state
 uv run livesplit-bridge run
+uv run livesplit-bridge --json run-icons
 uv run livesplit-bridge attempt
 uv run livesplit-bridge context
 uv run livesplit-bridge completed-count
@@ -51,6 +52,10 @@ sequence不連続は標準エラーに警告します。イベント履歴の再
 Bridge削除などによる切断は未処理例外にせず、説明付きエラーと終了コード1で報告します。
 
 BridgeはQueryとEventsを外部Originにも許可しますが、Control RPCは接続時のOrigin制限に従います。
+
+`run`に画像は含まれません。`run-icons`は現在のRunのゲーム・Segmentアイコンを一括取得します。
+通常表示はPNGの有無、`--json`はBase64 PNG文字列または`null`を出力します。Segment順は取得時の
+Runに従い、`run`との間のRun切り替えやアイコンの変更通知・キャッシュは扱いません。
 
 ## 開発チェック
 

@@ -17,6 +17,7 @@ public enum QueryMethod
 {
     [JsonStringEnumMemberName("get_timer_state")] GetTimerState,
     [JsonStringEnumMemberName("get_run")] GetRun,
+    [JsonStringEnumMemberName("get_run_icons")] GetRunIcons,
     [JsonStringEnumMemberName("get_attempt")] GetAttempt,
     [JsonStringEnumMemberName("get_context_state")] GetContextState,
     [JsonStringEnumMemberName("get_completed_count")] GetCompletedCount,
@@ -350,10 +351,25 @@ public sealed class RunState
     [JsonRequired] public RunMetadata? Metadata { get; set; }
     [JsonRequired] public List<string> Comparisons { get; set; } = new();
     [JsonRequired] public List<SegmentInfo> Segments { get; set; } = new();
+}
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+// Generation 7.3 applies the nested Nullable attribute to the collection too.
+// This standard conditional excludes null collections while retaining null items.
+[If(nameof(RunIcons.SegmentIcons), (string)null!, "icons_array")]
+#endif
+public sealed class RunIcons
+{
 #if SCHEMA_GENERATION
     [Description("Base64-encoded PNG image; null when absent.")]
 #endif
     [JsonRequired] public PngImage? GameIcon { get; set; }
+#if SCHEMA_GENERATION
+    [Nullable(true, GenericParameter = 0)]
+    [Nullable(false, ConditionGroup = "icons_array")]
+    [Description("Segment icons in Run order, as Base64-encoded PNG images; null entries when absent.")]
+#endif
+    [JsonRequired] public List<PngImage?> SegmentIcons { get; set; } = new();
 }
 #if SCHEMA_GENERATION
 [AdditionalProperties(false)]
@@ -367,10 +383,6 @@ public sealed class SegmentInfo
     [JsonRequired] public string Name { get; set; } = "";
     [JsonRequired] public List<ComparisonTime> Comparisons { get; set; } = new();
     [JsonRequired] public TimeValue BestSegmentTime { get; set; } = new();
-#if SCHEMA_GENERATION
-    [Description("Base64-encoded PNG image; null when absent.")]
-#endif
-    [JsonRequired] public PngImage? Icon { get; set; }
 }
 #if SCHEMA_GENERATION
 [AdditionalProperties(false)]
