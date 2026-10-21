@@ -9,6 +9,35 @@ namespace LiveSplit.Bridge.Tests;
 public sealed class JsonWebSocketEventTests
 {
     [Fact]
+    public async Task UnreadEventsDoNotBlockPublishingOrRpcQueries()
+    {
+        var port = BridgeTestEndpoints.GetFreePort();
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        using var transport = new JsonWebSocketTransport(port);
+        using var runtime = new JsonBridgeRuntime(TestLiveSplitState.Create(run), transport);
+        transport.Start(runtime);
+        using var unread = await JsonWebSocketTestClient.ConnectAsync(BridgeTestEndpoints.JsonEvents(port));
+        using var rpc = await JsonWebSocketTestClient.ConnectAsync(BridgeTestEndpoints.JsonRpc(port));
+
+        var publishing = Task.Run(() =>
+        {
+            for (uint sequence = 1; sequence <= 100_000; sequence++)
+            {
+                transport.Enqueue(new Json.TimerEvent { EventSequence = sequence, SessionId = 1 });
+                if (sequence % 1000 == 0) Thread.Sleep(1);
+            }
+        });
+        Assert.Same(publishing, await Task.WhenAny(publishing, Task.Delay(TimeSpan.FromSeconds(10))));
+        await publishing;
+
+        await rpc.SendTextAsync("{\"request_id\":1,\"method\":\"get_timer_state\"}");
+        using var response = JsonDocument.Parse((await rpc.ReceiveAsync(TimeSpan.FromSeconds(5))).Data);
+        Assert.Equal(1U, response.RootElement.GetProperty("request_id").GetUInt32());
+        Assert.Equal("not_running", response.RootElement.GetProperty("result").GetProperty("phase").GetString());
+    }
+
+    [Fact]
     public async Task TimerControlProducesOrderedTextEventWithMatchingSession()
     {
         var port = BridgeTestEndpoints.GetFreePort();

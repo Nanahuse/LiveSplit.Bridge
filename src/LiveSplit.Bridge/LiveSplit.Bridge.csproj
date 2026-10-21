@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="9.0.4" />
+    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
   </ItemGroup>
 
   <Target Name="DeployToLiveSplit" AfterTargets="Build">

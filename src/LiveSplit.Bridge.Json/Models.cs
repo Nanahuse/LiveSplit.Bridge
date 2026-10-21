@@ -80,6 +80,9 @@ public enum BridgeErrorCode
     [JsonStringEnumMemberName("permission_denied")] PermissionDenied,
 }
 
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public abstract class CorrelatedMessage
 {
 #if SCHEMA_GENERATION
@@ -90,17 +93,11 @@ public abstract class CorrelatedMessage
 
 public abstract class RpcRequest : CorrelatedMessage { }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class QueryRequest : RpcRequest
 {
     [JsonRequired] public QueryMethod Method { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class TimerRequest : RpcRequest
 {
     public const string MethodName = "timer_operation";
@@ -123,9 +120,6 @@ public sealed class TimerParams
     [JsonRequired] public TimerOperation Operation { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class GameTimeRequest<T> : RpcRequest where T : GameTimeParams
 {
     public const string MethodName = "game_time_operation";
@@ -148,19 +142,16 @@ public sealed class GameTimeRequest<T> : RpcRequest where T : GameTimeParams
     }
 }
 
-public abstract class GameTimeParams { }
-
 #if SCHEMA_GENERATION
 [AdditionalProperties(false)]
 #endif
+public abstract class GameTimeParams { }
+
 public sealed class GameControlParams : GameTimeParams
 {
     [JsonRequired] public GameControlOperation Operation { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class GameSetParams : GameTimeParams
 {
     public const string OperationName = "set";
@@ -186,9 +177,6 @@ public abstract class RpcResponse : CorrelatedMessage
     [JsonRequired] public uint SessionId { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class Success<T> : RpcResponse where T : class
 {
     private T result = default!;
@@ -202,9 +190,6 @@ public sealed class Success<T> : RpcResponse where T : class
     }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class ControlSuccessResponse : RpcResponse
 {
 #if SCHEMA_GENERATION
@@ -217,14 +202,14 @@ public sealed class ControlSuccessResponse : RpcResponse
     }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class ErrorResponse : RpcResponse
 {
     [JsonRequired] public BridgeError Error { get; set; } = new();
 }
 
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public abstract class BridgeEvent
 {
 #if SCHEMA_GENERATION
@@ -237,18 +222,12 @@ public abstract class BridgeEvent
     [JsonRequired] public uint EventSequence { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class TimerEvent : BridgeEvent
 {
     [JsonRequired] public TimerEventKind Type { get; set; }
     [JsonRequired] public TimerState TimerState { get; set; } = new();
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class ResetEvent : BridgeEvent
 {
     public const string TypeName = "timer_reset";
@@ -263,9 +242,6 @@ public sealed class ResetEvent : BridgeEvent
     [JsonRequired] public TimerState? TimerState { get; set; }
 }
 
-#if SCHEMA_GENERATION
-[AdditionalProperties(false)]
-#endif
 public sealed class ChangedEvent : BridgeEvent
 {
     [JsonRequired] public ChangedEventKind Type { get; set; }
