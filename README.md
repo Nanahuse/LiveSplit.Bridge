@@ -4,10 +4,7 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 コンポーネントです。対応する外部アプリケーションから、タイマーの状態確認や操作、
 ゲーム内時間の制御ができるようになります。
 
-この開発ブランチでは、JSON Protocol v4を実装しています。公開Releaseと`main`ブランチの
-通信仕様はこの作業ブランチの内容とは異なる場合があります。JSON Protocol v4は旧Protobuf
-Protocol v3と互換性がありません。同梱のDebug CLIはこのブランチのJSON v4向けであり、v3の
-公開Releaseや`main`とは通信できません。
+通信にはJSON Protocol v4を使用し、同じPC上の外部アプリケーションからWebSocketで接続できます。
 
 このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
 外部アプリケーションと組み合わせて使用してください。
@@ -16,24 +13,24 @@ Protocol v3と互換性がありません。同梱のDebug CLIはこのブラン
 
 - Windows
 - LiveSplit 1.8.37
+- .NET Framework 4.8.1
 
 ## できること
 
 対応する外部アプリケーションから、次の機能を利用できます。
 
 - LiveSplitの現在のタイマー状態を確認する
+- ゲーム名、カテゴリ、Segment、比較タイムなどのRun情報と、必要に応じてアイコンを取得する
 - タイマーの開始、Split、Skip、Undo、Reset、Pause、Resumeを操作する
 - ゲーム内時間を設定、Pause、Resumeする
 - LiveSplit側で行われたタイマー操作や設定変更を受け取る
 
-## 公開Releaseのインストール
+## インストール
 
-以下はGitHub Releasesで公開中のパッケージを使う場合の手順です。JSON Protocol v4はこの開発ブランチの候補で、まだReleaseされていません。公開パッケージはこのブランチと異なるProtocolを含むことがあるため、Releaseとv4開発ブランチのクライアント仕様を混在させないでください。v4へ接続するクライアントは、v4を実装したBridgeビルドと組み合わせてください。
-
-1. [最新のReleases](https://github.com/Nanahuse/LiveSplit.Bridge/releases/latest)から
-   `LiveSplit.Bridge-v*.zip`をダウンロードします。
+1. [GitHub Releases](https://github.com/Nanahuse/LiveSplit.Bridge/releases)から
+   JSON Protocol v4対応の`LiveSplit.Bridge-v*.zip`をダウンロードします。
 2. LiveSplitを終了します。
-3. ZIPの内容をLiveSplitの`Components`フォルダーへ展開します。
+3. ZIP内の`LiveSplit.Bridge.dll`をLiveSplitの`Components`フォルダーへ配置します。
 4. LiveSplitを起動します。
 5. レイアウトを右クリックして`Edit Layout...`を開きます。
 6. `+`から`Control` > `LiveSplit Bridge`を追加します。
@@ -41,55 +38,40 @@ Protocol v3と互換性がありません。同梱のDebug CLIはこのブラン
 `LiveSplit Bridge`はレイアウト上には表示されません。レイアウトに追加されている間、
 対応する外部アプリケーションから接続できます。
 
-## 設定
+## 設定と接続
 
 レイアウト編集画面で`LiveSplit Bridge`の設定を開くと、接続に使用するWebSocket
-ポートを変更できます。既定値は次のとおりです。
+ポートを変更できます。変更後は`Apply`を押してください。既定値は次のとおりです。
 
 | 項目 | 既定値 |
 |---|---:|
 | WebSocketポート | `54000` |
 
-RPCは`ws://127.0.0.1:<port>/bridge/v4/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v4/events`で接続します。JSONはWebSocket Text Messageで
-送信します。RPC RequestはUTF-8で64 KiBまでです。上限を超える接続はMessage Too Bigで
-終了します。通常は既定値のまま使用できます。
+通常は既定値のまま使用できます。接続先は次のとおりです。
+
+| 用途 | 接続先 |
+| --- | --- |
+| 状態の取得・操作（RPC） | `ws://127.0.0.1:<port>/bridge/v4/rpc` |
+| 変更通知（Events） | `ws://127.0.0.1:<port>/bridge/v4/events` |
+
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 
-WebSocketサーバーは引き続きloopbackだけで待ち受けます。Eventsと読み取り専用のQuery RPCは
-Originに関係なく利用できます。OBSのブラウザソースでは、ローカルHTMLから追加のHTTPサーバー
-なしでQueryとEventsを利用できます。TimerやGame Timeを操作するControl RPCは従来のOrigin
-制限に従い、Originヘッダーなし、または`localhost`、`127.0.0.1`、`::1`のHTTP/HTTPS Origin
-からのみ許可されます。それ以外のOriginからControlを要求すると`permission_denied`が返り、
-WebSocket接続は維持されます。Origin制限はブラウザ由来の要求を制限する仕組みであり、完全な
-認証ではありません。
-
-Eventは再取得のきっかけとして扱い、現在の状態はQueryで確認してください。送信待ちの通知は
-全接続共通で最大256件まで保持し、満杯時は新しい通知を破棄します。再送や購読者ごとの配送・
-順序の補償はありません。クライアントは`session_id`と`event_sequence`を確認し、欠落や再接続時に
-必要な状態を再取得してください。`run_changed`は公開Runの内容が変わった場合に発行し、
-Resetで比較タイムなどが更新された場合も含みます。
-
-`get_run`は画像を含まないRun情報を返します。アイコンが必要なクライアントは
-`{"request_id":10,"method":"get_run_icons"}`をRPCへ送信してください。成功Responseの`result`は
-`{"game_icon":null,"segment_icons":[null,"iVBORw0KGgo..."]}`のように、PNGのBase64文字列またはnullを返します。
-`segment_icons`は取得時のRunのSegment順に並び、アイコンがない要素は`null`になります。
-アイコン専用Eventやキャッシュはありません。取得のたびに現在のRunからPNGへ変換します。
-`get_run`との間でRunが切り替わる可能性があるため、画像の再取得はクライアントが判断してください。
+接続できるのは同じPC上のアプリケーションだけです。通信形式、ブラウザーからの操作権限、
+通知の扱いは[クライアント開発ガイド](CLIENT_DEVELOPMENT.md)を参照してください。
 
 ## 更新
 
 1. LiveSplitを終了します。
 2. 新しいリリースのZIPをダウンロードします。
-3. ZIPの内容を既存のLiveSplitの`Components`フォルダーへ上書きします。
+3. ZIP内の`LiveSplit.Bridge.dll`を既存のLiveSplitの`Components`フォルダーへ上書きします。
 4. LiveSplitを起動します。
 
 ## アンインストール
 
 1. レイアウト編集画面から`LiveSplit Bridge`を削除します。
 2. LiveSplitを終了します。
-3. `Components`フォルダーからLiveSplit.Bridgeのファイルを削除します。
+3. `Components`フォルダーから`LiveSplit.Bridge.dll`を削除します。
 
 ## トラブルシューティング
 
@@ -97,19 +79,14 @@ Resetで比較タイムなどが更新された場合も含みます。
   `LiveSplit Bridge`が追加されていることを確認してください。
 - LiveSplitを複数起動する場合は、ポートが重複しないよう、それぞれのレイアウトで
   異なるWebSocketポートを設定してください。
+- 設定画面で`Status: Failed`と表示される場合は、併記されたエラーを確認してください。
+  ポートが使用中の場合は、別のポートを設定して`Apply`を押してください。
 - Bridgeは同じPCからの接続だけを受け付けます。別のPCからは接続できません。
 - 更新後に問題が起きた場合は、LiveSplitを終了してからファイルを上書きしたか確認して
   ください。
 
-## 関連ドキュメント
+## 開発者向け資料
 
-- JSON WebSocket実装と検証状況:
-  [`docs/phase3c-json-transport.md`](docs/phase3c-json-transport.md)
-
-- JSON v4 Schemaと検証手順:
-  [`tools/schema/README.md`](tools/schema/README.md)
-
-- Bridgeへ接続するアプリケーションを作る方:
-  [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
-- 同梱のDebug CLIを使う方:
-  [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)
+- [クライアント開発ガイド](CLIENT_DEVELOPMENT.md): JSON v4の通信仕様、権限、再同期
+- [Debug CLI](tools/livesplit-bridge-cli/README.md): コマンドによるRPC・Eventsの確認
+- [Schema生成・検証](tools/schema/README.md): C# DTOからのSchema生成と契約検証
