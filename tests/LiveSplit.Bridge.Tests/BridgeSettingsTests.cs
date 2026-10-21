@@ -16,47 +16,14 @@ public class BridgeSettingsTests
         Assert.Equal(55000, settings.WebSocketPort);
     }
 
-    [Fact]
-    public void ReadFrom_MissingVersionUsesDefault()
+    [Theory]
+    [InlineData("<Settings><WebSocketPort>55000</WebSocketPort></Settings>")]
+    [InlineData("<Settings><Version>2</Version><WebSocketPort>55000</WebSocketPort></Settings>")]
+    [InlineData("<Settings><Version>1</Version><WebSocketPort>0</WebSocketPort></Settings>")]
+    public void ReadFrom_UnsupportedSettingsRestoreDefault(string xml)
     {
         var document = new XmlDocument();
-        document.LoadXml("<Settings><WebSocketPort>55000</WebSocketPort></Settings>");
-        var settings = new BridgeSettings();
-
-        settings.ReadFrom(document.DocumentElement!);
-
-        Assert.Equal(BridgeSettings.DefaultWebSocketPort, settings.WebSocketPort);
-    }
-
-    [Fact]
-    public void ReadFrom_UnparseableVersionUsesDefault()
-    {
-        var document = new XmlDocument();
-        document.LoadXml("<Settings><Version>not-a-version</Version><WebSocketPort>55000</WebSocketPort></Settings>");
-        var settings = new BridgeSettings();
-
-        settings.ReadFrom(document.DocumentElement!);
-
-        Assert.Equal(BridgeSettings.DefaultWebSocketPort, settings.WebSocketPort);
-    }
-
-    [Fact]
-    public void ReadFrom_DifferentVersionUsesDefault()
-    {
-        var document = new XmlDocument();
-        document.LoadXml("<Settings><Version>2</Version><WebSocketPort>55000</WebSocketPort></Settings>");
-        var settings = new BridgeSettings();
-
-        settings.ReadFrom(document.DocumentElement!);
-
-        Assert.Equal(BridgeSettings.DefaultWebSocketPort, settings.WebSocketPort);
-    }
-
-    [Fact]
-    public void ReadFrom_InvalidVersion1PortUsesDefault()
-    {
-        var document = new XmlDocument();
-        document.LoadXml("<Settings><Version>1</Version><WebSocketPort>0</WebSocketPort></Settings>");
+        document.LoadXml(xml);
         var settings = new BridgeSettings { WebSocketPort = 60000 };
 
         settings.ReadFrom(document.DocumentElement!);

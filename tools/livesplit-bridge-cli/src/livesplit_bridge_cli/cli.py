@@ -4,7 +4,6 @@ import argparse
 import json
 import math
 import os
-import socket
 import sys
 from decimal import (
     MAX_EMAX,
@@ -22,7 +21,7 @@ from .client import (
     UINT32_MAX,
     BridgeClient,
     BridgeClientError,
-    validate_event,
+    is_uint32,
 )
 
 DEFAULT_PORT = 54000
@@ -78,12 +77,6 @@ def timeout_milliseconds(
     if milliseconds < 1:
         argument_parser.error("--timeout must round to at least 1 millisecond")
 
-    try:
-        timeout_seconds = milliseconds / 1000
-        with socket.socket() as probe:
-            probe.settimeout(timeout_seconds)
-    except OSError, OverflowError, ValueError:
-        argument_parser.error("--timeout is not supported by the socket")
     return milliseconds
 
 
@@ -221,7 +214,9 @@ def context_lines(context: dict[str, object]) -> list[str]:
         f"timing_method={context['current_timing_method']}",
         f"current_comparison={context['current_comparison'] or '-'}",
     ]
-    variables = cast(dict[str, str], context["custom_variables"])
+    variables = context["custom_variables"]
+    if not isinstance(variables, dict):
+        raise ValueError("custom_variables must be an object")
     lines.extend(
         f"  custom_variable {name}={value}" for name, value in sorted(variables.items())
     )
@@ -232,20 +227,23 @@ def print_response(response: dict[str, object], method: str, as_json: bool) -> N
     if as_json:
         print(json.dumps(response, ensure_ascii=False, indent=2))
         return
-    result = response["result"]
-    if method == "get_timer_state":
-        lines = timer_state_lines(cast(dict[str, object], result))
-    elif method == "get_run":
-        lines = run_lines(cast(dict[str, object], result))
-    elif method == "get_attempt":
-        lines = attempt_lines(cast(dict[str, object], result))
-    elif method == "get_context_state":
-        lines = context_lines(cast(dict[str, object], result))
-    elif method == "get_completed_count":
-        completed = cast(dict[str, object], result)
-        lines = [f"completed_count={completed['completed_count']}"]
-    else:
-        lines = ["ok"]
+    try:
+        result = response["result"]
+        if method == "get_timer_state":
+            lines = timer_state_lines(cast(dict[str, object], result))
+        elif method == "get_run":
+            lines = run_lines(cast(dict[str, object], result))
+        elif method == "get_attempt":
+            lines = attempt_lines(cast(dict[str, object], result))
+        elif method == "get_context_state":
+            lines = context_lines(cast(dict[str, object], result))
+        elif method == "get_completed_count":
+            completed = cast(dict[str, object], result)
+            lines = [f"completed_count={completed['completed_count']}"]
+        else:
+            lines = ["ok"]
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise BridgeClientError(f"Cannot display {method} response: {error}") from error
     print("\n".join(lines))
 
 
@@ -271,11 +269,20 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
                     "Bridge returned a binary Event frame; text expected"
                 )
             try:
-                event = validate_event(json.loads(data))
+                event = json.loads(data)
             except (json.JSONDecodeError, UnicodeError, RecursionError) as error:
                 raise BridgeClientError(
                     f"Bridge returned invalid Event JSON: {error}"
                 ) from error
+
+            if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                raise BridgeClientError("Bridge returned an invalid Event envelope")
+            if not is_uint32(event.get("session_id"), nonzero=True) or not is_uint32(
+                event.get("event_sequence"), nonzero=True
+            ):
+                raise BridgeClientError(
+                    "Bridge returned invalid Event session/sequence IDs"
+                )
 
             session = cast(int, event["session_id"])
             sequence = cast(int, event["event_sequence"])
@@ -304,14 +311,13 @@ def run_events(endpoint: str, as_json: bool, count: int | None) -> int:
             else:
                 print(f"[{sequence}] {event['type']}")
                 if isinstance(event.get("timer_state"), dict):
-                    print(
-                        "  "
-                        + "\n  ".join(
-                            timer_state_lines(
-                                cast(dict[str, object], event["timer_state"])
-                            )
-                        )
-                    )
+                    try:
+                        lines = timer_state_lines(event["timer_state"])
+                    except (KeyError, TypeError, ValueError, OverflowError) as error:
+                        raise BridgeClientError(
+                            f"Cannot display Event timer state: {error}"
+                        ) from error
+                    print("  " + "\n  ".join(lines))
             received += 1
     except KeyboardInterrupt:
         return 0

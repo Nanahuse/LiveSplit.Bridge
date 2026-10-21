@@ -60,10 +60,6 @@ internal sealed class JsonBridgeRuntime : IDisposable
         if (attachStateEvents) AttachStateEvents();
     }
 
-    internal uint SessionId => sessionId;
-    internal Json.RunState PublishedRun => Volatile.Read(ref publishedRun);
-    internal Json.ContextState PublishedContext => Volatile.Read(ref publishedContext);
-
     /// <summary>Called by a future host update loop; it performs throttled context and Run observation.</summary>
     internal void Update()
     {
@@ -416,14 +412,12 @@ internal sealed class JsonBridgeRuntime : IDisposable
     private void EnqueueEventLocked(Json.BridgeEvent bridgeEvent)
     {
         if (Volatile.Read(ref disposed) != 0) return;
-        eventSequence = NextEventSequence(eventSequence);
+        eventSequence = eventSequence == uint.MaxValue ? 1U : eventSequence + 1U;
         bridgeEvent.SessionId = sessionId;
         bridgeEvent.EventSequence = eventSequence;
         try { eventSink.Enqueue(bridgeEvent); }
         catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON event sink failed: {exception}"); }
     }
-
-    internal static uint NextEventSequence(uint previous) => previous == uint.MaxValue ? 1U : previous + 1U;
 
     private static uint GenerateSessionId()
     {

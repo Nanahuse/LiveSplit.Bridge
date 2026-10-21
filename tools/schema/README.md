@@ -16,6 +16,7 @@ dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj
 dotnet build tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-restore
 dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- tools/schema/out
 ./tools/schema/Sync-Schemas.ps1
+dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- --samples tools/schema/out
 Push-Location tools/schema
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm run validate
@@ -38,9 +39,9 @@ The DTO hierarchy and standard polymorphism attributes define method, operation,
 
 ## Validation coverage
 
-`pnpm run validate` uses Ajv 8.17.1 to validate each generated schema against the Draft 2020-12 meta-schema, then checks the fixed positive and negative cases in `samples/validation-cases.json` and every message serialized by the C# generator.
+`pnpm run validate` uses Ajv 8.17.1 to validate each generated schema against the Draft 2020-12 meta-schema, then checks the protocol constraint cases in `samples/validation-cases.json` and every message serialized by the separate `--samples` command (`ContractSamples.cs`).
 
-The C# program also checks communication behavior that Ajv cannot observe, such as Request type resolution, operation round-trips, response exclusivity, and event nullability. These checks focus on the DTO contract rather than duplicating tests of generic `System.Text.Json` behavior.
+The generation command only writes schemas. The sample command writes 33 actual C# messages covering every query and operation, every response and event type, empty/populated runs, and nullable event/state fields. Ajv checks those serialized messages; the fixed fixtures retain protocol-specific rejection rules. Standard serializer round-trips, numeric conversion boundaries, Base64 decoding, and property-order tests are intentionally absent. Actual RPC dispatch and errors belong to the Windows communication tests.
 
 ## Known Schema and serializer differences
 

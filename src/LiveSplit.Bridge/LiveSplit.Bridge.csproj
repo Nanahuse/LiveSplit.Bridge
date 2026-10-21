@@ -36,23 +36,11 @@
     <PackageReference Include="System.Text.Json" Version="9.0.4" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <BridgeDistributionFiles>LiveSplit.Bridge.dll</BridgeDistributionFiles>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <BridgeDistributionFile Include="$(BridgeDistributionFiles)" />
-  </ItemGroup>
-
   <Target Name="DeployToLiveSplit" AfterTargets="Build">
     <MakeDir Directories="$(LiveSplitComponentsPath)" />
 
-    <ItemGroup>
-      <BridgeDeployFiles Include="@(BridgeDistributionFile->'$(TargetDir)%(Identity)')" />
-    </ItemGroup>
-
     <Copy
-      SourceFiles="@(BridgeDeployFiles)"
+      SourceFiles="$(TargetPath)"
       DestinationFolder="$(LiveSplitComponentsPath)"
       SkipUnchangedFiles="true" />
 

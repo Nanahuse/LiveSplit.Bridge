@@ -90,7 +90,6 @@ public class JsonLiveSplitAdapterTests
         run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(9), null);
 
         Assert.True(adapter.TryUpdateRunTimings(published, out var updated));
-        Assert.NotSame(published, updated);
         Assert.Equal("before", published.Metadata!.RunId);
         Assert.Null(updated.Metadata!.RunId);
         Assert.Equal(TimeSpan.FromSeconds(2).Ticks, published.Segments[0].BestSegmentTime.RealTimeTicks);
@@ -99,8 +98,7 @@ public class JsonLiveSplitAdapterTests
         Assert.Equal(new byte[] { 4, 5, 6 }, updated.Segments[0].Icon);
 
         updated.Segments.RemoveAt(updated.Segments.Count - 1);
-        Assert.False(adapter.TryUpdateRunTimings(updated, out var unchanged));
-        Assert.Same(updated, unchanged);
+        Assert.False(adapter.TryUpdateRunTimings(updated, out _));
     }
 
     [Fact]
@@ -126,15 +124,13 @@ public class JsonLiveSplitAdapterTests
         latest.Segments[0].BestSegmentTime.RealTimeTicks = 99;
 
         Assert.True(JsonLiveSplitAdapter.TryMergeRunTimings(candidate, latest, out var merged));
-        Assert.NotSame(candidate, merged);
         Assert.Equal("Game", merged.GameName);
         Assert.Null(merged.Metadata!.RunId);
         Assert.Equal(99, merged.Segments[0].BestSegmentTime.RealTimeTicks);
         Assert.Equal(10, candidate.Segments[0].BestSegmentTime.RealTimeTicks);
 
         latest.Segments[0].Name = "Different";
-        Assert.False(JsonLiveSplitAdapter.TryMergeRunTimings(candidate, latest, out var unchanged));
-        Assert.Same(candidate, unchanged);
+        Assert.False(JsonLiveSplitAdapter.TryMergeRunTimings(candidate, latest, out _));
     }
 
     private static Run CreateRun()

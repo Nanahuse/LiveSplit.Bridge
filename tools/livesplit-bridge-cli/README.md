@@ -54,6 +54,10 @@ BridgeはQueryとEventsを外部Originにも許可しますが、Control RPCは�
 
 ## 開発チェック
 
+CLIは完全なSchema validatorとしては動作しません。応答の照合やEventのsequence追跡に必要な
+envelopeを確認し、通常表示に必要な情報の不足は説明付きエラーとして報告します。通信モデル全体の
+構造とC#実出力との適合性はSchema contract jobで確認します。
+
 E2Eテストは`LiveSplit.Bridge.TestHost`から本番の`Component`を起動し、CLIと同じJSON v4
 WebSocket endpointを使います。Windows上でBridge TestHostをReleaseビルドしてから実行してください。
 

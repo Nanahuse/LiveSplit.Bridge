@@ -358,7 +358,6 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         }
 
         internal bool Owns(WebSocket candidate) => ReferenceEquals(socket, candidate);
-        internal Task? SenderTask { get { lock (gate) return sender; } }
 
         internal void Bind(WebSocket acceptedSocket)
         {
