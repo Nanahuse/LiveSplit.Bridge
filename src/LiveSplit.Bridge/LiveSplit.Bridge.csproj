@@ -27,6 +27,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="System.ComponentModel.DataAnnotations" />
     <Compile Include="..\LiveSplit.Bridge.Json\Models.cs" Link="Json\Models.cs" />
     <Compile Include="..\LiveSplit.Bridge.Json\SerializerOptions.cs" Link="Json\SerializerOptions.cs" />
     <Compile Include="..\LiveSplit.Bridge.Json\SnapshotOperations.cs" Link="Json\SnapshotOperations.cs" />
