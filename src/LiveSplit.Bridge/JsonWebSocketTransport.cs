@@ -36,7 +36,6 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
 
     internal string Endpoint => $"ws://127.0.0.1:{port}";
     internal bool IsListening => server?.IsListening ?? false;
-    internal int EventsSessionCount => server?.WebSocketServices[EventsPath].Sessions.Count ?? 0;
 
     internal void Start(JsonBridgeRuntime runtime)
     {
