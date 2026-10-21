@@ -237,7 +237,7 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
 
             var response = JsonWebSocketRpcHandler.Handle(message.Payload!, requestHandler!, invalidRequest!, allowControl, serializerOptions);
             if (response == null) continue;
-            var bytes = JsonSerializer.SerializeToUtf8Bytes<Json.RpcResponse>(response, serializerOptions);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes((object)response, serializerOptions);
             await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, stop.Token).ConfigureAwait(false);
         }
     }
@@ -358,7 +358,6 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
         }
 
         internal bool Owns(WebSocket candidate) => ReferenceEquals(socket, candidate);
-        internal Task? SenderTask { get { lock (gate) return sender; } }
 
         internal void Bind(WebSocket acceptedSocket)
         {
@@ -441,7 +440,7 @@ internal sealed class JsonWebSocketTransport : IJsonEventSink, IDisposable
                         if (completed || queue.Count == 0) return;
                         item = queue.Dequeue();
                     }
-                    var bytes = JsonSerializer.SerializeToUtf8Bytes<Json.BridgeEvent>(item, options);
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes((object)item, options);
                     await socket!.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cancellation.Token).ConfigureAwait(false);
                 }
             }

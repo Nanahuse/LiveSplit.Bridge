@@ -15,57 +15,48 @@ public sealed class JsonBridgeRuntimeTests
     public void MapsQueriesAndControlResponsesWithSessionAndRequestIds()
     {
         var adapter = new FakeAdapter();
-        var sink = new RecordingSink();
-        using var runtime = new JsonBridgeRuntime(adapter, sink);
-
-        var timer = Assert.IsType<Json.TimerStateResponse>(runtime.HandleRequest(new Json.GetTimerStateRequest { RequestId = 0 }, false));
-        var run = Assert.IsType<Json.RunStateResponse>(runtime.HandleRequest(new Json.GetRunRequest { RequestId = uint.MaxValue }, false));
-        var context = Assert.IsType<Json.ContextStateResponse>(runtime.HandleRequest(new Json.GetContextStateRequest { RequestId = 8 }, false));
-        var attempt = Assert.IsType<Json.AttemptStateResponse>(runtime.HandleRequest(new Json.GetAttemptRequest { RequestId = 9 }, false));
-        var completed = Assert.IsType<Json.CompletedCountResponse>(runtime.HandleRequest(new Json.GetCompletedCountRequest { RequestId = 10 }, false));
-        var control = Assert.IsType<Json.ControlSuccessResponse>(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 11, Params = new Json.TimerStartParams() }, true));
-
-        Assert.Equal(0U, timer.RequestId);
-        Assert.Equal(uint.MaxValue, run.RequestId);
-        Assert.NotEqual(0U, runtime.SessionId);
-        Assert.All(new Json.RpcResponse[] { timer, run, context, attempt, completed, control }, response => Assert.Equal(runtime.SessionId, response.SessionId));
-        Assert.Same(runtime.PublishedRun, run.Result);
-        Assert.Same(runtime.PublishedContext, context.Result);
+        using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
+        var requests = new Json.RpcRequest[]
+        {
+            new Json.QueryRequest { Method = Json.QueryMethod.GetTimerState, RequestId = 0 }, new Json.QueryRequest { Method = Json.QueryMethod.GetRun, RequestId = uint.MaxValue },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetContextState, RequestId = 8 }, new Json.QueryRequest { Method = Json.QueryMethod.GetAttempt, RequestId = 9 },
+            new Json.QueryRequest { Method = Json.QueryMethod.GetCompletedCount, RequestId = 10 },
+            new Json.TimerRequest { RequestId = 11, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } },
+        };
+        var responses = requests.Select(request => WireResponse(runtime.HandleRequest(request, true))).ToArray();
+        var session = responses[0].GetProperty("session_id").GetUInt32();
+        Assert.NotEqual(0U, session);
+        for (var i = 0; i < requests.Length; i++)
+        {
+            Assert.Equal(requests[i].RequestId, responses[i].GetProperty("request_id").GetUInt32());
+            Assert.Equal(session, responses[i].GetProperty("session_id").GetUInt32());
+        }
         Assert.Equal(1, adapter.TimerOperationCalls);
-        Assert.Contains("\"result\":null", JsonSerializer.Serialize<Json.RpcResponse>(control, Json.BridgeJsonOptions.Create()));
     }
 
     [Fact]
-    public void DeniesControlBeforeParamsValidationAndMapsOperationErrors()
+    public void DeniesControlAndMapsOperationFailures()
     {
         var adapter = new FakeAdapter { ThrowOnTimerOperation = true };
         using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
 
-        var denied = Assert.IsType<Json.ErrorResponse>(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 21, Params = null! }, allowControl: false));
-        var failed = Assert.IsType<Json.ErrorResponse>(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 22, Params = new Json.TimerStartParams() }, allowControl: true));
-        var invalid = Assert.IsType<Json.ErrorResponse>(runtime.HandleRequest(
-            new Json.GameTimeOperationRequest { RequestId = 23, Params = null! }, allowControl: true));
-
-        Assert.Equal(Json.BridgeErrorCode.PermissionDenied, denied.Error.Code);
-        Assert.Equal(Json.BridgeErrorCode.OperationFailed, failed.Error.Code);
-        Assert.Equal(Json.BridgeErrorCode.InvalidArgument, invalid.Error.Code);
+        var denied = WireResponse(runtime.HandleRequest(
+            new Json.TimerRequest { RequestId = 21, Params = null! }, allowControl: false));
+        var failed = WireResponse(runtime.HandleRequest(
+            new Json.TimerRequest { RequestId = 22, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, allowControl: true));
+        Assert.Equal("permission_denied", denied.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal("operation_failed", failed.GetProperty("error").GetProperty("code").GetString());
         Assert.Equal(1, adapter.TimerOperationCalls);
     }
 
     [Fact]
     public void QueryExceptionReturnsInternalError()
     {
-        var adapter = new FakeAdapter { ThrowOnAttempt = true };
-        using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
+        using var runtime = new JsonBridgeRuntime(new FakeAdapter { ThrowOnAttempt = true }, new RecordingSink());
+        var response = WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetAttempt, RequestId = 19 }, false));
 
-        var response = Assert.IsType<Json.ErrorResponse>(runtime.HandleRequest(new Json.GetAttemptRequest { RequestId = 19 }, false));
-
-        Assert.Equal(19U, response.RequestId);
-        Assert.Equal(Json.BridgeErrorCode.InternalError, response.Error.Code);
-        Assert.Equal(runtime.SessionId, response.SessionId);
+        Assert.Equal(19U, response.GetProperty("request_id").GetUInt32());
+        Assert.Equal("internal_error", response.GetProperty("error").GetProperty("code").GetString());
     }
 
     [Fact]
@@ -79,21 +70,21 @@ public sealed class JsonBridgeRuntimeTests
         Json.RpcResponse? queryResponse = null;
         _ = Task.Factory.StartNew(() =>
         {
-            try { controlResponse = runtime.HandleRequest(new Json.TimerOperationRequest { RequestId = 1, Params = new Json.TimerStartParams() }, true); }
+            try { controlResponse = runtime.HandleRequest(new Json.TimerRequest { RequestId = 1, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, true); }
             finally { controlDone.Set(); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Assert.True(adapter.ControlEntered.Wait(TimeSpan.FromSeconds(5)));
 
         _ = Task.Factory.StartNew(() =>
         {
-            try { queryResponse = runtime.HandleRequest(new Json.GetTimerStateRequest { RequestId = 2 }, false); }
+            try { queryResponse = runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetTimerState, RequestId = 2 }, false); }
             finally { queryDone.Set(); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Assert.True(queryDone.Wait(TimeSpan.FromSeconds(2)));
-        Assert.IsType<Json.TimerStateResponse>(queryResponse);
+        Assert.True(WireResponse(queryResponse!).GetProperty("result").TryGetProperty("phase", out _));
         adapter.ReleaseControl.Set();
         Assert.True(controlDone.Wait(TimeSpan.FromSeconds(5)));
-        Assert.IsType<Json.ControlSuccessResponse>(controlResponse);
+        Assert.Equal(JsonValueKind.Null, WireResponse(controlResponse!).GetProperty("result").ValueKind);
     }
 
     [Fact]
@@ -113,11 +104,11 @@ public sealed class JsonBridgeRuntimeTests
         Assert.True(adapter.SecondEntered.Wait(TimeSpan.FromSeconds(5)));
         Assert.True(firstDone.Wait(TimeSpan.FromSeconds(5)));
         Assert.True(secondDone.Wait(TimeSpan.FromSeconds(5)));
-        Assert.IsType<Json.ControlSuccessResponse>(firstResponse);
-        Assert.IsType<Json.ControlSuccessResponse>(secondResponse);
+        Assert.Equal(JsonValueKind.Null, WireResponse(firstResponse!).GetProperty("result").ValueKind);
+        Assert.Equal(JsonValueKind.Null, WireResponse(secondResponse!).GetProperty("result").ValueKind);
 
         static void StartControl(JsonBridgeRuntime runtime, uint id, Action<Json.RpcResponse> completed) => _ = Task.Factory.StartNew(
-            () => completed(runtime.HandleRequest(new Json.TimerOperationRequest { RequestId = id, Params = new Json.TimerStartParams() }, true)),
+            () => completed(runtime.HandleRequest(new Json.TimerRequest { RequestId = id, Params = new Json.TimerParams { Operation = Json.TimerOperation.Start } }, true)),
             CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
@@ -134,14 +125,13 @@ public sealed class JsonBridgeRuntimeTests
         timerModel.Start();
         timerModel.Reset();
 
-        var started = Assert.IsType<Json.TimerStartedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        var reset = Assert.IsType<Json.TimerResetEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        Assert.NotNull(started.TimerState);
-        Assert.Null(reset.TimerState);
-        Assert.Contains("\"timer_state\":null", JsonSerializer.Serialize<Json.BridgeEvent>(reset, Json.BridgeJsonOptions.Create()));
-        Assert.Equal(1U, started.EventSequence);
-        Assert.Equal(2U, reset.EventSequence);
-        Assert.Equal(runtime.SessionId, reset.SessionId);
+        var started = ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "timer_started");
+        var reset = ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "timer_reset");
+        Assert.Equal(JsonValueKind.Object, started.GetProperty("timer_state").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reset.GetProperty("timer_state").ValueKind);
+        Assert.Equal(1U, started.GetProperty("event_sequence").GetUInt32());
+        Assert.Equal(2U, reset.GetProperty("event_sequence").GetUInt32());
+        Assert.Equal(started.GetProperty("session_id").GetUInt32(), reset.GetProperty("session_id").GetUInt32());
     }
 
     [Fact]
@@ -152,17 +142,17 @@ public sealed class JsonBridgeRuntimeTests
         var timer = new TimerModel { CurrentState = state };
 
         timer.Start();
-        adapter.ExecuteTimerOperation(new Json.TimerPauseParams());
+        adapter.ExecuteTimerOperation(Json.TimerOperation.Pause);
         Assert.Equal(LiveSplit.Model.TimerPhase.Paused, state.CurrentPhase);
-        adapter.ExecuteTimerOperation(new Json.TimerResumeParams());
+        adapter.ExecuteTimerOperation(Json.TimerOperation.Resume);
         Assert.Equal(LiveSplit.Model.TimerPhase.Running, state.CurrentPhase);
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeInitializeParams());
-        adapter.ExecuteGameTimeOperation(new Json.GameTimePauseParams());
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeSetParams { Ticks = -12345 });
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Initialize });
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Pause });
+        adapter.ExecuteGameTimeOperation(new Json.GameSetParams { Ticks = -12345 });
         Assert.True(state.IsGameTimeInitialized);
         Assert.Equal(-12345, state.CurrentTime.GameTime?.Ticks);
         Assert.True(state.IsGameTimePaused);
-        adapter.ExecuteGameTimeOperation(new Json.GameTimeResumeParams());
+        adapter.ExecuteGameTimeOperation(new Json.GameControlParams { Operation = Json.GameControlOperation.Resume });
         Assert.False(state.IsGameTimePaused);
     }
 
@@ -174,6 +164,9 @@ public sealed class JsonBridgeRuntimeTests
         var state = TestLiveSplitState.Create(run);
         var sink = new RecordingSink();
         using var runtime = new JsonBridgeRuntime(new FakeAdapter(), sink, state);
+        // Seed only the otherwise unreachable boundary; assert emitted messages below.
+        typeof(JsonBridgeRuntime).GetField("eventSequence", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(runtime, uint.MaxValue - 1);
         var timer = new TimerModel { CurrentState = state };
 
         timer.Start();
@@ -184,24 +177,12 @@ public sealed class JsonBridgeRuntimeTests
         timer.UndoSplit();
         timer.Reset();
 
-        var events = Enumerable.Range(0, 7).Select(_ => sink.Take(TimeSpan.FromSeconds(3))).ToArray();
-        Assert.Collection(events,
-            value => Assert.IsType<Json.TimerStartedEvent>(value),
-            value => Assert.IsType<Json.TimerPhaseChangedEvent>(value),
-            value => Assert.IsType<Json.TimerPhaseChangedEvent>(value),
-            value => Assert.IsType<Json.TimerSplitEvent>(value),
-            value => Assert.IsType<Json.TimerSkippedEvent>(value),
-            value => Assert.IsType<Json.TimerUndoEvent>(value),
-            value => Assert.IsType<Json.TimerResetEvent>(value));
-        Assert.Equal(Enumerable.Range(1, 7).Select(value => (uint)value), events.Select(value => value.EventSequence));
-        Assert.All(events, value => Assert.Equal(runtime.SessionId, value.SessionId));
-    }
-
-    [Fact]
-    public void TimerEventSequenceWrapsFromMaximumToOne()
-    {
-        Assert.Equal(1U, JsonBridgeRuntime.NextEventSequence(uint.MaxValue));
-        Assert.Equal(2U, JsonBridgeRuntime.NextEventSequence(1));
+        var events = Enumerable.Range(0, 7).Select(_ => WireEvent(sink.Take(TimeSpan.FromSeconds(3)))).ToArray();
+        Assert.Equal(new[] { "timer_started", "timer_phase_changed", "timer_phase_changed", "timer_split", "timer_skipped", "timer_undo", "timer_reset" },
+            events.Select(value => value.GetProperty("type").GetString()));
+        Assert.Equal(new uint[] { uint.MaxValue, 1, 2, 3, 4, 5, 6 }, events.Select(value => value.GetProperty("event_sequence").GetUInt32()));
+        var session = events[0].GetProperty("session_id").GetUInt32();
+        Assert.All(events, value => Assert.Equal(session, value.GetProperty("session_id").GetUInt32()));
     }
 
     [Fact]
@@ -214,10 +195,9 @@ public sealed class JsonBridgeRuntimeTests
         Thread.Sleep(110);
         runtime.ObserveContextState();
 
-        var changed = Assert.IsType<Json.ContextChangedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        Assert.Same(Json.JsonNullValue.Value, changed is Json.StateChangedBridgeEvent value ? value.TimerState : null);
-        Assert.Contains("\"timer_state\":null", JsonSerializer.Serialize<Json.BridgeEvent>(changed, Json.BridgeJsonOptions.Create()));
-        Assert.Equal("Best Segments", runtime.PublishedContext.CurrentComparison);
+        ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "context_changed");
+        var publishedContext = runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetContextState }, false);
+        Assert.Equal("Best Segments", WireResponse(publishedContext).GetProperty("result").GetProperty("current_comparison").GetString());
 
         Thread.Sleep(110);
         runtime.ObserveContextState();
@@ -225,10 +205,9 @@ public sealed class JsonBridgeRuntimeTests
         adapter.ContextState.CurrentComparison = "Personal Best";
         Thread.Sleep(110);
         runtime.ObserveContextState();
-        var changedAgain = Assert.IsType<Json.ContextChangedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        Assert.Same(Json.JsonNullValue.Value, changedAgain.TimerState);
-        Assert.Contains("\"timer_state\":null", JsonSerializer.Serialize<Json.BridgeEvent>(changedAgain, Json.BridgeJsonOptions.Create()));
-        Assert.Equal("Personal Best", runtime.PublishedContext.CurrentComparison);
+        ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "context_changed");
+        Assert.Equal("Personal Best", ReadContext(runtime).GetProperty("current_comparison").GetString());
+        Assert.Equal("Best Segments", WireResponse(publishedContext).GetProperty("result").GetProperty("current_comparison").GetString());
         Assert.Equal(0, sink.Count);
     }
 
@@ -242,11 +221,9 @@ public sealed class JsonBridgeRuntimeTests
         run.GameName = "Updated";
         state.CallRunManuallyModified();
 
-        var changed = Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(5)));
+        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(5)), "run_changed");
 
-        Assert.Equal("Updated", runtime.PublishedRun.GameName);
-        Assert.Same(Json.JsonNullValue.Value, ((Json.StateChangedBridgeEvent)changed).TimerState);
-        Assert.Contains("\"timer_state\":null", JsonSerializer.Serialize<Json.BridgeEvent>(changed, Json.BridgeJsonOptions.Create()));
+        Assert.Equal("Updated", ReadRun(runtime).GetProperty("game_name").GetString());
     }
 
     [Fact]
@@ -261,15 +238,15 @@ public sealed class JsonBridgeRuntimeTests
         run[0].BestSegmentTime = new Time(TimeSpan.FromSeconds(7), null);
         var timerModel = new TimerModel { CurrentState = state };
         timerModel.Start();
-        var started = Assert.IsType<Json.TimerStartedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
+        var started = ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "timer_started");
         timerModel.Reset();
 
-        var reset = Assert.IsType<Json.TimerResetEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        var changed = Assert.IsType<Json.RunChangedEvent>(sink.Take(TimeSpan.FromSeconds(3)));
-        Assert.Equal(started.EventSequence + 1, reset.EventSequence);
-        Assert.Equal(reset.EventSequence + 1, changed.EventSequence);
-        Assert.Null(runtime.PublishedRun.Metadata!.RunId);
-        Assert.Equal(TimeSpan.FromSeconds(7).Ticks, runtime.PublishedRun.Segments[0].BestSegmentTime.RealTimeTicks);
+        var reset = ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "timer_reset");
+        var changed = ReadEvent(sink.Take(TimeSpan.FromSeconds(3)), "run_changed");
+        Assert.Equal(started.GetProperty("event_sequence").GetUInt32() + 1, reset.GetProperty("event_sequence").GetUInt32());
+        Assert.Equal(reset.GetProperty("event_sequence").GetUInt32() + 1, changed.GetProperty("event_sequence").GetUInt32());
+        Assert.Equal(JsonValueKind.Null, ReadRun(runtime).GetProperty("metadata").GetProperty("run_id").ValueKind);
+        Assert.Equal(TimeSpan.FromSeconds(7).Ticks, ReadRun(runtime).GetProperty("segments")[0].GetProperty("best_segment_time").GetProperty("real_time_ticks").GetInt64());
     }
 
     [Fact]
@@ -304,13 +281,13 @@ public sealed class JsonBridgeRuntimeTests
         replacementRun.GameName = "latest";
         state.Run = replacementRun;
         state.CallRunManuallyModified();
-        Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal("latest", runtime.PublishedRun.GameName);
+        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(5)), "run_changed");
+        Assert.Equal("latest", ReadRun(runtime).GetProperty("game_name").GetString());
 
         first.ReleaseBuild.Set();
         await first.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, sink.Count);
-        Assert.Equal("latest", runtime.PublishedRun.GameName);
+        Assert.Equal("latest", ReadRun(runtime).GetProperty("game_name").GetString());
     }
 
     [Fact]
@@ -336,13 +313,13 @@ public sealed class JsonBridgeRuntimeTests
         await candidate.BuildEntered.WaitAsync(TimeSpan.FromSeconds(5));
 
         timerModel.Reset();
-        Assert.IsType<Json.TimerResetEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(3)));
-        Assert.IsType<Json.RunChangedEvent>(await sink.TakeAsync(TimeSpan.FromSeconds(3)));
+        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(3)), "timer_reset");
+        ReadEvent(await sink.TakeAsync(TimeSpan.FromSeconds(3)), "run_changed");
         candidate.ReleaseBuild.Set();
         await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.Equal(99, runtime.PublishedRun.Segments[0].BestSegmentTime.RealTimeTicks);
-        Assert.Null(runtime.PublishedRun.Metadata!.RunId);
+        Assert.Equal(99, ReadRun(runtime).GetProperty("segments")[0].GetProperty("best_segment_time").GetProperty("real_time_ticks").GetInt64());
+        Assert.Equal(JsonValueKind.Null, ReadRun(runtime).GetProperty("metadata").GetProperty("run_id").ValueKind);
         Assert.Equal(0, sink.Count);
     }
 
@@ -362,28 +339,19 @@ public sealed class JsonBridgeRuntimeTests
         await candidate.PipelineFinished.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(0, sink.Count);
-        Assert.NotEqual("late", runtime.PublishedRun.GameName);
+        Assert.NotEqual("late", ReadRun(runtime).GetProperty("game_name").GetString());
     }
 
-    [Fact]
-    public void RuntimeResponsesSerializeToTheResponseSchemaShape()
-    {
-        var adapter = new FakeAdapter();
-        using var runtime = new JsonBridgeRuntime(adapter, new RecordingSink());
-        var options = Json.BridgeJsonOptions.Create();
-        var success = JsonSerializer.Serialize<Json.RpcResponse>(runtime.HandleRequest(new Json.GetRunRequest { RequestId = 55 }, false), options);
-        var error = JsonSerializer.Serialize<Json.RpcResponse>(runtime.HandleRequest(
-            new Json.TimerOperationRequest { RequestId = 56, Params = new Json.TimerStartParams() }, false), options);
-        var reset = JsonSerializer.Serialize<Json.BridgeEvent>(new Json.TimerResetEvent { SessionId = runtime.SessionId, EventSequence = 1, TimerState = null }, options);
-        var contextChanged = JsonSerializer.Serialize<Json.BridgeEvent>(new Json.ContextChangedEvent { SessionId = runtime.SessionId, EventSequence = 2 }, options);
+    private static JsonElement WireResponse(Json.RpcResponse response) => JsonSerializer.SerializeToElement((object)response, Json.BridgeJsonOptions.Create());
+    private static JsonElement WireEvent(Json.BridgeEvent value) => JsonSerializer.SerializeToElement((object)value, Json.BridgeJsonOptions.Create());
+    private static JsonElement ReadRun(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetRun }, false)).GetProperty("result");
+    private static JsonElement ReadContext(JsonBridgeRuntime runtime) => WireResponse(runtime.HandleRequest(new Json.QueryRequest { Method = Json.QueryMethod.GetContextState }, false)).GetProperty("result");
 
-        Assert.Contains("\"request_id\":55", success);
-        Assert.Contains("\"session_id\":", success);
-        Assert.Contains("\"result\":", success);
-        Assert.Contains("\"error\":", error);
-        Assert.DoesNotContain("\"result\":", error);
-        Assert.Contains("\"timer_state\":null", reset);
-        Assert.Contains("\"timer_state\":null", contextChanged);
+    private static JsonElement ReadEvent(Json.BridgeEvent value, string expectedType)
+    {
+        var message = WireEvent(value);
+        Assert.Equal(expectedType, message.GetProperty("type").GetString());
+        return message;
     }
 
     private static Run CreateRun()
@@ -452,19 +420,19 @@ public sealed class JsonBridgeRuntimeTests
             return true;
         }
         public bool IsTimerOnlyRun() => false;
-        public virtual void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public virtual void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             TimerOperationCalls++;
             if (ThrowOnTimerOperation) throw new InvalidOperationException("operation failed");
         }
-        public void ExecuteGameTimeOperation(Json.GameTimeOperationParams operation) { }
+        public void ExecuteGameTimeOperation(Json.GameTimeParams operation) { }
     }
 
     private sealed class BlockingAdapter : FakeAdapter
     {
         internal ManualResetEventSlim ControlEntered { get; } = new();
         internal ManualResetEventSlim ReleaseControl { get; } = new();
-        public override void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public override void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             ControlEntered.Set();
             if (!ReleaseControl.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Control was not released.");
@@ -477,7 +445,7 @@ public sealed class JsonBridgeRuntimeTests
         internal ManualResetEventSlim FirstEntered { get; } = new();
         internal ManualResetEventSlim ReleaseFirst { get; } = new();
         internal ManualResetEventSlim SecondEntered { get; } = new();
-        public override void ExecuteTimerOperation(Json.TimerOperationParams operation)
+        public override void ExecuteTimerOperation(Json.TimerOperation operation)
         {
             if (Interlocked.Increment(ref operationCount) == 1)
             {

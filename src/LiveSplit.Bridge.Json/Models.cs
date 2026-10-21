@@ -3,244 +3,410 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+#if SCHEMA_GENERATION
+using Json.Schema.Generation;
+using Range = System.ComponentModel.DataAnnotations.RangeAttribute;
+using PngImage = string;
+#else
+using PngImage = byte[];
+#endif
 
 namespace LiveSplit.Bridge.Json;
 
-[AttributeUsage(AttributeTargets.Property)]
-public sealed class SchemaConstNullAttribute : Attribute { }
-
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "method")]
-[JsonDerivedType(typeof(GetTimerStateRequest), "get_timer_state")]
-[JsonDerivedType(typeof(GetRunRequest), "get_run")]
-[JsonDerivedType(typeof(GetAttemptRequest), "get_attempt")]
-[JsonDerivedType(typeof(GetContextStateRequest), "get_context_state")]
-[JsonDerivedType(typeof(GetCompletedCountRequest), "get_completed_count")]
-[JsonDerivedType(typeof(TimerOperationRequest), "timer_operation")]
-[JsonDerivedType(typeof(GameTimeOperationRequest), "game_time_operation")]
-public abstract class RpcRequest
+public enum QueryMethod
 {
-    [JsonRequired]
-    public uint RequestId { get; set; }
+    [JsonStringEnumMemberName("get_timer_state")] GetTimerState,
+    [JsonStringEnumMemberName("get_run")] GetRun,
+    [JsonStringEnumMemberName("get_attempt")] GetAttempt,
+    [JsonStringEnumMemberName("get_context_state")] GetContextState,
+    [JsonStringEnumMemberName("get_completed_count")] GetCompletedCount,
 }
 
-public sealed class GetTimerStateRequest : RpcRequest { }
-public sealed class GetRunRequest : RpcRequest { }
-public sealed class GetAttemptRequest : RpcRequest { }
-public sealed class GetContextStateRequest : RpcRequest { }
-public sealed class GetCompletedCountRequest : RpcRequest { }
-
-public sealed class TimerOperationRequest : RpcRequest
+public enum TimerOperation
 {
-    [JsonRequired]
-    public TimerOperationParams Params { get; set; } = new TimerStartParams();
+    [JsonStringEnumMemberName("start")] Start,
+    [JsonStringEnumMemberName("split")] Split,
+    [JsonStringEnumMemberName("skip")] Skip,
+    [JsonStringEnumMemberName("undo")] Undo,
+    [JsonStringEnumMemberName("reset")] Reset,
+    [JsonStringEnumMemberName("pause")] Pause,
+    [JsonStringEnumMemberName("resume")] Resume,
 }
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "operation")]
-[JsonDerivedType(typeof(TimerStartParams), "start")]
-[JsonDerivedType(typeof(TimerSplitParams), "split")]
-[JsonDerivedType(typeof(TimerSkipParams), "skip")]
-[JsonDerivedType(typeof(TimerUndoParams), "undo")]
-[JsonDerivedType(typeof(TimerResetParams), "reset")]
-[JsonDerivedType(typeof(TimerPauseParams), "pause")]
-[JsonDerivedType(typeof(TimerResumeParams), "resume")]
-public abstract class TimerOperationParams { }
-public sealed class TimerStartParams : TimerOperationParams { }
-public sealed class TimerSplitParams : TimerOperationParams { }
-public sealed class TimerSkipParams : TimerOperationParams { }
-public sealed class TimerUndoParams : TimerOperationParams { }
-public sealed class TimerResetParams : TimerOperationParams { }
-public sealed class TimerPauseParams : TimerOperationParams { }
-public sealed class TimerResumeParams : TimerOperationParams { }
-
-public sealed class GameTimeOperationRequest : RpcRequest
+public enum GameControlOperation
 {
-    [JsonRequired]
-    public GameTimeOperationParams Params { get; set; } = new GameTimeInitializeParams();
+    [JsonStringEnumMemberName("initialize")] Initialize,
+    [JsonStringEnumMemberName("pause")] Pause,
+    [JsonStringEnumMemberName("resume")] Resume,
 }
 
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "operation")]
-[JsonDerivedType(typeof(GameTimeInitializeParams), "initialize")]
-[JsonDerivedType(typeof(GameTimeSetParams), "set")]
-[JsonDerivedType(typeof(GameTimePauseParams), "pause")]
-[JsonDerivedType(typeof(GameTimeResumeParams), "resume")]
-public abstract class GameTimeOperationParams { }
-public sealed class GameTimeInitializeParams : GameTimeOperationParams { }
-public sealed class GameTimeSetParams : GameTimeOperationParams
+public enum TimerEventKind
 {
-    [JsonRequired]
-    public long Ticks { get; set; }
-}
-public sealed class GameTimePauseParams : GameTimeOperationParams { }
-public sealed class GameTimeResumeParams : GameTimeOperationParams { }
-
-[JsonPolymorphic]
-[JsonDerivedType(typeof(TimerStateResponse))]
-[JsonDerivedType(typeof(RunStateResponse))]
-[JsonDerivedType(typeof(AttemptStateResponse))]
-[JsonDerivedType(typeof(ContextStateResponse))]
-[JsonDerivedType(typeof(CompletedCountResponse))]
-[JsonDerivedType(typeof(ControlSuccessResponse))]
-[JsonDerivedType(typeof(ErrorResponse))]
-public abstract class RpcResponse
-{
-    [JsonRequired]
-    public uint RequestId { get; set; }
-
-    [JsonRequired]
-    public uint SessionId { get; set; }
+    [JsonStringEnumMemberName("timer_started")] Started,
+    [JsonStringEnumMemberName("timer_split")] Split,
+    [JsonStringEnumMemberName("timer_skipped")] Skipped,
+    [JsonStringEnumMemberName("timer_undo")] Undo,
+    [JsonStringEnumMemberName("timer_phase_changed")] PhaseChanged,
 }
 
-public sealed class TimerStateResponse : RpcResponse
+public enum ChangedEventKind
 {
-    [JsonRequired] public TimerState Result { get; set; } = new();
+    [JsonStringEnumMemberName("run_changed")] RunChanged,
+    [JsonStringEnumMemberName("context_changed")] ContextChanged,
 }
-public sealed class RunStateResponse : RpcResponse
+
+public enum TimerPhase
 {
-    [JsonRequired] public RunState Result { get; set; } = new();
+    [JsonStringEnumMemberName("unspecified")] Unspecified,
+    [JsonStringEnumMemberName("not_running")] NotRunning,
+    [JsonStringEnumMemberName("running")] Running,
+    [JsonStringEnumMemberName("paused")] Paused,
+    [JsonStringEnumMemberName("ended")] Ended,
 }
-public sealed class AttemptStateResponse : RpcResponse
+
+public enum TimingMethod
 {
-    [JsonRequired] public AttemptState Result { get; set; } = new();
+    [JsonStringEnumMemberName("unspecified")] Unspecified,
+    [JsonStringEnumMemberName("real_time")] RealTime,
+    [JsonStringEnumMemberName("game_time")] GameTime,
 }
-public sealed class ContextStateResponse : RpcResponse
+
+public enum BridgeErrorCode
 {
-    [JsonRequired] public ContextState Result { get; set; } = new();
+    [JsonStringEnumMemberName("invalid_request")] InvalidRequest,
+    [JsonStringEnumMemberName("invalid_argument")] InvalidArgument,
+    [JsonStringEnumMemberName("operation_failed")] OperationFailed,
+    [JsonStringEnumMemberName("internal_error")] InternalError,
+    [JsonStringEnumMemberName("permission_denied")] PermissionDenied,
 }
-public sealed class CompletedCountResponse : RpcResponse
+
+public abstract class CorrelatedMessage
 {
-    [JsonRequired] public CompletedCount Result { get; set; } = new();
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "0", "4294967295")]
+#endif
+    [JsonRequired] public uint RequestId { get; set; }
 }
+
+public abstract class RpcRequest : CorrelatedMessage { }
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class QueryRequest : RpcRequest
+{
+    [JsonRequired] public QueryMethod Method { get; set; }
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class TimerRequest : RpcRequest
+{
+    public const string MethodName = "timer_operation";
+#if SCHEMA_GENERATION
+    [Const(MethodName)]
+#endif
+    [JsonRequired] public string Method
+    {
+        get => MethodName;
+        set { if (value != MethodName) throw new JsonException("Invalid timer method."); }
+    }
+    [JsonRequired] public TimerParams Params { get; set; } = new();
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class TimerParams
+{
+    [JsonRequired] public TimerOperation Operation { get; set; }
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class GameTimeRequest<T> : RpcRequest where T : GameTimeParams
+{
+    public const string MethodName = "game_time_operation";
+    private T arguments = default!;
+#if SCHEMA_GENERATION
+    [Const(MethodName)]
+#endif
+    [JsonRequired] public string Method
+    {
+        get => MethodName;
+        set { if (value != MethodName) throw new JsonException("Invalid game-time method."); }
+    }
+#if SCHEMA_GENERATION
+    [Nullable(false)]
+#endif
+    [JsonRequired] public T Params
+    {
+        get => arguments ?? throw new JsonException("Game-time params are required.");
+        set => arguments = value ?? throw new JsonException("Game-time params cannot be null.");
+    }
+}
+
+public abstract class GameTimeParams { }
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class GameControlParams : GameTimeParams
+{
+    [JsonRequired] public GameControlOperation Operation { get; set; }
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class GameSetParams : GameTimeParams
+{
+    public const string OperationName = "set";
+#if SCHEMA_GENERATION
+    [Const(OperationName)]
+#endif
+    [JsonRequired] public string Operation
+    {
+        get => OperationName;
+        set { if (value != OperationName) throw new JsonException("Invalid game-time set operation."); }
+    }
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
+    [JsonRequired] public long Ticks { get; set; }
+}
+
+public abstract class RpcResponse : CorrelatedMessage
+{
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "1", "4294967295")]
+#endif
+    [JsonRequired] public uint SessionId { get; set; }
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class Success<T> : RpcResponse where T : class
+{
+    private T result = default!;
+#if SCHEMA_GENERATION
+    [Nullable(false)]
+#endif
+    [JsonRequired] public T Result
+    {
+        get => result ?? throw new JsonException("A success result is required.");
+        set => result = value ?? throw new JsonException("A success result cannot be null.");
+    }
+}
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class ControlSuccessResponse : RpcResponse
 {
-    [JsonRequired]
-    [SchemaConstNull]
-    public JsonNullValue Result { get; set; } = JsonNullValue.Value;
+#if SCHEMA_GENERATION
+    [Const((string)null!)]
+#endif
+    [JsonRequired] public object? Result
+    {
+        get => null;
+        set { if (value != null) throw new JsonException("Control result must be null."); }
+    }
 }
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class ErrorResponse : RpcResponse
 {
     [JsonRequired] public BridgeError Error { get; set; } = new();
 }
 
-[JsonConverter(typeof(JsonNullValueConverter))]
-public sealed class JsonNullValue
-{
-    public static JsonNullValue Value { get; } = new();
-    private JsonNullValue() { }
-}
-
-public sealed class JsonNullValueConverter : JsonConverter<JsonNullValue>
-{
-    public override bool HandleNull => true;
-    public override JsonNullValue Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-    {
-        if (reader.TokenType != JsonTokenType.Null) throw new JsonException("Value must be null.");
-        return JsonNullValue.Value;
-    }
-    public override void Write(Utf8JsonWriter writer, JsonNullValue value, JsonSerializerOptions options) => writer.WriteNullValue();
-}
-
-[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(TimerStartedEvent), "timer_started")]
-[JsonDerivedType(typeof(TimerSplitEvent), "timer_split")]
-[JsonDerivedType(typeof(TimerSkippedEvent), "timer_skipped")]
-[JsonDerivedType(typeof(TimerUndoEvent), "timer_undo")]
-[JsonDerivedType(typeof(TimerResetEvent), "timer_reset")]
-[JsonDerivedType(typeof(TimerPhaseChangedEvent), "timer_phase_changed")]
-[JsonDerivedType(typeof(RunChangedEvent), "run_changed")]
-[JsonDerivedType(typeof(ContextChangedEvent), "context_changed")]
 public abstract class BridgeEvent
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "1", "4294967295")]
+#endif
     [JsonRequired] public uint SessionId { get; set; }
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "1", "4294967295")]
+#endif
     [JsonRequired] public uint EventSequence { get; set; }
 }
 
-public abstract class TimerBridgeEvent : BridgeEvent
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class TimerEvent : BridgeEvent
 {
+    [JsonRequired] public TimerEventKind Type { get; set; }
     [JsonRequired] public TimerState TimerState { get; set; } = new();
 }
-public sealed class TimerStartedEvent : TimerBridgeEvent { }
-public sealed class TimerSplitEvent : TimerBridgeEvent { }
-public sealed class TimerSkippedEvent : TimerBridgeEvent { }
-public sealed class TimerUndoEvent : TimerBridgeEvent { }
-public sealed class TimerResetEvent : BridgeEvent
+
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class ResetEvent : BridgeEvent
 {
+    public const string TypeName = "timer_reset";
+#if SCHEMA_GENERATION
+    [Const(TypeName)]
+#endif
+    [JsonRequired] public string Type
+    {
+        get => TypeName;
+        set { if (value != TypeName) throw new JsonException("Invalid reset event type."); }
+    }
     [JsonRequired] public TimerState? TimerState { get; set; }
 }
-public sealed class TimerPhaseChangedEvent : TimerBridgeEvent { }
 
-public abstract class StateChangedBridgeEvent : BridgeEvent
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
+public sealed class ChangedEvent : BridgeEvent
 {
-    [JsonRequired, SchemaConstNull] public JsonNullValue TimerState { get; set; } = JsonNullValue.Value;
+    [JsonRequired] public ChangedEventKind Type { get; set; }
+#if SCHEMA_GENERATION
+    [Const((string)null!)]
+#endif
+    [JsonRequired] public object? TimerState
+    {
+        get => null;
+        set { if (value != null) throw new JsonException("Changed event state must be null."); }
+    }
 }
-public sealed class RunChangedEvent : StateChangedBridgeEvent { }
-public sealed class ContextChangedEvent : StateChangedBridgeEvent { }
 
-public enum TimerPhase { Unspecified, NotRunning, Running, Paused, Ended }
-public enum TimingMethod { Unspecified, RealTime, GameTime }
-public enum BridgeErrorCode { InvalidRequest, InvalidArgument, OperationFailed, InternalError, PermissionDenied }
-
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class TimerState
 {
     [JsonRequired] public TimerPhase Phase { get; set; }
+#if SCHEMA_GENERATION
+    [Range(int.MinValue, int.MaxValue)]
+#endif
     [JsonRequired] public int SplitIndex { get; set; }
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
     [JsonRequired] public long RealTimeTicks { get; set; }
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
     [JsonRequired] public long? GameTimeTicks { get; set; }
     [JsonRequired] public bool IsGameTimeInitialized { get; set; }
     [JsonRequired] public bool IsGameTimePaused { get; set; }
 }
 
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class TimeValue
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
     [JsonRequired] public long? RealTimeTicks { get; set; }
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
     [JsonRequired] public long? GameTimeTicks { get; set; }
 }
 
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class AttemptState
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "0", "4294967295")]
+#endif
     [JsonRequired] public uint AttemptCount { get; set; }
     [JsonRequired] public List<AttemptSegment> Segments { get; set; } = new();
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class AttemptSegment
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "0", "4294967295")]
+#endif
     [JsonRequired] public uint Index { get; set; }
     [JsonRequired] public TimeValue SplitTime { get; set; } = new();
     [JsonRequired] public Dictionary<string, string> CustomVariables { get; set; } = new();
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class CompletedCount
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "0", "4294967295")]
+#endif
     [JsonRequired, JsonPropertyName("completed_count")] public uint Value { get; set; }
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class ContextState
 {
     [JsonRequired] public TimingMethod CurrentTimingMethod { get; set; }
     [JsonRequired] public string CurrentComparison { get; set; } = "";
     [JsonRequired] public Dictionary<string, string> CustomVariables { get; set; } = new();
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class RunState
 {
     [JsonRequired] public string GameName { get; set; } = "";
     [JsonRequired] public string CategoryName { get; set; } = "";
+#if SCHEMA_GENERATION
+    [Range(typeof(long), "-9223372036854775808", "9223372036854775807")]
+#endif
     [JsonRequired] public long OffsetTicks { get; set; }
     [JsonRequired] public string? FilePath { get; set; }
     [JsonRequired] public string? LayoutPath { get; set; }
     [JsonRequired] public RunMetadata? Metadata { get; set; }
     [JsonRequired] public List<string> Comparisons { get; set; } = new();
     [JsonRequired] public List<SegmentInfo> Segments { get; set; } = new();
-    [JsonRequired] public byte[]? GameIcon { get; set; }
+#if SCHEMA_GENERATION
+    [Description("Base64-encoded PNG image; null when absent.")]
+#endif
+    [JsonRequired] public PngImage? GameIcon { get; set; }
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class SegmentInfo
 {
+#if SCHEMA_GENERATION
+    [Range(typeof(uint), "0", "4294967295")]
+#endif
     [JsonRequired] public uint Index { get; set; }
     [JsonRequired] public string Name { get; set; } = "";
     [JsonRequired] public List<ComparisonTime> Comparisons { get; set; } = new();
     [JsonRequired] public TimeValue BestSegmentTime { get; set; } = new();
-    [JsonRequired] public byte[]? Icon { get; set; }
+#if SCHEMA_GENERATION
+    [Description("Base64-encoded PNG image; null when absent.")]
+#endif
+    [JsonRequired] public PngImage? Icon { get; set; }
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class ComparisonTime
 {
     [JsonRequired] public string Name { get; set; } = "";
     [JsonRequired] public TimeValue Time { get; set; } = new();
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class RunMetadata
 {
     [JsonRequired] public string? RunId { get; set; }
@@ -249,6 +415,9 @@ public sealed class RunMetadata
     [JsonRequired] public bool UsesEmulator { get; set; }
     [JsonRequired] public Dictionary<string, string> Variables { get; set; } = new();
 }
+#if SCHEMA_GENERATION
+[AdditionalProperties(false)]
+#endif
 public sealed class BridgeError
 {
     [JsonRequired] public BridgeErrorCode Code { get; set; }

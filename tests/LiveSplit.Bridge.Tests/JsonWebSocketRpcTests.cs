@@ -69,6 +69,12 @@ public sealed class JsonWebSocketRpcTests
 
         await client.SendTextAsync("{\"request_id\":25,\"method\":\"get_run\",\"unexpected\":true}");
         AssertError(await client.ReceiveAsync(TimeSpan.FromSeconds(5)), 25, "invalid_request");
+
+        await client.SendTextAsync("{\"request_id\":26,\"method\":\"timer_operation\",\"params\":{\"operation\":\"start, reset\"}}");
+        AssertError(await client.ReceiveAsync(TimeSpan.FromSeconds(5)), 26, "invalid_request");
+
+        await client.SendTextAsync("{\"request_id\":27,\"method\":\"get_timer_state, get_run\"}");
+        AssertError(await client.ReceiveAsync(TimeSpan.FromSeconds(5)), 27, "invalid_request");
     }
 
     [Fact]

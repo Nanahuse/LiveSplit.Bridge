@@ -13,7 +13,6 @@ public static class BridgeJsonOptions
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-            AllowOutOfOrderMetadataProperties = true,
             RespectNullableAnnotations = true,
         };
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false));

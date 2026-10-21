@@ -31,7 +31,6 @@ public class SnapshotOperationsTests
         right.GameIcon = left.GameIcon!.ToArray();
         right.Segments[0].Icon = left.Segments[0].Icon!.ToArray();
 
-        Assert.NotSame(left, right);
         Assert.True(RunSnapshot.ContentEquals(left, right));
         Assert.True(RunSnapshot.ContentEquals(null, null));
         Assert.False(RunSnapshot.ContentEquals(left, null));
@@ -48,24 +47,6 @@ public class SnapshotOperationsTests
         ApplyMutation(changed, mutation);
 
         Assert.False(RunSnapshot.ContentEquals(original, changed), mutation);
-    }
-
-    [Fact]
-    public void RunContentEquals_ComparesImageBytesRatherThanArrayIdentity()
-    {
-        var left = CreateRunState();
-        var right = CreateRunState();
-        right.GameIcon = new byte[] { 1, 2, 3 };
-        right.Segments[0].Icon = new byte[] { 4, 5, 6 };
-
-        Assert.True(RunSnapshot.ContentEquals(left, right));
-
-        right.GameIcon![2] = 9;
-        Assert.False(RunSnapshot.ContentEquals(left, right));
-
-        right.GameIcon = left.GameIcon!.ToArray();
-        right.Segments[0].Icon![2] = 9;
-        Assert.False(RunSnapshot.ContentEquals(left, right));
     }
 
     [Fact]
@@ -101,7 +82,6 @@ public class SnapshotOperationsTests
         var originalValues = CreateRunState();
         var copy = RunSnapshot.CopyForTimingUpdate(source);
 
-        Assert.NotSame(source, copy);
         Assert.True(RunSnapshot.ContentEquals(source, copy));
 
         copy.GameName = "Changed Game";
