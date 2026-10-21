@@ -16,7 +16,7 @@ var configuration = new SchemaGeneratorConfiguration
 var families = new (string File, Type[] Types)[]
 {
     ("rpc-request.schema.json", [typeof(QueryRequest), typeof(TimerRequest), typeof(GameTimeRequest<GameControlParams>), typeof(GameTimeRequest<GameSetParams>)]),
-    ("rpc-response.schema.json", [typeof(Success<TimerState>), typeof(Success<RunState>), typeof(Success<AttemptState>), typeof(Success<ContextState>), typeof(Success<CompletedCount>), typeof(ControlSuccessResponse), typeof(ErrorResponse)]),
+    ("rpc-response.schema.json", [typeof(Success<TimerState>), typeof(Success<RunState>), typeof(Success<RunIcons>), typeof(Success<AttemptState>), typeof(Success<ContextState>), typeof(Success<CompletedCount>), typeof(ControlSuccessResponse), typeof(ErrorResponse)]),
     ("bridge-event.schema.json", [typeof(TimerEvent), typeof(ResetEvent), typeof(ChangedEvent)]),
 };
 foreach (var (file, types) in families)

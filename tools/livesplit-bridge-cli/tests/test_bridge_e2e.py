@@ -157,21 +157,34 @@ def test_host() -> Iterator[BridgeTestHost]:
         bufsize=1,
     )
     lines: queue.Queue[str] = queue.Queue()
-    threading.Thread(
+    reader = threading.Thread(
         target=enqueue_lines, args=(process.stdout, lines), daemon=True
-    ).start()
+    )
+    reader.start()
+    line = None
     try:
-        line = lines.get(timeout=20)
+        line = lines.get(timeout=30)
     except queue.Empty:
-        process.terminate()
-        output = process.communicate(timeout=5)[0]
-        pytest.fail(
-            f"TestHost did not become ready (exit={process.returncode}): {output}"
-        )
+        pass
     if line != "READY":
-        process.terminate()
-        process.wait(timeout=5)
-        pytest.fail(f"TestHost failed to start: {line}")
+        if line is None and process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+        reader.join(timeout=5)
+        output = [] if line is None else [line]
+        while True:
+            try:
+                output.append(lines.get_nowait())
+            except queue.Empty:
+                break
+        pytest.fail(
+            f"TestHost did not become ready (exit={process.returncode}):\n"
+            + "\n".join(output)
+        )
     host = BridgeTestHost(process, port, lines)
     try:
         yield host
@@ -204,6 +217,15 @@ def test_queries_return_v4_state_and_complete_json_envelopes(
     assert "Personal Best" in run["comparisons"]
     assert [segment["name"] for segment in run["segments"]] == ["First", "Second"]
     assert run["segments"][0]["comparisons"][0]["name"] == "Personal Best"
+
+    assert "game_icon" not in run
+    assert all("icon" not in segment for segment in run["segments"])
+    icons_response = rpc_json(test_host, "run-icons")
+    assert icons_response["result"] == {
+        "game_icon": None,
+        "segment_icons": [None, None],
+    }
+    assert icons_response["session_id"] > 0
 
     attempt = rpc_json(test_host, "attempt")["result"]
     assert attempt["attempt_count"] == 0
@@ -342,6 +364,7 @@ def test_testhost_rejects_port_occupied_by_another_process() -> None:
     assert result.returncode != 0
     assert b"READY" not in result.stdout
     assert b"already occupied" in result.stderr
+    assert b"System.Net.Sockets.SocketException" in result.stderr
 
 
 def test_testhost_shutdown_releases_rpc_port(test_host: BridgeTestHost) -> None:

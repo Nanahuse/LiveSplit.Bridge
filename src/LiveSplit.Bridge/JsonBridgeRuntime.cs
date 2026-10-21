@@ -3,7 +3,6 @@ using System;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Threading;
-using System.Threading.Tasks;
 using Json = LiveSplit.Bridge.Json;
 using LiveSplit.Model;
 
@@ -16,18 +15,12 @@ internal sealed class JsonBridgeRuntime : IDisposable
     private readonly object eventGate = new();
     private readonly IJsonLiveSplitAdapter adapter;
     private readonly IJsonEventSink eventSink;
-    private readonly Action<Action> queueCandidateWork;
     private readonly LiveSplitState? state;
     private readonly uint sessionId;
     private Json.RunState publishedRun;
     private Json.ContextState publishedContext;
     private object? cachedRunReference;
-    private object? requestedRunReference;
     private bool runRefreshRequested;
-    private long staticUpdateGeneration;
-    private long timingUpdateGeneration;
-    private long timingPublicationGeneration;
-    private int staticRefreshRequested;
     private long lastContextObservation;
     private uint eventSequence;
     private int disposed;
@@ -41,16 +34,10 @@ internal sealed class JsonBridgeRuntime : IDisposable
     internal JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState state)
         : this(adapter, eventSink, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true) { }
 
-    internal JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState state, Action<Action> queueCandidateWork)
-        : this(adapter, eventSink, state ?? throw new ArgumentNullException(nameof(state)), attachStateEvents: true,
-            queueCandidateWork ?? throw new ArgumentNullException(nameof(queueCandidateWork))) { }
-
-    private JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState? state, bool attachStateEvents,
-        Action<Action>? queueCandidateWork = null)
+    private JsonBridgeRuntime(IJsonLiveSplitAdapter adapter, IJsonEventSink eventSink, LiveSplitState? state, bool attachStateEvents)
     {
         this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         this.eventSink = eventSink ?? throw new ArgumentNullException(nameof(eventSink));
-        this.queueCandidateWork = queueCandidateWork ?? (work => _ = Task.Run(work));
         this.state = state;
         sessionId = GenerateSessionId();
         publishedRun = adapter.GetRunState();
@@ -60,7 +47,7 @@ internal sealed class JsonBridgeRuntime : IDisposable
         if (attachStateEvents) AttachStateEvents();
     }
 
-    /// <summary>Called by a future host update loop; it performs throttled context and Run observation.</summary>
+    /// <summary>Called by the host update loop to observe Run changes and throttled Context changes.</summary>
     internal void Update()
     {
         ObserveRunReference();
@@ -85,6 +72,8 @@ internal sealed class JsonBridgeRuntime : IDisposable
                     return new Json.Success<Json.TimerState> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetTimerState() };
                 case Json.QueryRequest { Method: Json.QueryMethod.GetRun }:
                     return new Json.Success<Json.RunState> { RequestId = request.RequestId, SessionId = sessionId, Result = Volatile.Read(ref publishedRun) };
+                case Json.QueryRequest { Method: Json.QueryMethod.GetRunIcons }:
+                    return new Json.Success<Json.RunIcons> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetRunIcons() };
                 case Json.QueryRequest { Method: Json.QueryMethod.GetAttempt }:
                     return new Json.Success<Json.AttemptState> { RequestId = request.RequestId, SessionId = sessionId, Result = adapter.GetAttempt() };
                 case Json.QueryRequest { Method: Json.QueryMethod.GetContextState }:
@@ -153,19 +142,17 @@ internal sealed class JsonBridgeRuntime : IDisposable
 
     internal void ObserveRunReference()
     {
-        if (state == null || Volatile.Read(ref disposed) != 0) return;
-        var current = state.Run;
-        long generation;
+        if (state == null) return;
         lock (eventGate)
         {
-            var forceRefresh = Interlocked.Exchange(ref staticRefreshRequested, 0) != 0;
-            if (ReferenceEquals(current, cachedRunReference) && !forceRefresh) return;
-            if (!forceRefresh && runRefreshRequested && ReferenceEquals(current, requestedRunReference)) return;
-            requestedRunReference = current;
-            runRefreshRequested = true;
-            generation = Interlocked.Increment(ref staticUpdateGeneration);
+            if (Volatile.Read(ref disposed) != 0) return;
+            if (!runRefreshRequested && ReferenceEquals(state.Run, cachedRunReference)) return;
+            try
+            {
+                if (RefreshRunLocked()) EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
+            }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON run update failed: {exception}"); }
         }
-        CaptureAndQueueRunCandidate(current, generation);
     }
 
     private void AttachStateEvents()
@@ -201,13 +188,11 @@ internal sealed class JsonBridgeRuntime : IDisposable
     private void StateOnPhaseChanged(object sender, EventArgs args) => PublishTimerEvent(Json.TimerEventKind.PhaseChanged);
     private void StateRunManuallyModified(object sender, EventArgs args)
     {
-        if (Volatile.Read(ref disposed) != 0) return;
-        try { RequestRunRefresh(state!.Run); }
-        catch (Exception exception)
+        lock (eventGate)
         {
-            lock (eventGate) { requestedRunReference = null; runRefreshRequested = false; }
-            Interlocked.Exchange(ref staticRefreshRequested, 1);
-            Debug.WriteLine($"[LiveSplit.Bridge] JSON run cache update failed: {exception}");
+            if (Volatile.Read(ref disposed) != 0) return;
+            runRefreshRequested = true;
+            ObserveRunReference();
         }
     }
 
@@ -233,178 +218,55 @@ internal sealed class JsonBridgeRuntime : IDisposable
 
     private void StateOnResetCore()
     {
-        var currentRun = state!.Run;
-        var resetTimingGeneration = Interlocked.Increment(ref timingUpdateGeneration);
-        Json.TimerState? timerState = null;
-        try { timerState = adapter.GetTimerState(); }
-        catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON timer state capture after reset failed: {exception}"); }
-
-        while (Volatile.Read(ref disposed) == 0)
+        // Run capture and Reset publication share this lock. There is no background
+        // candidate that can overwrite the timing snapshot published by Reset.
+        lock (eventGate)
         {
-            var basis = Volatile.Read(ref publishedRun);
-            Json.RunState? resetCandidate = null;
-            var candidateForReplacement = false;
-            var timingUpdateCompatible = false;
+            if (Volatile.Read(ref disposed) != 0) return;
+            Json.TimerState? timerState = null;
+            try { timerState = adapter.GetTimerState(); }
+            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON timer state capture after reset failed: {exception}"); }
+
+            var runChanged = false;
             try
             {
-                if (!ReferenceEquals(currentRun, Volatile.Read(ref cachedRunReference)))
-                {
-                    if (adapter.IsTimerOnlyRun())
-                    {
-                        var candidate = adapter.GetRunState();
-                        if (adapter.TryUpdateRunTimings(candidate, out var latest))
-                        { resetCandidate = latest; candidateForReplacement = true; timingUpdateCompatible = true; }
-                    }
-                }
-                else if (adapter.TryUpdateRunTimings(basis, out var updated))
-                { resetCandidate = updated; timingUpdateCompatible = true; }
-            }
-            catch (Exception exception) { Debug.WriteLine($"[LiveSplit.Bridge] JSON run timing update after reset failed: {exception}"); }
-
-            var runChanged = resetCandidate != null && !Json.RunSnapshot.ContentEquals(resetCandidate, basis);
-            var retry = false;
-            lock (eventGate)
-            {
-                if (Volatile.Read(ref disposed) != 0) return;
-                if (!ReferenceEquals(currentRun, state.Run)) Interlocked.Exchange(ref staticRefreshRequested, 1);
-                else if (resetCandidate != null && ReferenceEquals(basis, publishedRun)
-                    && (candidateForReplacement || ReferenceEquals(currentRun, cachedRunReference)))
-                {
-                    if (runChanged) Interlocked.Exchange(ref publishedRun, resetCandidate);
-                    if (candidateForReplacement) cachedRunReference = currentRun;
-                    ClearRequestedRunReferenceLocked(currentRun);
-                    Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
-                    EnqueueEventLocked(new Json.ResetEvent { TimerState = timerState });
-                    if (runChanged) EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
-                    return;
-                }
-                else if (resetCandidate != null && !ReferenceEquals(basis, publishedRun)) retry = true;
+                var currentRun = state!.Run;
+                if (!runRefreshRequested && ReferenceEquals(currentRun, cachedRunReference)
+                    && adapter.TryUpdateRunTimings(publishedRun, out var updated)
+                    && ReferenceEquals(currentRun, state.Run))
+                    runChanged = PublishRunLocked(updated);
                 else
-                {
-                    if (ReferenceEquals(currentRun, cachedRunReference) && !timingUpdateCompatible)
-                    {
-                        Interlocked.Increment(ref staticUpdateGeneration);
-                        requestedRunReference = null;
-                        runRefreshRequested = false;
-                    }
-                    Interlocked.Exchange(ref staticRefreshRequested, 1);
-                }
-                if (retry) continue;
-                Interlocked.Exchange(ref timingPublicationGeneration, resetTimingGeneration);
-                EnqueueEventLocked(new Json.ResetEvent { TimerState = timerState });
-                return;
+                    runChanged = RefreshRunLocked();
             }
-        }
-    }
-
-    private void RequestRunRefresh(object? runReference)
-    {
-        long generation;
-        lock (eventGate)
-        {
-            generation = Interlocked.Increment(ref staticUpdateGeneration);
-            requestedRunReference = runReference;
-            runRefreshRequested = true;
-            Interlocked.Exchange(ref staticRefreshRequested, 0);
-        }
-        CaptureAndQueueRunCandidate(runReference, generation);
-    }
-
-    private void CaptureAndQueueRunCandidate(object? runReference, long generation)
-    {
-        IJsonRunStateCandidate? candidate = null;
-        try
-        {
-            if (state == null || Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)) return;
-            if (!ReferenceEquals(runReference, state.Run)) { ClearRequestedRunReference(runReference, generation); return; }
-            var capturedTimingGeneration = Interlocked.Read(ref timingUpdateGeneration);
-            candidate = adapter.CaptureRunState();
-            if (Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)
-                || !ReferenceEquals(runReference, state.Run))
-            { candidate.Dispose(); candidate = null; ClearRequestedRunReference(runReference, generation); return; }
-            var queued = candidate;
-            queueCandidateWork(() => BuildAndPublishRunCandidate(queued, runReference, generation, capturedTimingGeneration));
-            candidate = null;
-        }
-        catch (Exception exception)
-        {
-            candidate?.Dispose();
-            ClearRequestedRunReference(runReference, generation);
-            Interlocked.Exchange(ref staticRefreshRequested, 1);
-            Debug.WriteLine($"[LiveSplit.Bridge] JSON run candidate capture failed: {exception}");
-        }
-        finally { candidate?.Dispose(); }
-    }
-
-    private void BuildAndPublishRunCandidate(IJsonRunStateCandidate candidate, object? runReference, long generation, long capturedTimingGeneration)
-    {
-        try
-        {
-            if (Volatile.Read(ref disposed) != 0 || generation != Interlocked.Read(ref staticUpdateGeneration)) return;
-            if (!ReferenceEquals(runReference, state?.Run))
-            { ClearRequestedRunReference(runReference, generation); Interlocked.Exchange(ref staticRefreshRequested, 1); return; }
-            PublishRunCandidate(candidate.Build(), runReference, generation, capturedTimingGeneration);
-        }
-        catch (Exception exception)
-        {
-            ClearRequestedRunReference(runReference, generation);
-            Interlocked.Exchange(ref staticRefreshRequested, 1);
-            Debug.WriteLine($"[LiveSplit.Bridge] JSON background run cache build failed: {exception}");
-        }
-        finally { candidate.Dispose(); }
-    }
-
-    private void PublishRunCandidate(Json.RunState candidate, object? runReference, long generation, long capturedTimingGeneration)
-    {
-        if (state == null) return;
-        while (Volatile.Read(ref disposed) == 0)
-        {
-            if (!ReferenceEquals(runReference, state.Run)) { ClearRequestedRunReference(runReference, generation); Interlocked.Exchange(ref staticRefreshRequested, 1); return; }
-            var timingGeneration = Interlocked.Read(ref timingUpdateGeneration);
-            if (timingGeneration != capturedTimingGeneration && timingGeneration != Interlocked.Read(ref timingPublicationGeneration))
-            { Interlocked.Exchange(ref staticRefreshRequested, 1); return; }
-            var previous = Volatile.Read(ref publishedRun);
-            var withLatestTiming = candidate;
-            if (timingGeneration != capturedTimingGeneration)
+            catch (Exception exception)
             {
-                if (ReferenceEquals(runReference, Volatile.Read(ref cachedRunReference)))
-                {
-                    if (!JsonLiveSplitAdapter.TryMergeRunTimings(candidate, previous, out withLatestTiming))
-                    { Interlocked.Exchange(ref staticRefreshRequested, 1); return; }
-                }
-                else if (!adapter.TryUpdateRunTimings(candidate, out withLatestTiming))
-                { Interlocked.Exchange(ref staticRefreshRequested, 1); return; }
+                runRefreshRequested = true;
+                Debug.WriteLine($"[LiveSplit.Bridge] JSON run timing update after reset failed: {exception}");
             }
-            var changed = !Json.RunSnapshot.ContentEquals(withLatestTiming, previous);
-            lock (eventGate)
-            {
-                if (Volatile.Read(ref disposed) != 0 || generation != staticUpdateGeneration || !ReferenceEquals(runReference, state.Run)) return;
-                if (timingGeneration != Interlocked.Read(ref timingUpdateGeneration)
-                    || (timingGeneration != capturedTimingGeneration && timingGeneration != Interlocked.Read(ref timingPublicationGeneration))
-                    || !ReferenceEquals(previous, publishedRun)) continue;
-                if (changed)
-                {
-                    Interlocked.Exchange(ref publishedRun, withLatestTiming);
-                    EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
-                }
-                cachedRunReference = runReference;
-                ClearRequestedRunReferenceLocked(runReference);
-                return;
-            }
+            EnqueueEventLocked(new Json.ResetEvent { TimerState = timerState });
+            if (runChanged) EnqueueEventLocked(new Json.ChangedEvent { Type = Json.ChangedEventKind.RunChanged });
         }
     }
 
-    private void ClearRequestedRunReference(object? runReference, long generation)
+    private bool RefreshRunLocked()
     {
-        lock (eventGate)
-            if (generation == staticUpdateGeneration && runRefreshRequested && ReferenceEquals(requestedRunReference, runReference))
-            { requestedRunReference = null; runRefreshRequested = false; }
+        runRefreshRequested = true;
+        var run = state!.Run;
+        var next = adapter.GetRunState();
+        // A host-side replacement can occur outside Bridge's lock. Retry on the next
+        // Update rather than publishing a snapshot captured from an obsolete Run.
+        if (!ReferenceEquals(run, state.Run)) return false;
+        var changed = PublishRunLocked(next);
+        cachedRunReference = run;
+        runRefreshRequested = false;
+        return changed;
     }
 
-    private void ClearRequestedRunReferenceLocked(object? runReference)
+    private bool PublishRunLocked(Json.RunState next)
     {
-        if (runRefreshRequested && ReferenceEquals(requestedRunReference, runReference))
-        { requestedRunReference = null; runRefreshRequested = false; }
+        if (Json.RunSnapshot.ContentEquals(next, publishedRun)) return false;
+        Volatile.Write(ref publishedRun, next);
+        return true;
     }
 
     private void EnqueueEventLocked(Json.BridgeEvent bridgeEvent)

@@ -124,6 +124,7 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("timer-state", help="Get the current timer state")
     commands.add_parser("run", help="Get the currently loaded run state")
+    commands.add_parser("run-icons", help="Get current Run icons as Base64 PNG")
     commands.add_parser("attempt", help="Get the current attempt state")
     commands.add_parser("context", help="Get the current context state")
     commands.add_parser("completed-count", help="Get the completed attempt count")
@@ -233,6 +234,15 @@ def print_response(response: dict[str, object], method: str, as_json: bool) -> N
             lines = timer_state_lines(cast(dict[str, object], result))
         elif method == "get_run":
             lines = run_lines(cast(dict[str, object], result))
+        elif method == "get_run_icons":
+            icons = cast(dict[str, object], result)
+            game = icons["game_icon"]
+            segments = cast(list[object], icons["segment_icons"])
+            lines = [f"game_icon={'PNG' if game is not None else '-'}"]
+            lines.extend(
+                f"  [{index}] {'PNG' if icon is not None else '-'}"
+                for index, icon in enumerate(segments)
+            )
         elif method == "get_attempt":
             lines = attempt_lines(cast(dict[str, object], result))
         elif method == "get_context_state":
@@ -355,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
                 method, response = "get_timer_state", client.timer_state()
             elif args.command == "run":
                 method, response = "get_run", client.run()
+            elif args.command == "run-icons":
+                method, response = "get_run_icons", client.run_icons()
             elif args.command == "attempt":
                 method, response = "get_attempt", client.attempt()
             elif args.command == "context":

@@ -71,6 +71,13 @@ Eventは再取得のきっかけとして扱い、現在の状態はQueryで確�
 必要な状態を再取得してください。`run_changed`は公開Runの内容が変わった場合に発行し、
 Resetで比較タイムなどが更新された場合も含みます。
 
+`get_run`は画像を含まないRun情報を返します。アイコンが必要なクライアントは
+`{"request_id":10,"method":"get_run_icons"}`をRPCへ送信してください。成功Responseの`result`は
+`{"game_icon":null,"segment_icons":[null,"iVBORw0KGgo..."]}`のように、PNGのBase64文字列またはnullを返します。
+`segment_icons`は取得時のRunのSegment順に並び、アイコンがない要素は`null`になります。
+アイコン専用Eventやキャッシュはありません。取得のたびに現在のRunからPNGへ変換します。
+`get_run`との間でRunが切り替わる可能性があるため、画像の再取得はクライアントが判断してください。
+
 ## 更新
 
 1. LiveSplitを終了します。

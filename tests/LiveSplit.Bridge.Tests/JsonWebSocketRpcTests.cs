@@ -16,7 +16,10 @@ public sealed class JsonWebSocketRpcTests
     public async Task V4QueryAndIdentifiableInvalidRequestsUseTextResponses()
     {
         var port = BridgeTestEndpoints.GetFreePort();
-        using var host = CreateHost(port);
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        using var ui = new LiveSplitTestUiThread(run);
+        using var host = JsonWebSocketTestClient.StartComponent(ui.State, port);
         using var client = await ConnectRpc(port).ConfigureAwait(false);
 
         await client.SendTextAsync("{\"request_id\":0,\"method\":\"get_completed_count\"}");
@@ -28,7 +31,7 @@ public sealed class JsonWebSocketRpcTests
         }
 
         uint nextId = 1;
-        foreach (var method in new[] { "get_timer_state", "get_run", "get_attempt", "get_context_state", "get_completed_count" })
+        foreach (var method in new[] { "get_timer_state", "get_run", "get_run_icons", "get_attempt", "get_context_state", "get_completed_count" })
         {
             await client.SendTextAsync($"{{\"request_id\":{nextId},\"method\":\"{method}\"}}");
             using var query = JsonDocument.Parse((await client.ReceiveAsync(TimeSpan.FromSeconds(5))).Data);
@@ -144,7 +147,7 @@ public sealed class JsonWebSocketRpcTests
     }
 
     [Fact]
-    public async Task LargeRunWithPngIconCanBeReturnedWithoutRequestLimit()
+    public async Task RunExcludesImagesAndIconsQueryReturnsPngWithoutResponseSizeLimit()
     {
         var run = new Run(new StandardComparisonGeneratorsFactory()) { GameName = "Large icon response" };
         run.Add(new Segment("One"));
@@ -156,15 +159,52 @@ public sealed class JsonWebSocketRpcTests
         run.GameIcon = icon;
 
         var port = BridgeTestEndpoints.GetFreePort();
-        using var component = JsonWebSocketTestClient.StartComponent(TestLiveSplitState.Create(run), port);
+        using var ui = new LiveSplitTestUiThread(run);
+        using var component = JsonWebSocketTestClient.StartComponent(ui.State, port);
         using var client = await ConnectRpc(port).ConfigureAwait(false);
-        await client.SendTextAsync("{\"request_id\":39,\"method\":\"get_run\"}");
+        await client.SendTextAsync("{\"request_id\":38,\"method\":\"get_run\"}");
+        using (var runJson = JsonDocument.Parse((await client.ReceiveAsync(TimeSpan.FromSeconds(5))).Data))
+        {
+            var payload = runJson.RootElement.GetProperty("result");
+            Assert.Equal("Large icon response", payload.GetProperty("game_name").GetString());
+            Assert.False(payload.TryGetProperty("game_icon", out _));
+            Assert.False(payload.GetProperty("segments")[0].TryGetProperty("icon", out _));
+        }
+        await client.SendTextAsync("{\"request_id\":39,\"method\":\"get_run_icons\"}");
         var response = await client.ReceiveAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(WebSocketMessageType.Text, response.Type);
         Assert.True(response.Data.Length > MaximumRpcMessageBytes);
         using var json = JsonDocument.Parse(response.Data);
         Assert.Equal(39U, json.RootElement.GetProperty("request_id").GetUInt32());
-        Assert.True(json.RootElement.GetProperty("result").GetProperty("game_icon").GetString()!.Length > MaximumRpcMessageBytes);
+        var result = json.RootElement.GetProperty("result");
+        Assert.True(result.GetProperty("game_icon").GetString()!.Length > MaximumRpcMessageBytes);
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("segment_icons")[0].ValueKind);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("uncreated")]
+    [InlineData("disposed")]
+    public async Task IconsQueryRejectsUnavailableFormWithRpcError(string formState)
+    {
+        var run = new Run(new StandardComparisonGeneratorsFactory());
+        run.Add(new Segment("One"));
+        var state = TestLiveSplitState.Create(run);
+        using var form = state.Form;
+        Assert.False(form.IsHandleCreated);
+        if (formState == "missing") state.Form = null!;
+        if (formState == "disposed")
+        {
+            _ = form.Handle;
+            form.Dispose();
+        }
+
+        var port = BridgeTestEndpoints.GetFreePort();
+        using var component = JsonWebSocketTestClient.StartComponent(state, port);
+        using var client = await ConnectRpc(port);
+        await client.SendTextAsync("{\"request_id\":39,\"method\":\"get_run_icons\"}");
+        AssertError(await client.ReceiveAsync(TimeSpan.FromSeconds(5)), 39, "internal_error");
+        Assert.False(form.IsHandleCreated);
     }
 
     [Fact]

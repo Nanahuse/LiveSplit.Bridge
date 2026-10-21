@@ -19,5 +19,8 @@
   { "schema": "event", "name": "unknown event type", "valid": false, "data": { "session_id": 123, "event_sequence": 9, "type": "unknown", "timer_state": null } },
   { "schema": "event", "name": "event sequence zero", "valid": false, "data": { "session_id": 123, "event_sequence": 0, "type": "run_changed", "timer_state": null } },
   { "schema": "event", "name": "event sequence missing", "valid": false, "data": { "session_id": 1, "type": "run_changed", "timer_state": null } },
-  { "schema": "event", "name": "unknown event property", "valid": false, "data": { "session_id": 123, "event_sequence": 11, "type": "run_changed", "timer_state": null, "extra": true } }
+  { "schema": "event", "name": "unknown event property", "valid": false, "data": { "session_id": 123, "event_sequence": 11, "type": "run_changed", "timer_state": null, "extra": true } },
+  { "schema": "response", "name": "icons array cannot be null", "valid": false, "data": { "request_id": 18, "session_id": 123, "result": { "game_icon": null, "segment_icons": null } } },
+  { "schema": "response", "name": "icons array is required", "valid": false, "data": { "request_id": 18, "session_id": 123, "result": { "game_icon": null } } },
+  { "schema": "response", "name": "icon element must be string or null", "valid": false, "data": { "request_id": 18, "session_id": 123, "result": { "game_icon": null, "segment_icons": [42] } } }
 ]

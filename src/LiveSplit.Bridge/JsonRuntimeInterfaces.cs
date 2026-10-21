@@ -1,5 +1,4 @@
 #nullable enable
-using System;
 using Json = LiveSplit.Bridge.Json;
 
 namespace LiveSplit.Bridge;
@@ -11,16 +10,10 @@ internal interface IJsonLiveSplitAdapter
     Json.CompletedCount GetCompletedCount();
     Json.ContextState GetContextState();
     Json.RunState GetRunState();
-    IJsonRunStateCandidate CaptureRunState();
+    Json.RunIcons GetRunIcons();
     bool TryUpdateRunTimings(Json.RunState published, out Json.RunState updated);
-    bool IsTimerOnlyRun();
     void ExecuteTimerOperation(Json.TimerOperation operation);
     void ExecuteGameTimeOperation(Json.GameTimeParams operation);
-}
-
-internal interface IJsonRunStateCandidate : IDisposable
-{
-    Json.RunState Build();
 }
 
 internal interface IJsonEventSink

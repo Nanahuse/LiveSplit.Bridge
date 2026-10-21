@@ -194,31 +194,16 @@
                   },
                   "best_segment_time": {
                     "$ref": "#/$defs/timeValue"
-                  },
-                  "icon": {
-                    "type": [
-                      "null",
-                      "string"
-                    ],
-                    "description": "Base64-encoded PNG image; null when absent."
                   }
                 },
                 "required": [
                   "index",
                   "name",
                   "comparisons",
-                  "best_segment_time",
-                  "icon"
+                  "best_segment_time"
                 ],
                 "additionalProperties": false
               }
-            },
-            "game_icon": {
-              "type": [
-                "null",
-                "string"
-              ],
-              "description": "Base64-encoded PNG image; null when absent."
             }
           },
           "required": [
@@ -229,8 +214,7 @@
             "layout_path",
             "metadata",
             "comparisons",
-            "segments",
-            "game_icon"
+            "segments"
           ],
           "additionalProperties": false
         }
@@ -270,6 +254,79 @@
         }
       },
       "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/1"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "game_icon": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "description": "Base64-encoded PNG image; null when absent."
+            },
+            "segment_icons": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "description": "Segment icons in Run order, as Base64-encoded PNG images; null entries when absent."
+            }
+          },
+          "required": [
+            "game_icon",
+            "segment_icons"
+          ],
+          "if": {
+            "properties": {
+              "segment_icons": {
+                "const": null
+              }
+            },
+            "required": [
+              "segment_icons"
+            ]
+          },
+          "then": {
+            "properties": {
+              "segment_icons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/2"
     },
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -358,7 +415,7 @@
         "result"
       ],
       "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/2"
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/3"
     },
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -408,7 +465,7 @@
         "result"
       ],
       "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/3"
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/4"
     },
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -445,7 +502,7 @@
         "result"
       ],
       "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/4"
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/5"
     },
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -471,7 +528,7 @@
         "result"
       ],
       "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/5"
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/6"
     },
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -516,7 +573,7 @@
         "error"
       ],
       "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/6"
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/7"
     }
   ]
 }

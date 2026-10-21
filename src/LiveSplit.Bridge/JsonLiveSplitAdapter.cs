@@ -93,12 +93,6 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
 
     public Json.RunState GetRunState()
     {
-        using var candidate = CaptureRunState();
-        return candidate.Build();
-    }
-
-    public IJsonRunStateCandidate CaptureRunState()
-    {
         var run = state.Run;
         var result = new Json.RunState
         {
@@ -106,50 +100,89 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
             CategoryName = run?.CategoryName ?? string.Empty,
             OffsetTicks = run?.Offset.Ticks ?? 0,
         };
-        var images = new List<Bitmap?>();
-        if (run == null) return new JsonRunStateBuildCandidate(result, images);
+        if (run == null) return result;
 
+        result.FilePath = string.IsNullOrEmpty(run.FilePath) ? null : run.FilePath;
+        result.LayoutPath = string.IsNullOrEmpty(run.LayoutPath) ? null : run.LayoutPath;
+        result.Metadata = new Json.RunMetadata();
+        var metadata = run.Metadata;
+        if (metadata != null)
+        {
+            result.Metadata.RunId = NormalizeRunId(metadata.RunID);
+            result.Metadata.PlatformName = string.IsNullOrEmpty(metadata.PlatformName) ? null : metadata.PlatformName;
+            result.Metadata.RegionName = string.IsNullOrEmpty(metadata.RegionName) ? null : metadata.RegionName;
+            result.Metadata.UsesEmulator = metadata.UsesEmulator;
+            // RunState variables describe VariableValueNames, not current custom-variable values.
+            if (metadata.VariableValueNames != null)
+                foreach (var pair in metadata.VariableValueNames)
+                    result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
+        }
+
+        result.Comparisons.AddRange((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
+        for (var index = 0; index < run.Count; index++)
+        {
+            var segment = run[index];
+            var info = new Json.SegmentInfo { Index = (uint)index, Name = segment.Name ?? string.Empty };
+            foreach (var comparison in result.Comparisons)
+                info.Comparisons.Add(new Json.ComparisonTime
+                {
+                    Name = comparison,
+                    Time = MapTime(segment.Comparisons, comparison),
+                });
+            info.BestSegmentTime = MapTime(segment.BestSegmentTime);
+            result.Segments.Add(info);
+        }
+        return result;
+    }
+
+    public Json.RunIcons GetRunIcons()
+    {
+        // TimerForm.SetRun disposes old images before replacing state.Run, without a
+        // shared lock. Clone on that same thread to exclude Dispose, then encode the
+        // detached images on the calling RPC thread. Image encoding needs no UI affinity.
+        var form = state.Form ?? throw new InvalidOperationException("The LiveSplit form is unavailable.");
+        if (form.Disposing || form.IsDisposed) throw new ObjectDisposedException(nameof(state.Form));
+        // InvokeRequired can also return false before the owning thread creates a handle.
+        if (!form.IsHandleCreated) throw new InvalidOperationException("The LiveSplit form handle is not created.");
+        var images = form.InvokeRequired
+            ? (List<Bitmap?>)form.Invoke(new Func<List<Bitmap?>>(CloneRunIcons))
+            : CloneRunIcons();
         try
         {
-            result.Metadata = new Json.RunMetadata();
-            if (!string.IsNullOrEmpty(run.FilePath)) result.FilePath = run.FilePath;
-            if (!string.IsNullOrEmpty(run.LayoutPath)) result.LayoutPath = run.LayoutPath;
-            var metadata = run.Metadata;
-            if (metadata != null)
+            var result = new Json.RunIcons
             {
-                result.Metadata.RunId = NormalizeRunId(metadata.RunID);
-                if (!string.IsNullOrEmpty(metadata.PlatformName)) result.Metadata.PlatformName = metadata.PlatformName;
-                if (!string.IsNullOrEmpty(metadata.RegionName)) result.Metadata.RegionName = metadata.RegionName;
-                result.Metadata.UsesEmulator = metadata.UsesEmulator;
-                // RunState variables describe VariableValueNames, not current custom-variable values.
-                if (metadata.VariableValueNames != null)
-                    foreach (var pair in metadata.VariableValueNames)
-                        result.Metadata.Variables[pair.Key] = pair.Value ?? string.Empty;
-            }
+                GameIcon = EncodePng(images[0]),
+            };
+            result.SegmentIcons.AddRange(images.Skip(1).Select(EncodePng));
+            return result;
+        }
+        finally { foreach (var image in images) image?.Dispose(); }
+    }
 
-            result.Comparisons.AddRange((run.Comparisons ?? Enumerable.Empty<string>()).Distinct());
-            images.Add(CloneImage(run.GameIcon));
-            for (var index = 0; index < run.Count; index++)
-            {
-                var segment = run[index];
-                var info = new Json.SegmentInfo { Index = (uint)index, Name = segment.Name ?? string.Empty };
-                foreach (var comparison in result.Comparisons)
-                    info.Comparisons.Add(new Json.ComparisonTime
-                    {
-                        Name = comparison,
-                        Time = MapTime(segment.Comparisons, comparison),
-                    });
-                info.BestSegmentTime = MapTime(segment.BestSegmentTime);
-                images.Add(CloneImage(segment.Icon));
-                result.Segments.Add(info);
-            }
-            return new JsonRunStateBuildCandidate(result, images);
+    private List<Bitmap?> CloneRunIcons()
+    {
+        var images = new List<Bitmap?>();
+        try
+        {
+            var run = state.Run;
+            images.Add(CloneImage(run?.GameIcon));
+            if (run != null)
+                foreach (var segment in run) images.Add(CloneImage(segment.Icon));
+            return images;
         }
         catch
         {
             foreach (var image in images) image?.Dispose();
             throw;
         }
+    }
+
+    private static byte[]? EncodePng(Bitmap? image)
+    {
+        if (image == null) return null;
+        using var stream = new MemoryStream();
+        image.Save(stream, ImageFormat.Png);
+        return stream.ToArray();
     }
 
     public bool TryUpdateRunTimings(Json.RunState published, out Json.RunState updated)
@@ -175,40 +208,6 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
         result.Metadata.RunId = NormalizeRunId(run.Metadata?.RunID);
         updated = result;
         return true;
-    }
-
-    public static bool TryMergeRunTimings(Json.RunState candidate, Json.RunState latest, out Json.RunState merged)
-    {
-        if (!MatchesSnapshotStructure(candidate, latest))
-        {
-            merged = candidate;
-            return false;
-        }
-
-        merged = Json.RunSnapshot.CopyForTimingUpdate(candidate);
-        merged.Metadata ??= new Json.RunMetadata();
-        merged.Metadata.RunId = latest.Metadata?.RunId;
-        for (var segmentIndex = 0; segmentIndex < merged.Segments.Count; segmentIndex++)
-        {
-            var target = merged.Segments[segmentIndex];
-            var source = latest.Segments[segmentIndex];
-            target.BestSegmentTime = CopyTime(source.BestSegmentTime);
-            for (var comparisonIndex = 0; comparisonIndex < target.Comparisons.Count; comparisonIndex++)
-                target.Comparisons[comparisonIndex].Time = CopyTime(source.Comparisons[comparisonIndex].Time);
-        }
-        return true;
-    }
-
-    public bool IsTimerOnlyRun()
-    {
-        var run = state.Run;
-        return run != null
-            && run.Count == 1
-            && string.IsNullOrEmpty(run.GameName)
-            && string.IsNullOrEmpty(run.CategoryName)
-            && string.IsNullOrEmpty(run[0].Name)
-            && run.GameIcon == null
-            && run[0].Icon == null;
     }
 
     public void ExecuteTimerOperation(Json.TimerOperation operation)
@@ -258,22 +257,6 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
 
     private static string? NormalizeRunId(string? runId) => string.IsNullOrEmpty(runId) ? null : runId;
 
-    private static bool MatchesSnapshotStructure(Json.RunState left, Json.RunState right)
-    {
-        if (left.Segments.Count != right.Segments.Count || left.Comparisons.Count != right.Comparisons.Count) return false;
-        for (var i = 0; i < left.Comparisons.Count; i++)
-            if (!string.Equals(left.Comparisons[i], right.Comparisons[i], StringComparison.Ordinal)) return false;
-        for (var segmentIndex = 0; segmentIndex < left.Segments.Count; segmentIndex++)
-        {
-            var a = left.Segments[segmentIndex];
-            var b = right.Segments[segmentIndex];
-            if (!string.Equals(a.Name, b.Name, StringComparison.Ordinal) || a.Comparisons.Count != b.Comparisons.Count) return false;
-            for (var comparisonIndex = 0; comparisonIndex < a.Comparisons.Count; comparisonIndex++)
-                if (!string.Equals(a.Comparisons[comparisonIndex].Name, b.Comparisons[comparisonIndex].Name, StringComparison.Ordinal)) return false;
-        }
-        return true;
-    }
-
     private static Json.TimeValue MapTime(Time time) => new()
     {
         RealTimeTicks = time.RealTime?.Ticks,
@@ -282,12 +265,6 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
 
     private static Json.TimeValue MapTime(IComparisons? comparisons, string name) =>
         comparisons != null && comparisons.TryGetValue(name, out var time) ? MapTime(time) : new Json.TimeValue();
-
-    private static Json.TimeValue CopyTime(Json.TimeValue source) => new()
-    {
-        RealTimeTicks = source.RealTimeTicks,
-        GameTimeTicks = source.GameTimeTicks,
-    };
 
     private static Bitmap? CloneImage(Image? image) => image == null ? null : new Bitmap(image);
 
@@ -299,45 +276,4 @@ internal sealed class JsonLiveSplitAdapter : IJsonLiveSplitAdapter
         LiveSplit.Model.TimerPhase.Ended => Json.TimerPhase.Ended,
         _ => Json.TimerPhase.Unspecified,
     };
-}
-
-internal sealed class JsonRunStateBuildCandidate : IJsonRunStateCandidate
-{
-    private readonly List<Bitmap?> images;
-    private bool disposed;
-
-    internal JsonRunStateBuildCandidate(Json.RunState state, List<Bitmap?> images)
-    {
-        State = state;
-        this.images = images;
-    }
-
-    internal Json.RunState State { get; }
-
-    public Json.RunState Build()
-    {
-        if (disposed) throw new ObjectDisposedException(nameof(JsonRunStateBuildCandidate));
-        try
-        {
-            if (images.Count > 0 && images[0] != null) State.GameIcon = EncodePng(images[0]!);
-            for (var index = 1; index < images.Count; index++)
-                if (images[index] != null) State.Segments[index - 1].Icon = EncodePng(images[index]!);
-            return State;
-        }
-        finally { Dispose(); }
-    }
-
-    public void Dispose()
-    {
-        if (disposed) return;
-        disposed = true;
-        foreach (var image in images) image?.Dispose();
-    }
-
-    private static byte[] EncodePng(Bitmap image)
-    {
-        using var stream = new MemoryStream();
-        image.Save(stream, ImageFormat.Png);
-        return stream.ToArray();
-    }
 }

@@ -14,7 +14,7 @@ public class SnapshotOperationsTests
             "metadata null", "run id", "platform", "region", "uses emulator", "metadata variable",
             "comparison value", "comparison order", "segment added", "segment removed", "segment order",
             "segment index", "segment name", "segment comparison order", "best segment time",
-            "comparison name", "comparison time", "segment icon", "game icon",
+            "comparison name", "comparison time",
         }.Select(mutation => new object[] { mutation });
     }
 
@@ -28,8 +28,6 @@ public class SnapshotOperationsTests
             ["region"] = "US",
             ["character"] = "A",
         };
-        right.GameIcon = left.GameIcon!.ToArray();
-        right.Segments[0].Icon = left.Segments[0].Icon!.ToArray();
 
         Assert.True(RunSnapshot.ContentEquals(left, right));
         Assert.True(RunSnapshot.ContentEquals(null, null));
@@ -88,7 +86,7 @@ public class SnapshotOperationsTests
     }
 
     [Fact]
-    public void CopyForTimingUpdate_IsolatesMutableStateAndPreservesImageBytes()
+    public void CopyForTimingUpdate_IsolatesMutableState()
     {
         var source = CreateRunState();
         var originalValues = CreateRunState();
@@ -109,10 +107,6 @@ public class SnapshotOperationsTests
         copy.Segments.Add(new SegmentInfo { Name = "New Segment" });
 
         Assert.True(RunSnapshot.ContentEquals(source, originalValues));
-        Assert.Equal(new byte[] { 1, 2, 3 }, copy.GameIcon);
-        Assert.Equal(new byte[] { 4, 5, 6 }, copy.Segments[0].Icon);
-        Assert.Equal(new byte[] { 1, 2, 3 }, source.GameIcon);
-        Assert.Equal(new byte[] { 4, 5, 6 }, source.Segments[0].Icon);
     }
 
     private static void ApplyMutation(RunState run, string mutation)
@@ -141,8 +135,6 @@ public class SnapshotOperationsTests
             case "best segment time": run.Segments[0].BestSegmentTime.RealTimeTicks++; break;
             case "comparison name": run.Segments[0].Comparisons[0].Name = "Other Comparison"; break;
             case "comparison time": run.Segments[0].Comparisons[0].Time.GameTimeTicks++; break;
-            case "segment icon": run.Segments[0].Icon![0]++; break;
-            case "game icon": run.GameIcon![0]++; break;
             default: throw new KeyNotFoundException(mutation);
         }
     }
@@ -169,13 +161,12 @@ public class SnapshotOperationsTests
         Comparisons = new List<string> { "Personal Best", "Best Segments" },
         Segments = new List<SegmentInfo>
         {
-            CreateSegment(0, "Opening", new byte[] { 4, 5, 6 }),
-            CreateSegment(1, "Finale", new byte[] { 7, 8, 9 }),
+            CreateSegment(0, "Opening"),
+            CreateSegment(1, "Finale"),
         },
-        GameIcon = new byte[] { 1, 2, 3 },
     };
 
-    private static SegmentInfo CreateSegment(uint index, string name, byte[] icon) => new()
+    private static SegmentInfo CreateSegment(uint index, string name) => new()
     {
         Index = index,
         Name = name,
@@ -185,7 +176,6 @@ public class SnapshotOperationsTests
             new() { Name = "Best Segments", Time = new TimeValue { RealTimeTicks = 80, GameTimeTicks = null } },
         },
         BestSegmentTime = new TimeValue { RealTimeTicks = 70, GameTimeTicks = 60 },
-        Icon = icon,
     };
 
     private static ContextState CreateContextState() => new()

@@ -31,19 +31,21 @@ The Schema Contract CI job uses pnpm 12.9.1, runs the frozen install, generates 
 
 | Schema | Root DTO | Contract |
 | --- | --- | --- |
-| [`rpc-request.schema.json`](../../schemas/v4/rpc-request.schema.json) | `QueryRequest`, `TimerRequest`, `GameTimeRequest<T>` | Five query methods and timer/game-time operations, including method and operation parameter rules |
-| [`rpc-response.schema.json`](../../schemas/v4/rpc-response.schema.json) | `Success<T>`, `ControlSuccessResponse`, `ErrorResponse` | Query results, `result: null` control responses, and exclusive error responses |
+| [`rpc-request.schema.json`](../../schemas/v4/rpc-request.schema.json) | `QueryRequest`, `TimerRequest`, `GameTimeRequest<T>` | Six query methods and timer/game-time operations, including method and operation parameter rules |
+| [`rpc-response.schema.json`](../../schemas/v4/rpc-response.schema.json) | `Success<T>`, `ControlSuccessResponse`, `ErrorResponse` | Query results including separate `RunState` and `RunIcons`, `result: null` control responses, and exclusive error responses |
 | [`bridge-event.schema.json`](../../schemas/v4/bridge-event.schema.json) | `TimerEvent`, `ResetEvent`, `ChangedEvent` | All eight events and their `timer_state` rules |
 
 The DTOs use `JsonRequired`, nullable annotations, `JsonStringEnumMemberName`, and standard snake_case naming. Schema-only `Range`, `Const`, and `AdditionalProperties` attributes express constraints not implied by CLR types. `FromType`, `OneOf`, and `Id` compose the three self-contained documents; there are no custom generators, refiners, or output transforms.
 
 `SCHEMA_GENERATION` enables these attributes only in the .NET 10 generation tool. It also aliases `PngImage` to `string`; the actual net481 model uses `byte[]` and standard STJ Base64 serialization. The separate net481 sample project compiles the runtime DTOs with STJ 9.0.4. Neither the generator nor its dependencies are referenced by the Bridge DLL.
 
+`RunIcons.segment_icons` is a required non-null array of nullable PNG strings. Generation 7.3.11 also marks the collection nullable when applying a nested `Nullable` attribute. The DTO's standard `If`/conditional `Nullable` attributes reject the null collection without rejecting null entries; no generator correction or custom converter is used. PNG data is only returned by `get_run_icons`, never inside `RunState`.
+
 ## Validation coverage
 
 `pnpm run validate` uses Ajv 8.17.1 to validate each generated schema against the Draft 2020-12 meta-schema, then checks the protocol constraint cases in `samples/validation-cases.json` and every message serialized by the separate net481 sample project (`ContractSamples/ContractSamples.cs`).
 
-The generation command only writes schemas. The net481 sample project writes 33 actual C# messages covering every query and operation, every response and event type, empty/populated runs, and nullable event/state fields. Ajv checks those serialized messages; the fixed fixtures retain protocol-specific rejection rules. Standard serializer round-trips, numeric conversion boundaries, Base64 decoding, and property-order tests are intentionally absent. Actual RPC dispatch and errors belong to the Windows communication tests.
+The generation command only writes schemas. The net481 sample project writes 36 actual C# messages covering every query and operation, every response and event type, empty/populated runs, separate icons, and nullable event/state fields. Ajv checks those serialized messages; the fixed fixtures retain protocol-specific rejection rules. Standard serializer round-trips, numeric conversion boundaries, Base64 decoding, and property-order tests are intentionally absent. Actual RPC dispatch and errors belong to the Windows communication tests.
 
 ## Known Schema and serializer differences
 

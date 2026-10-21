@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -21,7 +22,7 @@ namespace LiveSplit.Bridge.TestHost;
 internal static class Program
 {
     private const int DefaultWebSocketPort = 54000;
-    private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(15);
 
     [STAThread]
     private static int Main(string[] args)
@@ -51,6 +52,7 @@ internal static class Program
         run.Metadata.GetOrAddCustomVariable("host_var").Value = "host-value";
 
         using var form = new Form();
+        _ = form.Handle;
         var layoutSettings = new BridgeLayoutSettings();
         var layout = new Layout { Settings = layoutSettings };
         var state = new LiveSplitState(run, form, layout, layoutSettings, new Settings());
@@ -72,6 +74,7 @@ internal static class Program
                 $"STARTUP_CHECK_FAILED: port {port} is already occupied: "
                 + $"{exception.SocketErrorCode}: {exception.Message}"
             );
+            Console.Error.WriteLine(exception);
             return 1;
         }
 
@@ -89,7 +92,8 @@ internal static class Program
 
         component.Update(null, state, 0, 0, LayoutMode.Horizontal);
         using var startupTimeout = new CancellationTokenSource(StartupTimeout);
-        var startupProbe = Task.Run(() => ProbeRpcUntilReady(port, startupTimeout.Token));
+        var progress = new StartupProbeProgress();
+        var startupProbe = Task.Run(() => ProbeRpcUntilReady(port, startupTimeout.Token, progress));
         var stopwatch = Stopwatch.StartNew();
         while (!startupProbe.IsCompleted && stopwatch.Elapsed < StartupTimeout)
         {
@@ -101,9 +105,7 @@ internal static class Program
         if (!startupProbe.IsCompleted)
         {
             startupTimeout.Cancel();
-            Console.Error.WriteLine(
-                $"STARTUP_CHECK_FAILED: JSON v4 RPC did not become ready within {StartupTimeout.TotalSeconds:0} seconds."
-            );
+            ReportStartupFailure(StartupFailure(port, progress), progress);
             return 1;
         }
 
@@ -113,10 +115,7 @@ internal static class Program
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(
-                $"STARTUP_CHECK_FAILED: {exception.GetType().FullName}: {exception.Message}"
-            );
-            Console.Error.WriteLine(exception.StackTrace);
+            ReportStartupFailure(exception, progress);
             return 1;
         }
 
@@ -141,42 +140,55 @@ internal static class Program
         socket.Bind(new IPEndPoint(IPAddress.Loopback, port));
     }
 
-    private static void ProbeRpcUntilReady(int port, CancellationToken cancellationToken)
+    private sealed class StartupProbeProgress
     {
-        Exception lastError = new TimeoutException("The RPC endpoint did not accept a connection.");
+        internal string Stage = "waiting to start";
+        internal Exception? LastError;
+    }
+
+    private static TimeoutException StartupFailure(int port, StartupProbeProgress progress) =>
+        new($"JSON v4 RPC did not respond on port {port} within {StartupTimeout.TotalSeconds:0} seconds.",
+            Volatile.Read(ref progress.LastError));
+
+    private static void ReportStartupFailure(Exception exception, StartupProbeProgress progress)
+    {
+        Console.Error.WriteLine($"STARTUP_CHECK_FAILED: RPC startup failed during {Volatile.Read(ref progress.Stage)}.");
+        // Exception.ToString includes the inner connection/socket exception and stack.
+        Console.Error.WriteLine(exception);
+    }
+
+    private static void ProbeRpcUntilReady(int port, CancellationToken cancellationToken, StartupProbeProgress progress)
+    {
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                ProbeRpc(port, cancellationToken);
+                ProbeRpc(port, cancellationToken, progress);
                 return;
             }
-            catch (WebSocketException exception)
+            catch (Exception exception) when (exception is WebSocketException or SocketException or OperationCanceledException)
             {
-                lastError = exception;
-            }
-            catch (SocketException exception)
-            {
-                lastError = exception;
+                Volatile.Write(ref progress.LastError, new InvalidOperationException(
+                    $"RPC startup probe failed during {Volatile.Read(ref progress.Stage)}.", exception));
+                if (exception is OperationCanceledException) break;
             }
             cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(50));
         }
 
-        throw new TimeoutException(
-            $"JSON v4 RPC did not respond on port {port} before the startup timeout.",
-            lastError
-        );
+        throw StartupFailure(port, progress);
     }
 
-    private static void ProbeRpc(int port, CancellationToken cancellationToken)
+    private static void ProbeRpc(int port, CancellationToken cancellationToken, StartupProbeProgress progress)
     {
         using var client = new ClientWebSocket();
+        Volatile.Write(ref progress.Stage, "connecting");
         client.ConnectAsync(
             new Uri($"ws://127.0.0.1:{port}/bridge/v4/rpc"),
             cancellationToken
         ).GetAwaiter().GetResult();
 
         var request = Encoding.UTF8.GetBytes("{\"request_id\":0,\"method\":\"get_timer_state\"}");
+        Volatile.Write(ref progress.Stage, "sending get_timer_state");
         client.SendAsync(
             new ArraySegment<byte>(request),
             WebSocketMessageType.Text,
@@ -186,6 +198,7 @@ internal static class Program
 
         var buffer = new byte[4096];
         WebSocketReceiveResult received;
+        Volatile.Write(ref progress.Stage, "receiving get_timer_state response");
         do
         {
             received = client.ReceiveAsync(

@@ -16,6 +16,7 @@ class BridgeClientError(RuntimeError):
 QUERY_METHODS = {
     "get_timer_state",
     "get_run",
+    "get_run_icons",
     "get_attempt",
     "get_context_state",
     "get_completed_count",
@@ -134,6 +135,9 @@ class BridgeClient:
 
     def run(self) -> dict[str, object]:
         return self.request("get_run")
+
+    def run_icons(self) -> dict[str, object]:
+        return self.request("get_run_icons")
 
     def attempt(self) -> dict[str, object]:
         return self.request("get_attempt")

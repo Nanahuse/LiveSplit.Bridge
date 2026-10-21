@@ -6,8 +6,7 @@ namespace LiveSplit.Bridge.Json;
 
 /// <summary>
 /// Copies the mutable RunState graph before publishing a timing update. A published
-/// snapshot and its mutable descendants must not be changed; image arrays are shared
-/// and follow the same read-only ownership contract.
+/// snapshot and its mutable descendants must not be changed.
 /// </summary>
 internal static class RunSnapshot
 {
@@ -25,8 +24,6 @@ internal static class RunSnapshot
             Metadata = CopyMetadata(source.Metadata),
             Comparisons = new List<string>(source.Comparisons),
             Segments = new List<SegmentInfo>(source.Segments.Count),
-            // Published image buffers are shared and must be treated as immutable.
-            GameIcon = source.GameIcon,
         };
 
         foreach (var segment in source.Segments)
@@ -47,8 +44,7 @@ internal static class RunSnapshot
             && StringEquals(left.LayoutPath, right.LayoutPath)
             && MetadataEquals(left.Metadata, right.Metadata)
             && ListEquals(left.Comparisons, right.Comparisons, StringEquals)
-            && ListEquals(left.Segments, right.Segments, SegmentEquals)
-            && BytesEqual(left.GameIcon, right.GameIcon);
+            && ListEquals(left.Segments, right.Segments, SegmentEquals);
     }
 
     private static RunMetadata? CopyMetadata(RunMetadata? source)
@@ -73,8 +69,6 @@ internal static class RunSnapshot
             Name = source.Name,
             Comparisons = new List<ComparisonTime>(source.Comparisons.Count),
             BestSegmentTime = CopyTimeValue(source.BestSegmentTime),
-            // Published image buffers are shared and must be treated as immutable.
-            Icon = source.Icon,
         };
 
         foreach (var comparison in source.Comparisons)
@@ -115,8 +109,7 @@ internal static class RunSnapshot
         return left.Index == right.Index
             && StringEquals(left.Name, right.Name)
             && ListEquals(left.Comparisons, right.Comparisons, ComparisonEquals)
-            && TimeValueEquals(left.BestSegmentTime, right.BestSegmentTime)
-            && BytesEqual(left.Icon, right.Icon);
+            && TimeValueEquals(left.BestSegmentTime, right.BestSegmentTime);
     }
 
     private static bool ComparisonEquals(ComparisonTime? left, ComparisonTime? right)
@@ -147,17 +140,6 @@ internal static class RunSnapshot
 
         for (var index = 0; index < left.Count; index++)
             if (!elementEquals(left[index], right[index])) return false;
-
-        return true;
-    }
-
-    private static bool BytesEqual(byte[]? left, byte[]? right)
-    {
-        if (ReferenceEquals(left, right)) return true;
-        if (left is null || right is null || left.Length != right.Length) return false;
-
-        for (var index = 0; index < left.Length; index++)
-            if (left[index] != right[index]) return false;
 
         return true;
     }
