@@ -45,7 +45,7 @@ The DTOs use `JsonRequired`, nullable annotations, `JsonStringEnumMemberName`, a
 
 `pnpm run validate` uses Ajv 8.17.1 to validate each generated schema against the Draft 2020-12 meta-schema, then checks the protocol constraint cases in `samples/validation-cases.json` and every message serialized by the separate net481 sample project (`ContractSamples/ContractSamples.cs`).
 
-The generation command only writes schemas. The net481 sample project writes 36 actual C# messages covering every query and operation, every response and event type, empty/populated runs, separate icons, and nullable event/state fields. Ajv checks those serialized messages; the fixed fixtures retain protocol-specific rejection rules. Standard serializer round-trips, numeric conversion boundaries, Base64 decoding, and property-order tests are intentionally absent. Actual RPC dispatch and errors belong to the Windows communication tests.
+The generation command only writes schemas. The net481 sample project writes actual C# messages covering every query and operation, every response and event type, empty/populated runs, separate icons, and nullable event/state fields. Ajv checks those serialized messages; the fixed fixtures retain protocol-specific rejection rules. Actual RPC dispatch and errors belong to the Windows communication tests.
 
 ## Known Schema and serializer differences
 
