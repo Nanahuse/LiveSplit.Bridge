@@ -1,6 +1,8 @@
 #nullable enable
 using System;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -28,27 +30,35 @@ internal static class Program
     private static int Main(string[] args)
     {
         var port = DefaultWebSocketPort;
-        if (args.Length > 2 || (args.Length > 0 && args[0] != "--port"))
-            return Usage();
-        if (args.Length == 1)
-            return Usage();
-        if (
-            args.Length == 2
-            && (!int.TryParse(
-                    args[1],
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out port
-                )
-                || port is < 1 or > 65535)
-        )
-            return Usage();
+        var withIcons = false;
+        for (var index = 0; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--with-icons" when !withIcons:
+                    withIcons = true;
+                    break;
+                case "--port" when index + 1 < args.Length
+                    && int.TryParse(args[++index], NumberStyles.None, CultureInfo.InvariantCulture, out port)
+                    && port is >= 1 and <= 65535:
+                    break;
+                default:
+                    return Usage();
+            }
+        }
+
+        // Fixed seeds and high-entropy pixels keep the PNG response deterministically
+        // above 64 KiB without external assets or changing the default icon-free Run.
+        using var gameIcon = withIcons ? CreateTestIcon(256, 256, 0x12345678u) : null;
+        using var segmentIcon = withIcons ? CreateTestIcon(16, 16, 0x87654321u) : null;
 
         var run = new Run(new StandardComparisonGeneratorsFactory());
         run.GameName = "Bridge Test Game";
         run.CategoryName = "Any%";
         run.Add(new Segment("First"));
         run.Add(new Segment("Second"));
+        run.GameIcon = gameIcon;
+        run[0].Icon = segmentIcon;
         run.Metadata.GetOrAddCustomVariable("host_var").Value = "host-value";
 
         using var form = new Form();
@@ -129,6 +139,25 @@ internal static class Program
             Thread.Sleep(10);
         }
         return 0;
+    }
+
+    private static Bitmap CreateTestIcon(int width, int height, uint seed)
+    {
+        var image = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                // xorshift32 is specified here rather than relying on Random's implementation.
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                image.SetPixel(x, y, Color.FromArgb(
+                    255, (int)(seed & 255), (int)((seed >> 8) & 255), (int)((seed >> 16) & 255)
+                ));
+            }
+        }
+        return image;
     }
 
     private static void EnsurePortAvailable(int port)
@@ -213,7 +242,7 @@ internal static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("Usage: LiveSplit.Bridge.TestHost [--port 1..65535]");
+        Console.Error.WriteLine("Usage: LiveSplit.Bridge.TestHost [--port 1..65535] [--with-icons]");
         return 2;
     }
 }
