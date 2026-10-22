@@ -1,0 +1,579 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "phase": {
+              "enum": [
+                "unspecified",
+                "not_running",
+                "running",
+                "paused",
+                "ended"
+              ]
+            },
+            "split_index": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "real_time_ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "game_time_ticks": {
+              "type": [
+                "null",
+                "integer"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "is_game_time_initialized": {
+              "type": "boolean"
+            },
+            "is_game_time_paused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "phase",
+            "split_index",
+            "real_time_ticks",
+            "game_time_ticks",
+            "is_game_time_initialized",
+            "is_game_time_paused"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/0"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "game_name": {
+              "type": "string"
+            },
+            "category_name": {
+              "type": "string"
+            },
+            "offset_ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "file_path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "layout_path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "metadata": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "run_id": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "platform_name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "region_name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "uses_emulator": {
+                  "type": "boolean"
+                },
+                "variables": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "run_id",
+                "platform_name",
+                "region_name",
+                "uses_emulator",
+                "variables"
+              ],
+              "additionalProperties": false
+            },
+            "comparisons": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "comparisons": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "time": {
+                          "$ref": "#/$defs/timeValue"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "time"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "best_segment_time": {
+                    "$ref": "#/$defs/timeValue"
+                  }
+                },
+                "required": [
+                  "index",
+                  "name",
+                  "comparisons",
+                  "best_segment_time"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "game_name",
+            "category_name",
+            "offset_ticks",
+            "file_path",
+            "layout_path",
+            "metadata",
+            "comparisons",
+            "segments"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "timeValue": {
+          "type": "object",
+          "properties": {
+            "real_time_ticks": {
+              "type": [
+                "null",
+                "integer"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "game_time_ticks": {
+              "type": [
+                "null",
+                "integer"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            }
+          },
+          "required": [
+            "real_time_ticks",
+            "game_time_ticks"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/1"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "game_icon": {
+              "type": [
+                "null",
+                "string"
+              ],
+              "description": "Base64-encoded PNG image; null when absent."
+            },
+            "segment_icons": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "description": "Segment icons in Run order, as Base64-encoded PNG images; null entries when absent."
+            }
+          },
+          "required": [
+            "game_icon",
+            "segment_icons"
+          ],
+          "if": {
+            "properties": {
+              "segment_icons": {
+                "const": null
+              }
+            },
+            "required": [
+              "segment_icons"
+            ]
+          },
+          "then": {
+            "properties": {
+              "segment_icons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/2"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "attempt_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                  },
+                  "split_time": {
+                    "type": "object",
+                    "properties": {
+                      "real_time_ticks": {
+                        "type": [
+                          "null",
+                          "integer"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      },
+                      "game_time_ticks": {
+                        "type": [
+                          "null",
+                          "integer"
+                        ],
+                        "minimum": -9223372036854775808,
+                        "maximum": 9223372036854775807
+                      }
+                    },
+                    "required": [
+                      "real_time_ticks",
+                      "game_time_ticks"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "custom_variables": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "index",
+                  "split_time",
+                  "custom_variables"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "attempt_count",
+            "segments"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/3"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "current_timing_method": {
+              "enum": [
+                "unspecified",
+                "real_time",
+                "game_time"
+              ]
+            },
+            "current_comparison": {
+              "type": "string"
+            },
+            "custom_variables": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "current_timing_method",
+            "current_comparison",
+            "custom_variables"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/4"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "completed_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "required": [
+            "completed_count"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/5"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "result": {
+          "const": null
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/6"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_request",
+                "invalid_argument",
+                "operation_failed",
+                "internal_error",
+                "permission_denied"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "error"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-response.schema.json/7"
+    }
+  ]
+}

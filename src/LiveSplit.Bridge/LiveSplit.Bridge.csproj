@@ -11,8 +11,6 @@
       Private="false"
       ExcludeAssets="runtime" />
 
-    <ProjectReference
-      Include="..\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -29,26 +27,22 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
+    <Reference Include="System.ComponentModel.DataAnnotations" />
+    <Compile Include="..\LiveSplit.Bridge.Json\Models.cs" Link="Json\Models.cs" />
+    <Compile Include="..\LiveSplit.Bridge.Json\SerializerOptions.cs" Link="Json\SerializerOptions.cs" />
+    <Compile Include="..\LiveSplit.Bridge.Json\SnapshotOperations.cs" Link="Json\SnapshotOperations.cs" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <BridgeDistributionFiles>LiveSplit.Bridge.dll;LiveSplit.Bridge.Protocol.dll;Google.Protobuf.dll</BridgeDistributionFiles>
-  </PropertyGroup>
-
   <ItemGroup>
-    <BridgeDistributionFile Include="$(BridgeDistributionFiles)" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
+    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" />
   </ItemGroup>
 
   <Target Name="DeployToLiveSplit" AfterTargets="Build">
     <MakeDir Directories="$(LiveSplitComponentsPath)" />
 
-    <ItemGroup>
-      <BridgeDeployFiles Include="@(BridgeDistributionFile->'$(TargetDir)%(Identity)')" />
-    </ItemGroup>
-
     <Copy
-      SourceFiles="@(BridgeDeployFiles)"
+      SourceFiles="$(TargetPath)"
       DestinationFolder="$(LiveSplitComponentsPath)"
       SkipUnchangedFiles="true" />
 

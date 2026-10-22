@@ -10,6 +10,50 @@ permissions:
   contents: read
 
 jobs:
+  schema-contract:
+    name: Schema contract
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@20
+          working-directory: tools/schema
+          cache: true
+          install: false
+
+      - name: Restore schema validation dependencies
+        working-directory: tools/schema
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore Schema generator
+        run: dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj --locked-mode --nologo
+
+      - name: Build Schema generator
+        run: dotnet build tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-restore --nologo
+
+      - name: Generate and compare checked-in schemas
+        run: |
+          dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- tools/schema/out
+          ./tools/schema/Sync-Schemas.ps1 -Check
+
+      - name: Export net481 C# communication samples
+        run: dotnet run --project tools/schema/ContractSamples/LiveSplit.Bridge.ContractSamples.csproj --configuration Release -- tools/schema/out
+
+      - name: Validate Draft 2020-12 contracts
+        working-directory: tools/schema
+        run: pnpm run validate
+
   test:
     name: Windows tests
     runs-on: windows-latest
@@ -47,19 +91,22 @@ jobs:
         working-directory: tools/livesplit-bridge-cli
         run: |
           uv sync --locked
-          uv run python scripts/generate_proto.py
 
       - name: Lint CLI
         working-directory: tools/livesplit-bridge-cli
         run: |
-          uv run ruff check src tests scripts
-          uv run ruff format --check src tests scripts
+          uv run ruff check src tests
+          uv run ruff format --check src tests
 
       - name: Restore .NET projects
         run: dotnet restore LiveSplit.Bridge.slnx --nologo
 
       - name: Build .NET projects
         run: dotnet build LiveSplit.Bridge.slnx --configuration Release --no-restore --nologo
+
+      - name: Build and verify distribution ZIP
+        shell: pwsh
+        run: ./eng/package-release.ps1 -PackageName "LiveSplit.Bridge-ci-${{ github.sha }}"
 
       - name: Test .NET projects
         run: dotnet test LiveSplit.Bridge.slnx --configuration Release --no-build --no-restore --nologo

@@ -22,7 +22,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\LiveSplit.Bridge\LiveSplit.Bridge.csproj" />
-    <ProjectReference Include="..\..\src\LiveSplit.Bridge.Protocol\LiveSplit.Bridge.Protocol.csproj" />
   </ItemGroup>
 
 </Project>

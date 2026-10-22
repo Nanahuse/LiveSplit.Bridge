@@ -1,17 +1,33 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Self
 
 import websocket
 
-from livesplit.bridge.v3 import bridge_pb2, common_pb2
-
-PROTOCOL_VERSION = 3
+UINT32_MAX = (1 << 32) - 1
 
 
 class BridgeClientError(RuntimeError):
     pass
+
+
+QUERY_METHODS = {
+    "get_timer_state",
+    "get_run",
+    "get_run_icons",
+    "get_attempt",
+    "get_context_state",
+    "get_completed_count",
+}
+CONTROL_METHODS = {"timer_operation", "game_time_operation"}
+
+
+def is_uint32(value: object, *, nonzero: bool = False) -> bool:
+    return (
+        type(value) is int and (not nonzero or value != 0) and 0 <= value <= UINT32_MAX
+    )
 
 
 @dataclass
@@ -25,7 +41,12 @@ class BridgeClient:
                 self.rpc_endpoint,
                 timeout=self.timeout_ms / 1000,
             )
-        except (OSError, websocket.WebSocketException) as error:
+        except (
+            OSError,
+            OverflowError,
+            ValueError,
+            websocket.WebSocketException,
+        ) as error:
             raise BridgeClientError(
                 f"Failed to connect to {self.rpc_endpoint}: {error}"
             ) from error
@@ -41,115 +62,97 @@ class BridgeClient:
         self.close()
 
     def request(
-        self, request: bridge_pb2.Request, expected_body: str
-    ) -> bridge_pb2.Response:
+        self, method: str, params: dict[str, object] | None = None
+    ) -> dict[str, object]:
         request_id = self._next_request_id
-        self._next_request_id += 1
-        request.protocol_version = PROTOCOL_VERSION
-        request.request_id = request_id
+        self._next_request_id = (request_id + 1) & UINT32_MAX
+        request: dict[str, object] = {"request_id": request_id, "method": method}
+        if params is not None:
+            request["params"] = params
+
         try:
-            self._socket.send_binary(request.SerializeToString())
+            self._socket.send(json.dumps(request, separators=(",", ":")))
             data = self._socket.recv()
         except websocket.WebSocketTimeoutException as error:
             raise BridgeClientError(
                 f"RPC timed out after {self.timeout_ms} ms ({self.rpc_endpoint})"
             ) from error
-        except websocket.WebSocketException as error:
+        except (OSError, websocket.WebSocketException) as error:
             raise BridgeClientError(f"RPC failed: {error}") from error
-        if isinstance(data, str):
-            raise BridgeClientError("Bridge returned a text frame; binary expected")
 
+        if data is None or data == "":
+            raise BridgeClientError("RPC connection closed before a response arrived")
+        if not isinstance(data, str):
+            raise BridgeClientError("Bridge returned a binary frame; text expected")
         try:
-            response = bridge_pb2.Response.FromString(data)
-        except Exception as error:
+            response = json.loads(data)
+        except (json.JSONDecodeError, UnicodeError, RecursionError) as error:
+            raise BridgeClientError(f"Bridge returned invalid JSON: {error}") from error
+        if not isinstance(response, dict):
+            raise BridgeClientError("Bridge returned a non-object RPC response")
+
+        response_id = response.get("request_id")
+        if not is_uint32(response_id) or response_id != request_id:
             raise BridgeClientError(
-                f"Bridge returned invalid protobuf data: {error}"
-            ) from error
-        if response.protocol_version != PROTOCOL_VERSION:
-            raise BridgeClientError(
-                f"Protocol version mismatch: expected {PROTOCOL_VERSION}, "
-                f"got {response.protocol_version}"
+                f"Request ID mismatch: expected {request_id}, got {response_id!r}"
             )
-        if response.request_id != request_id:
-            raise BridgeClientError(
-                f"Request ID mismatch: expected {request_id}, got {response.request_id}"
-            )
-        if response.session_id == 0:
+        session_id = response.get("session_id")
+        if not is_uint32(session_id, nonzero=True):
             raise BridgeClientError("Bridge returned an invalid session_id")
-        body = response.WhichOneof("body")
-        if body == "error":
+
+        has_result = "result" in response
+        has_error = "error" in response
+        if has_result == has_error:
             raise BridgeClientError(
-                f"Bridge error {response.error.code}: {response.error.message}"
+                "Bridge response must contain exactly one of result or error"
             )
-        if body != expected_body:
-            raise BridgeClientError(
-                f"Unexpected response body: expected {expected_body}, "
-                f"got {body or 'none'}"
-            )
+
+        if has_error:
+            error_body = response["error"]
+            if not isinstance(error_body, dict):
+                raise BridgeClientError("Bridge returned an invalid error object")
+            code = error_body.get("code")
+            message = error_body.get("message")
+            if not isinstance(code, str) or not isinstance(message, str):
+                raise BridgeClientError(
+                    "Bridge returned an error without code and message"
+                )
+            raise BridgeClientError(f"Bridge error {code}: {message}")
+
+        result = response["result"]
+        if method in QUERY_METHODS:
+            if not isinstance(result, dict):
+                raise BridgeClientError("Bridge returned a non-object query result")
+        elif method in CONTROL_METHODS:
+            if result is not None:
+                raise BridgeClientError("Control success result must be null")
+        else:
+            raise BridgeClientError(f"Unsupported RPC method: {method}")
         return response
 
-    def timer_state(self) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(get_timer_state=bridge_pb2.GetTimerStateRequest()),
-            "get_timer_state",
-        )
+    def timer_state(self) -> dict[str, object]:
+        return self.request("get_timer_state")
 
-    def run(self) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(get_run=bridge_pb2.GetRunRequest()), "get_run"
-        )
+    def run(self) -> dict[str, object]:
+        return self.request("get_run")
 
-    def attempt(self) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(get_attempt=bridge_pb2.GetAttemptRequest()),
-            "get_attempt",
-        )
+    def run_icons(self) -> dict[str, object]:
+        return self.request("get_run_icons")
 
-    def context(self) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(get_context_state=bridge_pb2.GetContextStateRequest()),
-            "get_context_state",
-        )
+    def attempt(self) -> dict[str, object]:
+        return self.request("get_attempt")
 
-    def completed_count(self) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(
-                get_completed_count=bridge_pb2.GetCompletedCountRequest()
-            ),
-            "get_completed_count",
-        )
+    def context(self) -> dict[str, object]:
+        return self.request("get_context_state")
 
-    def timer(self, operation: int) -> bridge_pb2.Response:
-        return self.request(
-            bridge_pb2.Request(
-                timer_operation=bridge_pb2.TimerOperationRequest(operation=operation)
-            ),
-            "operation",
-        )
+    def completed_count(self) -> dict[str, object]:
+        return self.request("get_completed_count")
 
-    def game_time(
-        self, operation: int, ticks: int | None = None
-    ) -> bridge_pb2.Response:
-        request = bridge_pb2.GameTimeOperationRequest(operation=operation)
+    def timer(self, operation: str) -> dict[str, object]:
+        return self.request("timer_operation", {"operation": operation})
+
+    def game_time(self, operation: str, ticks: int | None = None) -> dict[str, object]:
+        params: dict[str, object] = {"operation": operation}
         if ticks is not None:
-            request.ticks = ticks
-        return self.request(
-            bridge_pb2.Request(game_time_operation=request), "operation"
-        )
-
-
-TIMER_OPERATIONS = {
-    "start": common_pb2.TIMER_START,
-    "split": common_pb2.TIMER_SPLIT,
-    "skip": common_pb2.TIMER_SKIP,
-    "undo": common_pb2.TIMER_UNDO,
-    "reset": common_pb2.TIMER_RESET,
-    "pause": common_pb2.TIMER_PAUSE,
-    "resume": common_pb2.TIMER_RESUME,
-}
-
-GAME_TIME_OPERATIONS = {
-    "initialize": common_pb2.INITIALIZE,
-    "pause": common_pb2.GAME_TIME_PAUSE,
-    "resume": common_pb2.GAME_TIME_RESUME,
-}
+            params["ticks"] = ticks
+        return self.request("game_time_operation", params)

@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "type": {
+          "enum": [
+            "timer_started",
+            "timer_split",
+            "timer_skipped",
+            "timer_undo",
+            "timer_phase_changed"
+          ]
+        },
+        "timer_state": {
+          "type": "object",
+          "properties": {
+            "phase": {
+              "enum": [
+                "unspecified",
+                "not_running",
+                "running",
+                "paused",
+                "ended"
+              ]
+            },
+            "split_index": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "real_time_ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "game_time_ticks": {
+              "type": [
+                "null",
+                "integer"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "is_game_time_initialized": {
+              "type": "boolean"
+            },
+            "is_game_time_paused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "phase",
+            "split_index",
+            "real_time_ticks",
+            "game_time_ticks",
+            "is_game_time_initialized",
+            "is_game_time_paused"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "session_id",
+        "event_sequence",
+        "type",
+        "timer_state"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/bridge-event.schema.json/0"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "type": {
+          "type": "string",
+          "const": "timer_reset"
+        },
+        "timer_state": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "phase": {
+              "enum": [
+                "unspecified",
+                "not_running",
+                "running",
+                "paused",
+                "ended"
+              ]
+            },
+            "split_index": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            "real_time_ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "game_time_ticks": {
+              "type": [
+                "null",
+                "integer"
+              ],
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            },
+            "is_game_time_initialized": {
+              "type": "boolean"
+            },
+            "is_game_time_paused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "phase",
+            "split_index",
+            "real_time_ticks",
+            "game_time_ticks",
+            "is_game_time_initialized",
+            "is_game_time_paused"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "session_id",
+        "event_sequence",
+        "type",
+        "timer_state"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/bridge-event.schema.json/1"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "type": {
+          "enum": [
+            "run_changed",
+            "context_changed"
+          ]
+        },
+        "timer_state": {
+          "const": null
+        }
+      },
+      "required": [
+        "session_id",
+        "event_sequence",
+        "type",
+        "timer_state"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/bridge-event.schema.json/2"
+    }
+  ]
+}

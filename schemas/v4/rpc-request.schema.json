@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "enum": [
+            "get_timer_state",
+            "get_run",
+            "get_run_icons",
+            "get_attempt",
+            "get_context_state",
+            "get_completed_count"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "method"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/0"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "type": "string",
+          "const": "timer_operation"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": [
+                "start",
+                "split",
+                "skip",
+                "undo",
+                "reset",
+                "pause",
+                "resume"
+              ]
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/1"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "type": "string",
+          "const": "game_time_operation"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "enum": [
+                "initialize",
+                "pause",
+                "resume"
+              ]
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/2"
+    },
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "type": "string",
+          "const": "game_time_operation"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "const": "set"
+            },
+            "ticks": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            }
+          },
+          "required": [
+            "operation",
+            "ticks"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/3"
+    }
+  ]
+}

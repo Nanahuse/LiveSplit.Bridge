@@ -4,10 +4,7 @@ LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続する�
 コンポーネントです。対応する外部アプリケーションから、タイマーの状態確認や操作、
 ゲーム内時間の制御ができるようになります。
 
-現在の`main`ブランチはProtocol v3の開発版です。公開Releaseは別のバージョンとして
-管理されており、開発版の説明と公開Releaseの対応状況を混同しないでください。
-Protocol v3はv2以前と通信互換性がありません。v3対応クライアントにはv3対応Bridgeを
-使用してください。
+通信にはJSON Protocol v4を使用し、同じPC上の外部アプリケーションからWebSocketで接続できます。
 
 このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
 外部アプリケーションと組み合わせて使用してください。
@@ -16,22 +13,24 @@ Protocol v3はv2以前と通信互換性がありません。v3対応クライ�
 
 - Windows
 - LiveSplit 1.8.37
+- .NET Framework 4.8.1
 
 ## できること
 
 対応する外部アプリケーションから、次の機能を利用できます。
 
 - LiveSplitの現在のタイマー状態を確認する
+- ゲーム名、カテゴリ、Segment、比較タイムなどのRun情報と、必要に応じてアイコンを取得する
 - タイマーの開始、Split、Skip、Undo、Reset、Pause、Resumeを操作する
 - ゲーム内時間を設定、Pause、Resumeする
 - LiveSplit側で行われたタイマー操作や設定変更を受け取る
 
 ## インストール
 
-1. [最新のReleases](https://github.com/Nanahuse/LiveSplit.Bridge/releases/latest)から
-   `LiveSplit.Bridge-v*.zip`をダウンロードします。
+1. [GitHub Releases](https://github.com/Nanahuse/LiveSplit.Bridge/releases)から
+   JSON Protocol v4対応の`LiveSplit.Bridge-v*.zip`をダウンロードします。
 2. LiveSplitを終了します。
-3. ZIPの内容をLiveSplitの`Components`フォルダーへ展開します。
+3. ZIP内の`LiveSplit.Bridge.dll`をLiveSplitの`Components`フォルダーへ配置します。
 4. LiveSplitを起動します。
 5. レイアウトを右クリックして`Edit Layout...`を開きます。
 6. `+`から`Control` > `LiveSplit Bridge`を追加します。
@@ -39,41 +38,40 @@ Protocol v3はv2以前と通信互換性がありません。v3対応クライ�
 `LiveSplit Bridge`はレイアウト上には表示されません。レイアウトに追加されている間、
 対応する外部アプリケーションから接続できます。
 
-## 設定
+## 設定と接続
 
 レイアウト編集画面で`LiveSplit Bridge`の設定を開くと、接続に使用するWebSocket
-ポートを変更できます。既定値は次のとおりです。
+ポートを変更できます。変更後は`Apply`を押してください。既定値は次のとおりです。
 
 | 項目 | 既定値 |
 |---|---:|
 | WebSocketポート | `54000` |
 
-RPCは`ws://127.0.0.1:<port>/bridge/v3/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v3/events`で接続します。Protocol v3はProtobufのBinary
-WebSocket Messageを使用します。通常は既定値のまま使用できます。
+通常は既定値のまま使用できます。接続先は次のとおりです。
+
+| 用途 | 接続先 |
+| --- | --- |
+| 状態の取得・操作（RPC） | `ws://127.0.0.1:<port>/bridge/v4/rpc` |
+| 変更通知（Events） | `ws://127.0.0.1:<port>/bridge/v4/events` |
+
 外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
 してください。設定内容はLiveSplitのレイアウトに保存されます。
 
-WebSocketサーバーは引き続きloopbackだけで待ち受けます。Eventsと読み取り専用のQuery RPCは
-Originに関係なく利用できます。OBSのブラウザソースでは、ローカルHTMLから追加のHTTPサーバー
-なしでQueryとEventsを利用できます。TimerやGame Timeを操作するControl RPCは従来のOrigin
-制限に従い、Originヘッダーなし、または`localhost`、`127.0.0.1`、`::1`のHTTP/HTTPS Origin
-からのみ許可されます。それ以外のOriginからControlを要求すると`PERMISSION_DENIED`が返り、
-WebSocket接続は維持されます。Origin制限はブラウザ由来の要求を制限する仕組みであり、完全な
-認証ではありません。
+接続できるのは同じPC上のアプリケーションだけです。通信形式、ブラウザーからの操作権限、
+通知の扱いは[クライアント開発ガイド](CLIENT_DEVELOPMENT.md)を参照してください。
 
 ## 更新
 
 1. LiveSplitを終了します。
 2. 新しいリリースのZIPをダウンロードします。
-3. ZIPの内容を既存のLiveSplitの`Components`フォルダーへ上書きします。
+3. ZIP内の`LiveSplit.Bridge.dll`を既存のLiveSplitの`Components`フォルダーへ上書きします。
 4. LiveSplitを起動します。
 
 ## アンインストール
 
 1. レイアウト編集画面から`LiveSplit Bridge`を削除します。
 2. LiveSplitを終了します。
-3. `Components`フォルダーからLiveSplit.Bridgeのファイルを削除します。
+3. `Components`フォルダーから`LiveSplit.Bridge.dll`を削除します。
 
 ## トラブルシューティング
 
@@ -81,13 +79,14 @@ WebSocket接続は維持されます。Origin制限はブラウザ由来の要�
   `LiveSplit Bridge`が追加されていることを確認してください。
 - LiveSplitを複数起動する場合は、ポートが重複しないよう、それぞれのレイアウトで
   異なるWebSocketポートを設定してください。
+- 設定画面で`Status: Failed`と表示される場合は、併記されたエラーを確認してください。
+  ポートが使用中の場合は、別のポートを設定して`Apply`を押してください。
 - Bridgeは同じPCからの接続だけを受け付けます。別のPCからは接続できません。
 - 更新後に問題が起きた場合は、LiveSplitを終了してからファイルを上書きしたか確認して
   ください。
 
-## 関連ドキュメント
+## 開発者向け資料
 
-- Bridgeへ接続するアプリケーションを作る方:
-  [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
-- 同梱のDebug CLIを使う方:
-  [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)
+- [クライアント開発ガイド](CLIENT_DEVELOPMENT.md): JSON v4の通信仕様、権限、再同期
+- [Debug CLI](tools/livesplit-bridge-cli/README.md): コマンドによるRPC・Eventsの確認
+- [Schema生成・検証](tools/schema/README.md): C# DTOからのSchema生成と契約検証
