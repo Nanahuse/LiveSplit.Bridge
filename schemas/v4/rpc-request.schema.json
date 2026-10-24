@@ -1,8 +1,42 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RpcRequest",
   "oneOf": [
     {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$ref": "#/$defs/QueryRequest"
+    },
+    {
+      "$ref": "#/$defs/TimerRequest"
+    },
+    {
+      "$ref": "#/$defs/GameControlRequest"
+    },
+    {
+      "$ref": "#/$defs/GameSetRequest"
+    }
+  ],
+  "$defs": {
+    "GameControlOperation": {
+      "type": "string",
+      "enum": [
+        "initialize",
+        "pause",
+        "resume"
+      ]
+    },
+    "GameControlParams": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/GameControlOperation"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "GameControlRequest": {
       "type": "object",
       "properties": {
         "request_id": {
@@ -11,25 +45,116 @@
           "maximum": 4294967295
         },
         "method": {
-          "enum": [
-            "get_timer_state",
-            "get_run",
-            "get_run_icons",
-            "get_attempt",
-            "get_context_state",
-            "get_completed_count"
-          ]
+          "type": "string",
+          "const": "game_time_operation"
+        },
+        "params": {
+          "$ref": "#/$defs/GameControlParams"
+        }
+      },
+      "required": [
+        "request_id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "GameSetParams": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "set"
+        },
+        "ticks": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "operation",
+        "ticks"
+      ],
+      "additionalProperties": false
+    },
+    "GameSetRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "type": "string",
+          "const": "game_time_operation"
+        },
+        "params": {
+          "$ref": "#/$defs/GameSetParams"
+        }
+      },
+      "required": [
+        "request_id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "QueryMethod": {
+      "type": "string",
+      "enum": [
+        "get_timer_state",
+        "get_run",
+        "get_run_icons",
+        "get_attempt",
+        "get_context_state",
+        "get_completed_count"
+      ]
+    },
+    "QueryRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "method": {
+          "$ref": "#/$defs/QueryMethod"
         }
       },
       "required": [
         "request_id",
         "method"
       ],
-      "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/0"
+      "additionalProperties": false
     },
-    {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "TimerOperation": {
+      "type": "string",
+      "enum": [
+        "start",
+        "split",
+        "skip",
+        "undo",
+        "reset",
+        "pause",
+        "resume"
+      ]
+    },
+    "TimerParams": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/TimerOperation"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "TimerRequest": {
       "type": "object",
       "properties": {
         "request_id": {
@@ -42,24 +167,7 @@
           "const": "timer_operation"
         },
         "params": {
-          "type": "object",
-          "properties": {
-            "operation": {
-              "enum": [
-                "start",
-                "split",
-                "skip",
-                "undo",
-                "reset",
-                "pause",
-                "resume"
-              ]
-            }
-          },
-          "required": [
-            "operation"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/TimerParams"
         }
       },
       "required": [
@@ -67,87 +175,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/1"
-    },
-    {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "method": {
-          "type": "string",
-          "const": "game_time_operation"
-        },
-        "params": {
-          "type": "object",
-          "properties": {
-            "operation": {
-              "enum": [
-                "initialize",
-                "pause",
-                "resume"
-              ]
-            }
-          },
-          "required": [
-            "operation"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "request_id",
-        "method",
-        "params"
-      ],
-      "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/2"
-    },
-    {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "method": {
-          "type": "string",
-          "const": "game_time_operation"
-        },
-        "params": {
-          "type": "object",
-          "properties": {
-            "operation": {
-              "type": "string",
-              "const": "set"
-            },
-            "ticks": {
-              "type": "integer",
-              "minimum": -9223372036854775808,
-              "maximum": 9223372036854775807
-            }
-          },
-          "required": [
-            "operation",
-            "ticks"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "request_id",
-        "method",
-        "params"
-      ],
-      "additionalProperties": false,
-      "$id": "https://livesplit.org/bridge/v4/rpc-request.schema.json/3"
+      "additionalProperties": false
     }
-  ]
+  }
 }
