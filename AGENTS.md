@@ -1,21 +1,23 @@
-# Codex の作業指示
+# Agent Guidelines
 
-## 日本語の文章
+## Python
+Pythonではuvを使用する。lintにはruff、Type Checkerにはtyを使用する。
 
-日本語のドキュメントや PR 説明文を作成・推敲するときは、
-[yomiyasu](https://github.com/nanaism/yomiyasu) スキルを使用してください。
-`.agents/skills/yomiyasu/SKILL.md` を読み、その手順に従ってください。
+## Commit Messages
+Follow [Conventonal Commits](https://www.conventionalcommits.org/) specification.
 
-## スキルの導入
+### Commit relates to issues on GitHub
+Add issue numbers at the end of the commit message.  
+Example:  
+`feat: Add messages to control timer (#5)`
 
-スキル本体は各作業環境にインストールし、Git では管理しません。
-未導入の場合は、リポジトリのルートで次を実行してください。
+## Comments
+These conventions apply to all comments in the codebase.
 
-```sh
-npx --yes skills add nanaism/yomiyasu --agent codex --skill yomiyasu --copy --yes
-```
+### Conventions
+- Do not write a comment that is obvious from the code.
+- Do not write the description of a past implementation after the code changes.
 
-Windows PowerShell で `npx.ps1` の実行が制限される場合は、`npx.cmd` を使用してください。
-検査スクリプトの実行には Python 3 が必要です。
+## 日本語文書
 
-導入済みかどうかは `npx --yes skills list --agent codex` で確認できます。
+日本語のREADME、ドキュメント、PR説明文を作成・修正するときは、インストール済みのyomiyasuスキルのSKILL.mdを読み、その手順で推敲し、付属の検査を実施する。技術的な事実は現在の実装で確認し、推敲によって仕様を変更しない。
