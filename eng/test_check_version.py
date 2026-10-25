@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,7 @@ class VersionChecksTests(unittest.TestCase):
     def test_unchanged_and_increasing_versions_pass(self) -> None:
         check_versions("0.6.0", "0.6.0", [(0, 6, 0)])
         check_versions("0.6.0", "0.5.1", [(0, 5, 1)])
-        check_versions("0.6.0", None, [(0, 5, 1)], "v0.6.0")
+        check_versions("0.6.0", None, [(0, 5, 1)])
 
     def test_invalid_versions_are_rejected(self) -> None:
         for value in (
@@ -34,12 +35,16 @@ class VersionChecksTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_versions("0.6.0", "0.6.0", [(0, 7, 0)])
 
-    def test_release_requires_matching_new_tag(self) -> None:
-        for tag in ("0.6.0", "v0.6.1", "v0.6.0-rc1"):
-            with self.subTest(tag=tag), self.assertRaises(ValueError):
-                check_versions("0.6.0", None, [(0, 5, 1)], tag)
-        with self.assertRaises(ValueError):
-            check_versions("0.6.0", None, [(0, 6, 0)], "v0.6.0")
+    def test_print_version_skips_version_checks(self) -> None:
+        with (
+            patch.object(check_version, "read_version", return_value="0.6.0"),
+            patch.object(sys, "argv", ["check_version.py", "--print-version"]),
+            patch.object(check_version, "published_versions") as published,
+            patch("builtins.print") as print_mock,
+        ):
+            check_version.main()
+        print_mock.assert_called_once_with("0.6.0")
+        published.assert_not_called()
 
     def test_single_unconditional_version_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -120,7 +120,6 @@ def check_versions(
     current: str,
     previous: str | None,
     published: list[tuple[int, ...]],
-    release_tag: str | None = None,
 ) -> None:
     version = parse_version(current)
     if (
@@ -133,23 +132,16 @@ def check_versions(
         raise ValueError(
             f"Version {current} is older than the latest published release"
         )
-    if release_tag is not None:
-        if not re.fullmatch(f"v{VERSION_PATTERN}", release_tag):
-            raise ValueError(f"Expected release tag vMAJOR.MINOR.PATCH: {release_tag}")
-        if release_tag != f"v{current}":
-            raise ValueError(
-                f"Tag {release_tag} does not match product Version {current}"
-            )
-        if published and version <= max(published):
-            raise ValueError(
-                f"Release {release_tag} must be newer than all published releases"
-            )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check the Bridge product version.")
     parser.add_argument("--base-ref")
-    parser.add_argument("--release-tag")
+    parser.add_argument(
+        "--print-version",
+        action="store_true",
+        help="Print the product version without running version checks.",
+    )
     parser.add_argument(
         "--repository",
         default=os.environ.get("GITHUB_REPOSITORY", "Nanahuse/LiveSplit.Bridge"),
@@ -158,12 +150,13 @@ def main() -> None:
     try:
         current = read_version()
         assert current is not None
+        if args.print_version:
+            print(current)
+            return
         previous = (
             read_version(args.base_ref, allow_missing=True) if args.base_ref else None
         )
-        check_versions(
-            current, previous, published_versions(args.repository), args.release_tag
-        )
+        check_versions(current, previous, published_versions(args.repository))
     except (ValueError, OSError, ET.ParseError, subprocess.CalledProcessError) as error:
         raise SystemExit(str(error)) from error
     print(f"Product Version: {current}; version checks passed")

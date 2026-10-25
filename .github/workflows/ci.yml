@@ -145,3 +145,16 @@ jobs:
       - name: Test CLI
         working-directory: tools/livesplit-bridge-cli
         run: uv run pytest
+
+  release:
+    name: Release
+    needs:
+      - version-check
+      - schema-contract
+      - test
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
