@@ -1,93 +1,104 @@
 # LiveSplit.Bridge
 
-LiveSplit.Bridgeは、外部アプリケーションとLiveSplitを接続するためのLiveSplit
-コンポーネントです。対応する外部アプリケーションから、タイマーの状態確認や操作、
-ゲーム内時間の制御ができるようになります。
+LiveSplit.Bridgeは外部アプリケーションからLiveSplitの情報を取得したり、タイマーを
+操作したりするためのコンポーネントです。WebSocketを使用し、同じPC上の対応アプリケーションと
+LiveSplitを接続します。
 
-現在の`main`ブランチはProtocol v3の開発版です。公開Releaseは別のバージョンとして
-管理されており、開発版の説明と公開Releaseの対応状況を混同しないでください。
-Protocol v3はv2以前と通信互換性がありません。v3対応クライアントにはv3対応Bridgeを
-使用してください。
+## 主な機能
 
-このコンポーネント単体では画面表示や自動Splitを行いません。LiveSplit.Bridgeに対応した
-外部アプリケーションと組み合わせて使用してください。
+- タイマーの状態や記録情報、アイコンを取得する
+- タイマーの開始、Split、Skip、Undo、Reset、一時停止・再開を操作する
+- ゲーム内時間を設定・制御する
+- タイマー操作やRun情報の変更通知を受け取る
+
+LiveSplit.Bridge自体には操作画面や自動Split機能はありません。
+対応する外部アプリケーションと組み合わせて使用してください。
 
 ## 対応環境
 
 - Windows
 - LiveSplit 1.8.37
-
-## できること
-
-対応する外部アプリケーションから、次の機能を利用できます。
-
-- LiveSplitの現在のタイマー状態を確認する
-- タイマーの開始、Split、Skip、Undo、Reset、Pause、Resumeを操作する
-- ゲーム内時間を設定、Pause、Resumeする
-- LiveSplit側で行われたタイマー操作や設定変更を受け取る
+- .NET Framework 4.8.1
+- 使用するBridgeのバージョンに対応した外部アプリケーション
 
 ## インストール
 
-1. [最新のReleases](https://github.com/Nanahuse/LiveSplit.Bridge/releases/latest)から
-   `LiveSplit.Bridge-v*.zip`をダウンロードします。
+1. [GitHub Releases](https://github.com/Nanahuse/LiveSplit.Bridge/releases)から、使用する外部
+   アプリケーションと互換性のあるバージョンの`LiveSplit.Bridge-v*.zip`をダウンロードします。
 2. LiveSplitを終了します。
-3. ZIPの内容をLiveSplitの`Components`フォルダーへ展開します。
-4. LiveSplitを起動します。
-5. レイアウトを右クリックして`Edit Layout...`を開きます。
-6. `+`から`Control` > `LiveSplit Bridge`を追加します。
+3. ZIP内の`LiveSplit.Bridge.dll`をLiveSplitの`Components`フォルダーへ配置します。
+4. LiveSplitを起動し、右クリックから`Edit Layout...`を開きます。
+5. `+`から`Control` > `LiveSplit Bridge`を追加します。
+6. 使用するレイアウトを保存します。
 
-`LiveSplit Bridge`はレイアウト上には表示されません。レイアウトに追加されている間、
-対応する外部アプリケーションから接続できます。
+コンポーネントはレイアウト上には表示されません。レイアウトに追加されている間、
+外部アプリケーションからの接続を受け付けます。
 
 ## 設定
 
-レイアウト編集画面で`LiveSplit Bridge`の設定を開くと、接続に使用するWebSocket
-ポートを変更できます。既定値は次のとおりです。
+レイアウト編集画面から`LiveSplit Bridge`の設定を開きます。
+WebSocketポートの初期値は`54000`です。通常は変更する必要はありません。
+変更する場合は`1`～`65535`の番号を指定できます。
+設定画面に`Status: Running`と表示されていれば、接続を受け付けている状態です。
 
-| 項目 | 既定値 |
-|---|---:|
-| WebSocketポート | `54000` |
+ポート番号を変更した場合は`Apply`を押してください。Bridgeが再起動して接続が切断されるため、
+外部アプリケーション側にも同じポート番号を指定し、再接続してください。
+設定内容を保存するため、LiveSplitのレイアウトも保存します。
 
-RPCは`ws://127.0.0.1:<port>/bridge/v3/rpc`、イベントは
-`ws://127.0.0.1:<port>/bridge/v3/events`で接続します。Protocol v3はProtobufのBinary
-WebSocket Messageを使用します。通常は既定値のまま使用できます。
-外部アプリケーション側で接続先を指定する場合は、ここで設定したポートと同じ値を指定
-してください。設定内容はLiveSplitのレイアウトに保存されます。
+複数のLiveSplitを起動する場合は、それぞれのBridgeに異なるポート番号を設定してください。
+接続できるのは同じPC上のアプリケーションだけです。
 
-WebSocketサーバーは引き続きloopbackだけで待ち受けます。Eventsと読み取り専用のQuery RPCは
-Originに関係なく利用できます。OBSのブラウザソースでは、ローカルHTMLから追加のHTTPサーバー
-なしでQueryとEventsを利用できます。TimerやGame Timeを操作するControl RPCは従来のOrigin
-制限に従い、Originヘッダーなし、または`localhost`、`127.0.0.1`、`::1`のHTTP/HTTPS Origin
-からのみ許可されます。それ以外のOriginからControlを要求すると`PERMISSION_DENIED`が返り、
-WebSocket接続は維持されます。Origin制限はブラウザ由来の要求を制限する仕組みであり、完全な
-認証ではありません。
+## 更新・アンインストール
 
-## 更新
+### 更新
 
-1. LiveSplitを終了します。
-2. 新しいリリースのZIPをダウンロードします。
-3. ZIPの内容を既存のLiveSplitの`Components`フォルダーへ上書きします。
-4. LiveSplitを起動します。
-
-## アンインストール
-
-1. レイアウト編集画面から`LiveSplit Bridge`を削除します。
+1. 使用する外部アプリケーションとの互換性を確認し、新しいリリースのZIPを取得します。
 2. LiveSplitを終了します。
-3. `Components`フォルダーからLiveSplit.Bridgeのファイルを削除します。
+3. ZIP内の`LiveSplit.Bridge.dll`を`Components`フォルダーの既存ファイルへ上書きします。
+4. LiveSplitを起動し、外部アプリケーションから再接続します。
+
+### アンインストール
+
+1. レイアウト編集画面から`LiveSplit Bridge`を削除し、レイアウトを保存します。
+2. LiveSplitを終了します。
+3. `Components`フォルダーから`LiveSplit.Bridge.dll`を削除します。
 
 ## トラブルシューティング
 
-- 外部アプリケーションが接続できない場合は、現在のレイアウトに
-  `LiveSplit Bridge`が追加されていることを確認してください。
-- LiveSplitを複数起動する場合は、ポートが重複しないよう、それぞれのレイアウトで
-  異なるWebSocketポートを設定してください。
-- Bridgeは同じPCからの接続だけを受け付けます。別のPCからは接続できません。
-- 更新後に問題が起きた場合は、LiveSplitを終了してからファイルを上書きしたか確認して
-  ください。
+### 外部アプリケーションから接続できない
+
+- 現在のレイアウトに`LiveSplit Bridge`が追加されているか確認してください。
+- 設定画面に`Status: Running`と表示されているか確認してください。
+- 外部アプリケーションとBridgeでポート番号が一致しているか確認してください。
+- Bridgeと外部アプリケーションの対応バージョンを確認してください。
+- ポート番号を変更した場合は、外部アプリケーションから再接続してください。
+
+### Status: Failedと表示される
+
+設定画面に併記されたエラー内容を確認してください。ポートがすでに使用されている場合は
+別の番号に変更して`Apply`を押し、外部アプリケーション側のポート番号も変更してください。
+起動に失敗した場合は5秒ごとに自動で再試行します。
+
+### 別のPCから接続できない
+
+LiveSplit.Bridgeは同じPC上のアプリケーションからの接続専用です。
+
+### 更新後に問題が起きる
+
+LiveSplitを終了してからDLLを上書きしたか、Bridgeと外部アプリケーションのバージョンに
+互換性があるか確認してください。
 
 ## 関連ドキュメント
 
-- Bridgeへ接続するアプリケーションを作る方:
-  [`CLIENT_DEVELOPMENT.md`](CLIENT_DEVELOPMENT.md)
-- 同梱のDebug CLIを使う方:
-  [`tools/livesplit-bridge-cli/README.md`](tools/livesplit-bridge-cli/README.md)
+- [クライアント開発ガイド](docs/client-guide.md)
+- [Protocol v4 Reference](docs/protocol.md)
+- [Bridgeの開発手順](docs/development.md)
+
+### クライアントライブラリ
+
+- [livesplit-bridge-client（Python）](https://github.com/Nanahuse/livesplit-bridge-client)
+- [livesplit-bridge-client-cpp（C++）](https://github.com/Nanahuse/livesplit-bridge-client-cpp)
+
+## ライセンス
+
+[MIT License](LICENSE)

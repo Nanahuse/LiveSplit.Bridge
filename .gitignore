@@ -61,3 +61,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 tools/livesplit-bridge-cli/src/livesplit/
+
+# Locally installed agent skills
+/.agents/skills/
+/skills-lock.json

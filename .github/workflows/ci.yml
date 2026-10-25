@@ -10,6 +10,82 @@ permissions:
   contents: read
 
 jobs:
+  version-check:
+    name: Version check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.12"
+          python-version: "3.14"
+
+      - name: Check product version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: uv run --no-project python eng/check_version.py --base-ref "$BASE_REF"
+
+      - name: Test version checks
+        run: uv run --no-project python -m unittest discover -s eng -p "test_*.py"
+
+  schema-contract:
+    name: Schema contract
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.12"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: tools/schema/uv.lock
+
+      - name: Restore schema validation dependencies
+        working-directory: tools/schema
+        run: uv sync --locked
+
+      - name: Lint and type check Python tools
+        run: |
+          uv run --locked --project tools/schema ruff check --config tools/schema/pyproject.toml tools/schema eng
+          uv run --locked --project tools/schema ruff format --check --config tools/schema/pyproject.toml tools/schema eng
+          uv run --locked --project tools/schema ty check tools/schema eng
+
+      - name: Restore Schema generator
+        run: dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj --locked-mode --nologo
+
+      - name: Build Schema generator
+        run: dotnet build tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-restore --nologo
+
+      - name: Generate and compare checked-in schemas
+        run: |
+          dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- tools/schema/out
+          uv run --no-project python tools/schema/sync_schemas.py --check
+
+      - name: Export net481 C# communication samples
+        run: dotnet run --project tools/schema/ContractSamples/LiveSplit.Bridge.ContractSamples.csproj --configuration Release -- tools/schema/out
+
+      - name: Validate Draft 2020-12 contracts
+        working-directory: tools/schema
+        run: uv run --locked python validate_schemas.py
+
   test:
     name: Windows tests
     runs-on: windows-latest
@@ -47,19 +123,21 @@ jobs:
         working-directory: tools/livesplit-bridge-cli
         run: |
           uv sync --locked
-          uv run python scripts/generate_proto.py
 
       - name: Lint CLI
         working-directory: tools/livesplit-bridge-cli
         run: |
-          uv run ruff check src tests scripts
-          uv run ruff format --check src tests scripts
+          uv run ruff check src tests
+          uv run ruff format --check src tests
 
       - name: Restore .NET projects
         run: dotnet restore LiveSplit.Bridge.slnx --nologo
 
       - name: Build .NET projects
         run: dotnet build LiveSplit.Bridge.slnx --configuration Release --no-restore --nologo
+
+      - name: Build and verify distribution ZIP
+        run: uv run --no-project python eng/package_release.py --package-name "LiveSplit.Bridge-ci-${{ github.sha }}"
 
       - name: Test .NET projects
         run: dotnet test LiveSplit.Bridge.slnx --configuration Release --no-build --no-restore --nologo
