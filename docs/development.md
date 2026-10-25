@@ -105,7 +105,7 @@ Releaseビルド後に実行します。
 
 `artifacts/`にZIPと`SHA256SUMS.txt`を作成します。このスクリプトはZIPに空でない
 `LiveSplit.Bridge.dll`が1つだけ入っていることを検査します。
-配布先への配置は[導入・設定](installation.md)を参照してください。
+配布先への配置は[READMEのインストール手順](../README.md#インストール)を参照してください。
 
 ## CIとリリース
 

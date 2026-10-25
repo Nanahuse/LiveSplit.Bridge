@@ -1,7 +1,7 @@
 # クライアント開発ガイド
 
 LiveSplit.Bridgeへの接続から、状態取得、操作、変更通知と再同期までの実装手順です。
-先に[導入・設定](installation.md)に従ってBridgeを有効にしてください。
+先に[READMEのインストール手順](../README.md#インストール)に従ってBridgeを有効にしてください。
 厳密な入力条件と保証は[Protocol Reference](protocol.md)を参照してください。
 
 JSON Protocol v4は旧Protobuf v3と互換性がありません。Bridgeとクライアントの両方を

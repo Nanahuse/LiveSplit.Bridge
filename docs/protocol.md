@@ -20,7 +20,7 @@ Schemaに適合していても、操作の実行やイベントの配送が成�
 | Eventを受信する | `ws://127.0.0.1:<port>/bridge/v4/events` |
 
 BridgeはIPv4ループバック`127.0.0.1`で待ち受けます。ポートの設定は
-[導入・設定](installation.md#ポート設定)を参照してください。
+[READMEの設定](../README.md#設定)を参照してください。
 
 1つのJSONオブジェクトを1つのWebSocket Text Messageとして送受信します。
 複数オブジェクトの配列によるbatch RPCはありません。WebSocketの断片化は利用できます。

@@ -23,13 +23,8 @@ LiveSplit.Bridge自体には操作画面や自動Split機能はありません�
 
 ## インストール
 
-このREADMEは開発中のv4を対象としています。2026年10月25日時点の公開最新版
-[v0.5.1](https://github.com/Nanahuse/LiveSplit.Bridge/releases/tag/v0.5.1)はv3対応で、
-v4対応版はまだ公開されていません。v3とv4には互換性がないため、v4対応アプリで使用する場合は、
-v4対応版の公開を確認してから導入してください。
-
-1. [GitHub Releases](https://github.com/Nanahuse/LiveSplit.Bridge/releases)でv4対応と明記された
-   `LiveSplit.Bridge-v*.zip`を選び、外部アプリケーションの対応バージョンを確認してダウンロードします。
+1. [GitHub Releases](https://github.com/Nanahuse/LiveSplit.Bridge/releases)から、使用する外部
+   アプリケーションと互換性のあるバージョンの`LiveSplit.Bridge-v*.zip`をダウンロードします。
 2. LiveSplitを終了します。
 3. ZIP内の`LiveSplit.Bridge.dll`をLiveSplitの`Components`フォルダーへ配置します。
 4. LiveSplitを起動し、右クリックから`Edit Layout...`を開きます。
@@ -43,6 +38,7 @@ v4対応版の公開を確認してから導入してください。
 
 レイアウト編集画面から`LiveSplit Bridge`の設定を開きます。
 WebSocketポートの初期値は`54000`です。通常は変更する必要はありません。
+変更する場合は`1`～`65535`の番号を指定できます。
 設定画面に`Status: Running`と表示されていれば、接続を受け付けている状態です。
 
 ポート番号を変更した場合は`Apply`を押してください。Bridgeが再起動して接続が切断されるため、
@@ -81,6 +77,7 @@ WebSocketポートの初期値は`54000`です。通常は変更する必要は�
 
 設定画面に併記されたエラー内容を確認してください。ポートがすでに使用されている場合は
 別の番号に変更して`Apply`を押し、外部アプリケーション側のポート番号も変更してください。
+起動に失敗した場合は5秒ごとに自動で再試行します。
 
 ### 別のPCから接続できない
 
@@ -93,7 +90,6 @@ LiveSplitを終了してからDLLを上書きしたか、Bridgeと外部アプ�
 
 ## 関連ドキュメント
 
-- [導入・設定の詳細](docs/installation.md)
 - [クライアント開発ガイド](docs/client-guide.md)
 - [Protocol v4 Reference](docs/protocol.md)
 - [Bridgeの開発手順](docs/development.md)
