@@ -16,9 +16,8 @@ Schema生成にLiveSplitのサブモジュール取得は不要です。
 | --- | --- |
 | 生成器 | [LiveSplit.Bridge.Schema.csproj](../tools/schema/LiveSplit.Bridge.Schema.csproj)と`packages.lock.json`。対象は.NET 10 |
 | 実際のRuntime DTOのシリアライズ | [ContractSamples](../tools/schema/ContractSamples/LiveSplit.Bridge.ContractSamples.csproj)。対象は.NET Framework 4.8.1 |
-| Node.js | 20以降。[package.json](../tools/schema/package.json)の`engines`を参照 |
-| pnpm | `package.json`の`packageManager`で固定したバージョンを使用 |
-| Ajv | `package.json`と`pnpm-lock.yaml`で固定 |
+| Python | 3.14以降。環境の作成とコマンド実行にはuvを使用 |
+| jsonschema・ruff・ty | [pyproject.toml](../tools/schema/pyproject.toml)と`uv.lock`で固定 |
 
 ## 生成と検証
 
@@ -29,23 +28,23 @@ Schema生成にLiveSplitのサブモジュール取得は不要です。
 dotnet restore tools/schema/LiveSplit.Bridge.Schema.csproj --locked-mode
 dotnet build tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-restore
 dotnet run --project tools/schema/LiveSplit.Bridge.Schema.csproj --configuration Release --no-build -- tools/schema/out
-./tools/schema/Sync-Schemas.ps1 -Check
+uv run --no-project python tools/schema/sync_schemas.py --check
 dotnet run --project tools/schema/ContractSamples/LiveSplit.Bridge.ContractSamples.csproj --configuration Release -- tools/schema/out
 Push-Location tools/schema
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run validate
+uv sync --locked
+uv run --locked python validate_schemas.py
 Pop-Location
 ```
 
-`Sync-Schemas.ps1 -Check`は生成ファイルと`schemas/v4/`をバイト単位で比較します。
+`sync_schemas.py --check`は生成ファイルと`schemas/v4/`をバイト単位で比較します。
 DTOの変更を公開Schemaへ反映する場合は、生成後に次を実行してから検証をやり直します。
 
 ```powershell
-./tools/schema/Sync-Schemas.ps1
+uv run --no-project python tools/schema/sync_schemas.py
 git diff -- schemas/v4
 ```
 
-`tools/schema/out/`、ビルド結果、`node_modules`はGitの管理対象外です。
+`tools/schema/out/`、ビルド結果、`.venv/`はGitの管理対象外です。
 意図したDTO変更と生成差分を一緒にレビューしてください。Schema contract CIは上と同じ
 生成・比較・検証を行います。BridgeとCLIの検査は[開発手順](development.md)を参照してください。
 
@@ -92,14 +91,24 @@ DTO・SerializerソースをFramework向けにコンパイルして実際の出�
 
 ## 検証範囲
 
-`pnpm run validate`は3つのSchemaをAjvのDraft 2020-12実装でコンパイルし、
+`uv run --locked python validate_schemas.py`は3つのSchemaをjsonschemaのDraft 2020-12実装で検査し、
 [固定ケース](../tools/schema/samples/validation-cases.json)と
 [実際のC#シリアライズ結果](../tools/schema/ContractSamples/ContractSamples.cs)を検証します。
 
-固定ケースはprotocol固有の許容・拒否条件を扱います。C#サンプルはすべてのQuery・操作、
+固定24ケースはprotocol固有の許容・拒否条件を扱います。C#サンプル36ケースはすべてのQuery・操作、
 Response・Event、空またはデータのあるRun、別取得する画像、null許容項目を扱います。
 生成コマンドはSchemaだけを書き出し、C#のメッセージはContractSamplesが別に出力します。
 実際のRPC振り分けやエラー応答はWindowsの通信テストで確認します。
+
+Schemaの`format`や画像内容の追加検証は行いません。同期スクリプトは標準ライブラリだけで
+動作し、ファイルのバイト列をそのままコピーするため改行コードを維持します。
+Pythonツールの検査はリポジトリルートで実行します。
+
+```powershell
+uv run --locked --project tools/schema ruff check --config tools/schema/pyproject.toml tools/schema eng
+uv run --locked --project tools/schema ruff format --check --config tools/schema/pyproject.toml tools/schema eng
+uv run --locked --project tools/schema ty check tools/schema eng
+```
 
 ## SchemaとSerializerの差
 
