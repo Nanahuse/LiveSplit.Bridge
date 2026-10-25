@@ -1,7 +1,9 @@
 # LiveSplit.Bridge Debug CLI
 
-Python CLIでLiveSplit.Bridge JSON Protocol v4のRPCとEventsを確認できます。Python 3.14以降と
-[uv](https://docs.astral.sh/uv/)を使用します。
+Python CLIでLiveSplit.Bridge JSON Protocol v4のRPCとEventsを確認できます。
+必要なPython・uv環境は[開発環境](../../docs/development.md#開発環境)を参照してください。
+通信仕様は[Protocol Reference](../../docs/protocol.md)、アプリの実装手順は
+[クライアント開発ガイド](../../docs/client-guide.md)にあります。
 
 ## セットアップ
 
@@ -64,15 +66,8 @@ envelopeを確認し、通常表示に必要な情報の不足は説明付きエ
 構造とC#実出力との適合性はSchema contract jobで確認します。
 
 E2Eテストは`LiveSplit.Bridge.TestHost`から本番の`Component`を起動し、CLIと同じJSON v4
-WebSocket endpointを使います。TestHostのビルドには、.NET SDK 10.0.302以降と
-.NET Framework 4.8.1 Developer Packが必要です。Windows上でリポジトリルートから
-依存サブモジュールを取得し、TestHostをビルドしてください。
-
-```powershell
-git submodule update --init --depth 1 external/LiveSplit
-git -C external/LiveSplit submodule update --init --depth 1 lib/SpeedrunComSharp
-dotnet build tests/LiveSplit.Bridge.TestHost/LiveSplit.Bridge.TestHost.csproj --configuration Release
-```
+WebSocket endpointを使います。[開発手順](../../docs/development.md#testhostによる通信確認)に
+従って依存サブモジュールを取得し、TestHostをReleaseでビルドしてください。
 
 続いて`tools/livesplit-bridge-cli`で実行します。
 
