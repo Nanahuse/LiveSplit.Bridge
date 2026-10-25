@@ -1,9 +1,7 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
 
 permissions:
   contents: write
@@ -13,8 +11,9 @@ jobs:
     name: Build and release
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      RELEASE_TAG: ${{ github.ref_name }}
+    concurrency:
+      group: release
+      cancel-in-progress: false
 
     steps:
       - name: Check out repository
@@ -29,18 +28,40 @@ jobs:
           version: "0.11.12"
           python-version: "3.14"
 
-      - name: Check release version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-project python eng/check_version.py --release-tag "$env:RELEASE_TAG"
+      - name: Determine release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $version = uv run --no-project python eng/check_version.py --print-version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to read the product version."
+          }
+          $tag = "v$($version.Trim())"
+          if ($tag -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Unexpected release tag: $tag"
+          }
+
+          $refs = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to check whether tag $tag exists."
+          }
+          if ($refs) {
+            Write-Host "Tag $tag already exists; skipping release."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=true" -Encoding utf8
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false" -Encoding utf8
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=$tag" -Encoding utf8
 
       - name: Check out build dependencies
+        if: steps.tag.outputs.exists == 'false'
         shell: pwsh
         run: |
           git submodule update --init --depth 1 external/LiveSplit
           git -C external/LiveSplit submodule update --init --depth 1 lib/SpeedrunComSharp
 
       - name: Cache NuGet packages
+        if: steps.tag.outputs.exists == 'false'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
@@ -49,27 +70,46 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Restore .NET dependencies
+        if: steps.tag.outputs.exists == 'false'
         run: dotnet restore src/LiveSplit.Bridge/LiveSplit.Bridge.csproj --nologo
 
       - name: Build release package
+        if: steps.tag.outputs.exists == 'false'
         run: dotnet build src/LiveSplit.Bridge/LiveSplit.Bridge.csproj --configuration Release --no-restore --nologo
 
       - name: Verify DLL versions and distribution ZIP
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: uv run --no-project python eng/package_release.py --package-name "LiveSplit.Bridge-$env:RELEASE_TAG"
 
-      - name: Recheck release version before publishing
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-project python eng/check_version.py --release-tag "$env:RELEASE_TAG"
+      - name: Recheck release tag before publishing
+        id: recheck
+        if: steps.tag.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $refs = git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to check whether tag $tag exists."
+          }
+          if ($refs) {
+            Write-Host "Tag $tag was created during the build; skipping release."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=true" -Encoding utf8
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false" -Encoding utf8
+          }
 
       - name: Create GitHub release
+        if: steps.tag.outputs.exists == 'false' && steps.recheck.outputs.exists == 'false'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           gh release create "$env:RELEASE_TAG" `
             "artifacts/LiveSplit.Bridge-$env:RELEASE_TAG.zip" `
             artifacts/SHA256SUMS.txt `
-            --verify-tag `
+            --target "$env:GITHUB_SHA" `
             --generate-notes `
             --title "LiveSplit.Bridge $env:RELEASE_TAG"

@@ -133,17 +133,37 @@ AssemblyVersionを参照します。設定ファイル形式の`BridgeSettings.C
 既存の公開Releaseより古い値を使わないでください。ローカルでも次の検査を実行できます。
 
 ```powershell
-uv run --no-project python eng/check_version.py --base-ref origin/v4
+uv run --no-project python eng/check_version.py --base-ref origin/main
 uv run --no-project python -m unittest discover -s eng -p "test_*.py"
 ```
 
 `--base-ref`にはPRのマージ先のrefを指定します。検査には公開Releaseを取得するための
 GitHub APIへの接続が必要です。CIは`GH_TOKEN`に`github.token`を渡します。
 
-[Release workflow](../.github/workflows/release.yml)は`v*`タグのpushで起動します。
-タグが`vMAJOR.MINOR.PATCH`形式で、製品バージョンと一致し、既存の公開Releaseより新しいことを
-確認してから配布物を作成します。DLLのバージョンが一致しなければZIPを作成しません。
-公開直前にもReleaseのバージョンを再検査し、成功した場合だけGitHub ReleaseにZIPと
-チェックサムを添付します。CIとReleaseは同じパッケージ作成スクリプトを使用します。
-たとえば`Version`が`0.6.0`なら、タグは`v0.6.0`、ZIPは`LiveSplit.Bridge-v0.6.0.zip`です。
-タグは手動で作成し、mainへのマージ時には自動作成しません。
+mainへpushすると、3つのjobがすべて成功した後に同じCIの`Release` jobが
+[Release workflow](../.github/workflows/release.yml)を呼び出します。タグとReleaseは、
+3つのjobが成功したmainのコミットを対象にします。Release workflowは`.csproj`の`Version`から
+タグ名を決め、そのタグが存在するかだけを確認します。過去のReleaseとのバージョンの大小比較は
+行いません。
+
+| 状況 | 動作 |
+| --- | --- |
+| タグが存在しない | 配布物を作成し、タグとGitHub Releaseを公開 |
+| タグが存在する | 何もせず正常終了 |
+| CIが失敗 | Release workflowを呼び出さない |
+| タグの存在確認に失敗 | エラーとして停止 |
+
+たとえば`Version`が`0.6.0`なら、タグは`v0.6.0`、ZIPは
+`LiveSplit.Bridge-v0.6.0.zip`です。タグの有無は`git ls-remote`で完全一致の名前を確認します。
+通信エラーとタグが存在しない場合は区別します。タグが存在する場合は、対応するGitHub Releaseの
+有無を確認せずにスキップします。Releaseの処理は同時に1つだけ実行し、公開の直前にもタグの
+存在を確認します。タグとReleaseは上書きしません。
+
+タグが存在しない場合だけ、`eng/package_release.py`でDLLのバージョンを検証してZIPと
+チェックサムを作成します。DLLのバージョンが一致しなければZIPを作成しません。公開には
+`gh release create`を使用し、同じ処理でタグを作成してGitHub ReleaseにZIPとチェックサムを
+添付します。CIとReleaseは同じパッケージ作成スクリプトを使用します。
+
+バージョンは自動更新しません。新しいReleaseを公開するには、`Version`を変更してmainへ
+マージしてください。公開の途中で失敗し、タグだけが残った場合は手動で復旧してください。
+Release workflowはタグを自動で削除または変更しません。
