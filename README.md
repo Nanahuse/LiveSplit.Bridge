@@ -94,6 +94,11 @@ LiveSplitを終了してからDLLを上書きしたか、Bridgeと外部アプ�
 - [Protocol v4 Reference](docs/protocol.md)
 - [Bridgeの開発手順](docs/development.md)
 
+### クライアントライブラリ
+
+- [livesplit-bridge-client（Python）](https://github.com/Nanahuse/livesplit-bridge-client)
+- [livesplit-bridge-client-cpp（C++）](https://github.com/Nanahuse/livesplit-bridge-client-cpp)
+
 ## ライセンス
 
 [MIT License](LICENSE)
