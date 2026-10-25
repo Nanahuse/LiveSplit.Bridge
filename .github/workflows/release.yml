@@ -13,6 +13,8 @@ jobs:
     name: Build and release
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
 
     steps:
       - name: Check out repository
@@ -20,6 +22,17 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.12"
+          python-version: "3.14"
+
+      - name: Check release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project python eng/check_version.py --release-tag "$env:RELEASE_TAG"
 
       - name: Check out build dependencies
         shell: pwsh
@@ -39,23 +52,24 @@ jobs:
         run: dotnet restore src/LiveSplit.Bridge/LiveSplit.Bridge.csproj --nologo
 
       - name: Build release package
-        shell: pwsh
-        run: |
-          dotnet build src/LiveSplit.Bridge/LiveSplit.Bridge.csproj `
-            --configuration Release `
-            --no-restore `
-            --nologo
+        run: dotnet build src/LiveSplit.Bridge/LiveSplit.Bridge.csproj --configuration Release --no-restore --nologo
 
-          ./eng/package-release.ps1 -PackageName "LiveSplit.Bridge-${{ github.ref_name }}"
+      - name: Verify DLL versions and distribution ZIP
+        run: uv run --no-project python eng/package_release.py --package-name "LiveSplit.Bridge-$env:RELEASE_TAG"
+
+      - name: Recheck release version before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project python eng/check_version.py --release-tag "$env:RELEASE_TAG"
 
       - name: Create GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" `
-            artifacts/LiveSplit.Bridge-${{ github.ref_name }}.zip `
+          gh release create "$env:RELEASE_TAG" `
+            "artifacts/LiveSplit.Bridge-$env:RELEASE_TAG.zip" `
             artifacts/SHA256SUMS.txt `
             --verify-tag `
             --generate-notes `
-            --title "LiveSplit.Bridge ${{ github.ref_name }}"
+            --title "LiveSplit.Bridge $env:RELEASE_TAG"

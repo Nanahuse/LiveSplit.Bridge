@@ -10,7 +10,7 @@ Bridgeをビルドし、テスト、通信確認、配布ZIPの作成を行う�
 | --- | --- |
 | Bridge・TestHost・.NETテスト | Windows、.NET SDK 10.0.302以降、.NET Framework 4.8.1 Developer Pack |
 | コマンドの実行 | PowerShell、Git |
-| Debug CLI・CLIテスト | Python 3.14以降、uv |
+| 補助スクリプト・Debug CLI・CLIテスト | Python 3.14以降、uv |
 
 以下のコマンドはリポジトリルートのPowerShellで実行します。
 言語設定とLiveSplitの出力パスは[Directory.Build.props](../Directory.Build.props)、
@@ -100,26 +100,50 @@ RPCの応答を確認すると標準出力に`READY`を表示します。別の�
 Releaseビルド後に実行します。
 
 ```powershell
-./eng/package-release.ps1 -PackageName "LiveSplit.Bridge-local"
+uv run --no-project python eng/package_release.py --package-name "LiveSplit.Bridge-local"
 ```
 
 `artifacts/`にZIPと`SHA256SUMS.txt`を作成します。このスクリプトはZIPに空でない
-`LiveSplit.Bridge.dll`が1つだけ入っていることを検査します。
+`LiveSplit.Bridge.dll`が1つだけ入っていることを検査します。ZIPの作成前にはC#の
+`eng/VerifyAssemblyVersion`でDLLのAssemblyVersion・FileVersion・ProductVersionを確認します。
 配布先への配置は[READMEのインストール手順](../README.md#インストール)を参照してください。
 
 ## CIとリリース
 
-[CI](../.github/workflows/ci.yml)はPR、mainへのpush、手動実行を対象とし、次の2つの
+[CI](../.github/workflows/ci.yml)はPR、mainへのpush、手動実行を対象とし、次の3つの
 jobを実行します。
 
 | job | 内容 |
 | --- | --- |
-| Schema contract | Schema生成、公開ファイルとのバイト比較、C#シリアライズ結果と固定ケースのAjv検証 |
-| Windows tests | サブモジュール取得、CLI lint、.NETビルド・テスト、配布ZIPの検査、CLIテスト |
+| Version check | 製品バージョンの形式・定義箇所、公開ReleaseとPR変更前のバージョンとの比較。Python標準ライブラリのみで実行 |
+| Schema contract | Pythonツールのlint・型検査、Schema生成、公開ファイルとのバイト比較、C#シリアライズ結果と固定ケースのjsonschema検証 |
+| Windows tests | サブモジュール取得、CLI lint、.NETビルド・テスト、DLLバージョンと配布ZIPの検査、CLIテスト |
 
-両jobの成功を確認してください。`ty check`はローカル開発用で、現在のCIには含まれていません。
+3つのjobの成功を確認してください。mainのRulesetではこの3つをRequired status checksに
+指定します。CLIの`ty check`はローカル開発用です。補助スクリプトのruff・tyはSchema contractで
+実行します。
 Schema contractと同じ手順は[Schemaの生成・検証](schema-generation.md#生成と検証)にあります。
 
-[Release workflow](../.github/workflows/release.yml)は`v*`タグのpushで配布物を作成し、
-GitHub ReleaseにZIPとチェックサムを添付します。CIとReleaseは同じパッケージ作成スクリプトを
-使用します。
+製品バージョンは[src/LiveSplit.Bridge/LiveSplit.Bridge.csproj](../src/LiveSplit.Bridge/LiveSplit.Bridge.csproj)の
+`Version`で管理します。`MAJOR.MINOR.PATCH`形式で指定し、AssemblyVersionとFileVersionは
+.NET SDKの標準機能で末尾に`.0`を付けた値になります。`Factory.Version`は引き続き
+AssemblyVersionを参照します。設定ファイル形式の`BridgeSettings.CurrentVersion`は別の値です。
+
+バージョンを変更しないPRも受け入れます。変更する場合は、PRの変更前より大きい値を指定し、
+既存の公開Releaseより古い値を使わないでください。ローカルでも次の検査を実行できます。
+
+```powershell
+uv run --no-project python eng/check_version.py --base-ref origin/v4
+uv run --no-project python -m unittest discover -s eng -p "test_*.py"
+```
+
+`--base-ref`にはPRのマージ先のrefを指定します。検査には公開Releaseを取得するための
+GitHub APIへの接続が必要です。CIは`GH_TOKEN`に`github.token`を渡します。
+
+[Release workflow](../.github/workflows/release.yml)は`v*`タグのpushで起動します。
+タグが`vMAJOR.MINOR.PATCH`形式で、製品バージョンと一致し、既存の公開Releaseより新しいことを
+確認してから配布物を作成します。DLLのバージョンが一致しなければZIPを作成しません。
+公開直前にもReleaseのバージョンを再検査し、成功した場合だけGitHub ReleaseにZIPと
+チェックサムを添付します。CIとReleaseは同じパッケージ作成スクリプトを使用します。
+たとえば`Version`が`0.6.0`なら、タグは`v0.6.0`、ZIPは`LiveSplit.Bridge-v0.6.0.zip`です。
+タグは手動で作成し、mainへのマージ時には自動作成しません。
